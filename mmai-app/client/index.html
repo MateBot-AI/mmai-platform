@@ -1,0 +1,454 @@
+<!doctype html>
+<html lang="en-AU">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MateBot AI · Apartment Living Melbourne</title>
+<meta name="description" content="MateBot AI is AI matchmaking software that finds compatible flatmates to share a whole apartment with Apartment Living Melbourne.">
+<meta name="theme-color" content="#2b1d2e">
+<!-- The sha256 hash below is the Perplexity preview helper the hosting proxy injects inline (scroll/screenshot/pick support); app code has no inline scripts. -->
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-Qq/uoXbrEnjJ6L8KD8GicBffFCZgSQYA4VAEfHIXfGU='; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self'; connect-src 'self'; form-action 'self'; base-uri 'self'; object-src 'none'">
+<meta name="referrer" content="same-origin">
+<meta name="mmai-api-base" content="__PORT_8060__">
+<link rel="stylesheet" href="fonts/fonts.css">
+<link rel="stylesheet" href="styles.css?v=20261111b">
+</head>
+<body>
+
+<div class="topbar" id="topbar" hidden>
+  <div class="topbar__inner">
+    <span class="topbar__brand">Apartment Living Melbourne</span>
+    <span class="topbar__tag">MateBot AI Stage 1 preview</span>
+    <span id="topbarTest" class="topbar__tag topbar__tag--test" hidden>TEST DATA</span>
+    <div class="topbar__right" id="topbarRight"></div>
+  </div>
+</div>
+
+<!-- ============ PUBLIC VIEW: landing page, then the form (I20; channels I4 b & c) ============ -->
+<div id="view-public" hidden>
+  <span id="publicTest" class="testflag" hidden>TEST DATA</span>
+  <!-- I20(a): the landing page shows only the brand line, the heading, the approved opening text (I13), MateBot's greeting and LET'S START -->
+  <section class="landing" id="landing" aria-labelledby="landingTitle">
+    <div class="landing__inner">
+      <div class="landing__text">
+        <p class="brand">Apartment Living Melbourne</p>
+        <h1 id="landingTitle">Meet your perfect housemates.</h1>
+        <div class="landing__copy">
+          <p><strong>MateBot AI</strong> is Apartment Living Melbourne's AI-powered matchmaking program, built to find you housemates you'll genuinely click with. Tell us about you: your study or work, your dates, your budget, your lifestyle and the kind of people you'd love to live with.</p>
+          <p>MateBot AI runs a deep compatibility analysis of your answers against everyone else moving to Melbourne at the same time, then puts together a highly compatible group. MateBot then hand-picks the fully furnished ALM apartments that best suit your group, close to where you'll be studying or working.</p>
+          <p>When we've found your match, we introduce you to each other so you can chat, meet and move in together. It takes a couple of minutes.</p>
+        </div>
+      </div>
+      <div class="landing__bot">
+        <div class="landing__bubble" role="status">Hi, I'm MateBot. Let's find your people. I'll keep this quick.</div>
+        <picture class="landing__art"><img class="landing__img landing__img--main" src="img/matebot_landing.webp?v=20261108e" alt="MateBot, the white robot with SI on his tummy and a red locator pin on his antenna, waving beside four young adults looking out of one shared futuristic window" width="931" height="791" loading="eager" decoding="async"></picture>
+      </div>
+      <div class="landing__cta">
+        <button type="button" class="btn btn--start" id="startBtn">LET'S START</button>
+      </div>
+    </div>
+  </section>
+  <!-- I20(b): the form, its meter, "Save and finish later" and the six steps appear only after LET'S START -->
+  <main class="wrap wrap--form main" id="publicFormHost" hidden></main>
+  <footer class="foot wrap"><p><a href="#/staff" id="staffLink">Staff sign in</a></p></footer>
+</div>
+
+<!-- ============ STAFF VIEW ============ -->
+<div id="view-staff" hidden>
+  <div id="staffHost" class="wrap wrap--wide"></div>
+</div>
+
+<!-- ============ FORM TEMPLATE (question set v0.6) ============ -->
+<template id="tpl-form">
+  <div class="form-root">
+    <div class="form-banner" data-role="banner" hidden></div>
+    <div class="meter" data-role="meter" hidden>
+      <div class="meter__top"><span class="meter__label" data-role="meterLabel" aria-live="polite">You're 0% matched</span><button type="button" class="linklike meter__save" data-role="saveLater">Save and finish later</button></div>
+      <div class="meter__bar" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" data-role="meterBar"><span data-role="meterFill"></span></div>
+    </div>
+    <nav class="steps" aria-label="Form progress"><ol data-role="stepList"></ol></nav>
+    <div class="tipwrap" data-role="tipWrap" hidden><img class="tip__bot" data-role="tipImg" alt="" width="72" height="108"><div class="tip__bubble" data-role="tipText"></div></div>
+    <form data-role="form" novalidate>
+
+      <!-- SECTION 1 -->
+      <section class="card step" data-step="1" data-title="About you">
+        <h2><span class="num">1</span>About you</h2>
+        <div class="scr" data-scr="names" data-tip="wave|First things first: what do I call you? Answer a few simple questions and I'll find you the best housemates in Melbourne.">
+        <div class="grid2">
+          <div class="hp" aria-hidden="true"><label>Company website<input name="company_website" tabindex="-1" autocomplete="off"></label></div>
+          <div class="field" data-q="1.1"><label>First name<input name="first_name" required autocomplete="given-name" maxlength="80"></label></div>
+          <div class="field" data-q="1.2"><label>Last name<input name="last_name" required autocomplete="family-name" maxlength="80"></label></div>
+        </div>
+        </div>
+        <div class="scr" data-scr="contact" data-tip="phone|How can we reach you when I've found your match? The team uses this to introduce you to your group.">
+        <div class="field" data-q="1.3"><label>Email<input name="email" type="email" required autocomplete="email"></label></div>
+        <div class="field" data-q="1.4"><label>Mobile number</label>
+          <div class="phone"><select name="phone_code" aria-label="Country code" required></select><input name="phone" type="tel" required autocomplete="tel-national" placeholder="Number"></div></div>
+        <div class="field" data-q="1.5"><label>Best way to contact you
+          <select name="contact_method" required><option value="">Select…</option><option>Email</option><option>Phone</option><option>WhatsApp</option><option>WeChat</option><option>Other</option></select></label></div>
+        </div>
+        <div class="scr" data-scr="countries" data-tip="globe|Where in the world are you from, and where are you now? Melbourne is full of people from everywhere.">
+        <div class="grid2">
+          <div class="field" data-q="1.8"><label>Country of birth<input name="birth_country_raw" required autocomplete="off" placeholder="Type your country"></label><p class="country-hint" data-role="hint-birth"></p></div>
+          <div class="field" data-q="1.9"><label>Country you currently live in<input name="live_country_raw" required autocomplete="off" placeholder="Type your country"></label><p class="country-hint" data-role="hint-live"></p></div>
+        </div>
+        </div>
+        <div class="scr" data-scr="aboutyou" data-tip="wave|Two optional details for the hello. When the team introduces your group, they can say a little about you. I don't use these to pick your housemates.">
+        <p class="small muted" data-role="introPurpose">Optional. Shared in introductions to proposed housemates; not used for matching.</p>
+        <div class="grid2">
+          <div class="field" data-q="1.6"><label>Sex (optional)
+            <select name="intro_sex"><option value="">Prefer to leave blank</option><option>Female</option><option>Male</option><option>Another term</option><option>Prefer not to say</option></select></label>
+            <div class="reveal" data-show-when="intro_sex=Another term"><label>The term you use<input name="intro_sex_other" maxlength="40" data-req-when="intro_sex=Another term" autocomplete="off"></label></div></div>
+          <div class="field" data-q="1.7"><label>Current age (optional)<input name="intro_age" type="number" inputmode="numeric" min="0" max="999" step="1" placeholder="Years" autocomplete="off"></label></div>
+        </div>
+        </div>
+        <div class="scr" data-scr="languages" data-tip="chat|Which languages do you speak? Shared languages make a home feel like home.">
+        <fieldset class="field" data-q="1.10"><legend>Languages you speak <span class="hint-inline">(tick all that apply)</span></legend>
+          <div class="chips" data-role="languages" data-required-group="languages"></div>
+          <div class="reveal" data-show-when="languages=Other"><label>Other languages<input name="languages_other" data-req-when="languages=Other"></label></div>
+        </fieldset>
+        </div>
+      </section>
+
+      <!-- SECTION 2 -->
+      <section class="card step" data-step="2" data-title="Your stay">
+        <h2><span class="num">2</span>Your stay</h2>
+        <div class="scr" data-scr="movein" data-tip="suitcase|When do you want to move in? Not sure of the day? Your best guess is fine, just tell me how flexible you are.">
+        <div class="field" data-q="2.1"><label>City<select name="city" required><option>Melbourne</option></select></label><p class="hint">More cities coming soon.</p></div>
+        <div class="grid2">
+          <div class="field" data-q="2.2"><label>Preferred move-in date<input name="move_in" type="date" required></label></div>
+          <div class="field" data-q="2.3"><label>How flexible is your move-in date?
+            <select name="move_in_flex" required><option value="">Select…</option><option>Exact date</option><option>± 1 week</option><option>± 2 weeks</option><option>± 1 month</option></select></label></div>
+        </div>
+        </div>
+        <div class="scr" data-scr="moveout" data-tip="run|And when will you head off? Lining up your dates with your housemates' dates is one of my best tricks.">
+        <div class="grid2">
+          <div class="field" data-q="2.4"><label>Preferred move-out date<input name="move_out" type="date" required></label></div>
+          <div class="field" data-q="2.5"><label>How flexible is your move-out date?
+            <select name="move_out_flex" required><option value="">Select…</option><option>Exact date</option><option>± 1 week</option><option>± 2 weeks</option><option>± 1 month</option><option>Open to extending</option></select></label></div>
+        </div>
+        <p class="stay-length" data-role="stayLength" aria-live="polite"></p>
+        <p class="notice">Pets are not permitted in ALM apartments.</p>
+        </div>
+      </section>
+
+      <!-- SECTION 3 -->
+      <section class="card step" data-step="3" data-title="Budget and room">
+        <h2><span class="num">3</span>Budget, apartment and room</h2>
+        <div class="scr" data-scr="budget" data-tip="coins|Choose the most you can pay per week. I always look at cheaper options for you too.">
+        <div class="field" data-q="3.1"><label>The most you can pay per week, per person<select name="budget_option" required></select></label>
+          <p class="guide-note" data-role="guideNote" hidden></p>
+          <p class="hint">All prices are per week, per person. Some apartments include bills; internet is never included.</p>
+          <p class="hint">The option you choose is your weekly maximum per person. We consider cheaper options too. We compare an apartment's whole weekly rent, including any extra-bed charges, with everyone's maximums added together: up to 10% above that total for studios, one- and two-bedroom apartments, or up to 20% for three-bedroom apartments. These allowances apply to the whole rent, not separately to each person's share.</p></div>
+        </div>
+        <div class="scr" data-scr="sizes" data-tip="house|Studio, 1, 2 or 3 bedroom? Tick every size you'd be happy in. More ticks give me more ways to find your match.">
+        <fieldset class="field" data-q="3.2"><legend>Which apartment sizes would you consider? <span class="hint-inline">(tick all that apply)</span></legend>
+          <div class="chips" data-required-group="apt_sizes">
+            <label class="chip"><input type="checkbox" name="apt_sizes" value="Studio">Studio</label>
+            <label class="chip"><input type="checkbox" name="apt_sizes" value="1 bedroom">1 bedroom</label>
+            <label class="chip"><input type="checkbox" name="apt_sizes" value="2 bedrooms">2 bedrooms</label>
+            <label class="chip"><input type="checkbox" name="apt_sizes" value="3 bedrooms">3 bedrooms</label>
+          </div></fieldset>
+        </div>
+        <div class="scr" data-scr="mates" data-tip="cheer|How many housemates would you like? One good mate or a full house, both work for me.">
+        <div class="grid2">
+          <div class="field" data-q="3.3"><label>Ideally, how many housemates would you like?
+            <select name="mate_ideal" required><option value="">Select…</option><option>1</option><option>2</option><option>3</option><option>4</option><option>5</option><option>6</option></select></label></div>
+          <div class="field" data-q="3.4"><label>What's the most housemates you'd accept?
+            <select name="mate_max" required><option value="">Select…</option><option>1</option><option>2</option><option>3</option><option>4</option><option>5</option><option>6</option></select></label></div>
+        </div>
+        </div>
+        <div class="scr" data-scr="rooms" data-tip="key|Your own room, or share and save? Tick everything you'd accept, then tell me your first choice.">
+        <fieldset class="field" data-q="3.5"><legend>Which room arrangements would you accept? <span class="hint-inline">(you can choose more than one)</span></legend>
+          <div class="options" data-required-group="rooms">
+            <label class="opt"><input type="checkbox" name="rooms" value="Own room"><span><b>Own room</b><small>A bedroom to yourself</small></span></label>
+            <label class="opt"><input type="checkbox" name="rooms" value="Share a room with one other person"><span><b>Share a room with one other person</b><small>Twin share</small></span></label>
+            <label class="opt"><input type="checkbox" name="rooms" value="Share a room with two others"><span><b>Share a room with two others</b><small>Lowest cost option</small></span></label>
+            <label class="opt"><input type="checkbox" name="rooms" value="Couple sharing one bed"><span><b>Couple sharing one bed</b><small>King, queen or double bed</small></span></label>
+          </div></fieldset>
+        <div class="field" data-q="3.7"><label>Which is your first choice?<select name="room_first" required><option value="">Tick at least one room arrangement above</option></select></label></div>
+        </div>
+        <div class="scr" data-scr="bunk" data-tip="bed|Top bunk, bottom bunk, or no bunk? Some people love them, some don't. Be honest, I won't judge.">
+        <fieldset class="field" data-q="3.6" data-swipe="Top bunk, bottom bunk, or no bunk?|Yes=Yes, a bunk is fine|No=No bunk beds for me"><legend>Are you OK sleeping in a bunk bed?</legend>
+          <div class="pills"><label class="pill"><input type="radio" name="bunk_ok" value="Yes" required>Yes</label><label class="pill"><input type="radio" name="bunk_ok" value="No">No</label></div></fieldset>
+        </div>
+        <div class="scr" data-scr="party" data-tip="jump|Flying solo, or bringing someone along? If you're coming with friends, I'll keep you together.">
+        <fieldset class="field" data-q="3.8"><legend>Are you enquiring alone, as a couple sharing one bed, or with friends?</legend>
+          <div class="pills">
+            <label class="pill"><input type="radio" name="party" value="Alone" required>Alone</label>
+            <label class="pill"><input type="radio" name="party" value="Couple sharing one bed">Couple sharing one bed</label>
+            <label class="pill"><input type="radio" name="party" value="With friends">With friends</label>
+          </div></fieldset>
+        <div class="field reveal" data-q="3.9" data-show-when="party=Couple sharing one bed|With friends">
+          <label>How many people in total, including you?
+            <select name="party_size" data-req-when="party=With friends"><option value="">Select…</option><option>2</option><option>3</option><option>4</option><option>5</option><option>6</option><option>7</option></select></label>
+          <p class="sublabel" data-role="partySizeNote" hidden></p>
+          <p class="sublabel">The other people in your group. We need a name, email and country of birth for each person, so everyone can be matched properly. Your answers to the other questions (budget, dates, room and housemate preferences) apply to your whole group; we won't ask the others separately.</p>
+          <div class="party-rows" data-role="partyRows"></div>
+        </div>
+        <fieldset class="field reveal" data-q="3.10" data-show-when="party=With friends"><legend>Is anyone in your group a couple who will share one bed?</legend>
+          <p class="sublabel">Only you can tell us this. We never assume two people are a couple, even if they are enquiring together.</p>
+          <div class="pills">
+            <label class="pill"><input type="radio" name="couples_answer" value="No" data-req-when="party=With friends">No</label>
+            <label class="pill"><input type="radio" name="couples_answer" value="Yes">Yes</label>
+          </div>
+          <div class="reveal couples" data-show-when="couples_answer=Yes">
+            <p class="sublabel">Which two people? Pick each couple below (you and/or the people listed above). Add another row if there is more than one couple.</p>
+            <div class="couple-rows" data-role="coupleRows"></div>
+            <div class="actions"><button class="btn btn--ghost btn--sm" type="button" data-role="addCouple">Add another couple</button></div>
+          </div>
+        </fieldset>
+        <div class="notice notice--rent">
+          <b>How the rent works.</b> ALM leases each apartment as one whole lease, and everyone on the lease is jointly liable for the full weekly rent. How you divide it is up to your group: for example, you can agree among yourselves that whoever has a private bathroom or a bigger room pays a little more.
+          As a guide, we show each person's share by room: weekly rent ÷ bedrooms = room cost. A person with their own room carries the full room cost, and people sharing a room split it
+          (a $1,000 2-bedroom is $500 per room: $500 alone, or $250 each for two sharing). The $70 per week extra-bed charge is added to the room that holds the extra bed. Every bedroom must be occupied; groups are two to seven people.
+        </div>
+        </div>
+        <div class="scr" data-scr="features" data-tip="house|Anything that would make a place feel like home? Tick what you'd particularly like. These are wishes, not filters: nothing is ruled out.">
+        <fieldset class="field" data-q="3.11"><legend>Which apartment and building features would you particularly like? <span class="hint-inline">(optional, tick any)</span></legend>
+          <p class="sublabel">Apartment</p>
+          <div class="chips">
+            <label class="chip"><input type="checkbox" name="features" value="Higher floor">Higher floor</label>
+            <label class="chip"><input type="checkbox" name="features" value="Lower floor">Lower floor</label>
+            <label class="chip"><input type="checkbox" name="features" value="Views">Views</label>
+            <label class="chip"><input type="checkbox" name="features" value="Air conditioning">Air conditioning</label>
+            <label class="chip"><input type="checkbox" name="features" value="Dishwasher">Dishwasher</label>
+            <label class="chip"><input type="checkbox" name="features" value="Ensuite">Ensuite</label>
+          </div>
+          <p class="sublabel">Outdoor space</p>
+          <div class="chips">
+            <label class="chip"><input type="checkbox" name="features" value="Balcony">Balcony</label>
+            <label class="chip"><input type="checkbox" name="features" value="Courtyard">Courtyard</label>
+          </div>
+          <p class="sublabel">Building facilities</p>
+          <div class="chips">
+            <label class="chip"><input type="checkbox" name="features" value="Pool">Pool</label>
+            <label class="chip"><input type="checkbox" name="features" value="Gym">Gym</label>
+            <label class="chip"><input type="checkbox" name="features" value="Sauna">Sauna</label>
+            <label class="chip"><input type="checkbox" name="features" value="Theatre room">Theatre room</label>
+            <label class="chip"><input type="checkbox" name="features" value="Residents lounge">Residents lounge</label>
+            <label class="chip"><input type="checkbox" name="features" value="BBQ facilities">BBQ facilities</label>
+            <label class="chip"><input type="checkbox" name="features" value="Tennis court">Tennis court</label>
+            <label class="chip"><input type="checkbox" name="features" value="Concierge">Concierge</label>
+            <label class="chip"><input type="checkbox" name="features" value="Lift access">Lift access</label>
+          </div>
+          <p class="sublabel">Parking/work facilities</p>
+          <div class="chips">
+            <label class="chip"><input type="checkbox" name="features" value="Car parking available (extra charge)">Car parking available (extra charge)</label>
+            <label class="chip"><input type="checkbox" name="features" value="Bicycle storage">Bicycle storage</label>
+            <label class="chip"><input type="checkbox" name="features" value="Study desk">Study desk</label>
+          </div>
+          <p class="hint">A wish list, not a promise: not every apartment or building has these, and I never rule a place out because of them.</p>
+        </fieldset>
+        <fieldset class="field reveal" data-q="3.12" data-show-when="features=*"><legend>Which three matter most to you? <span class="hint-inline">(optional, up to three)</span></legend>
+          <div class="chips" data-role="featuresTop"></div>
+          <p class="hint" data-role="featuresTopHint"></p>
+        </fieldset>
+        </div>
+      </section>
+
+      <!-- SECTION 4 -->
+      <section class="card step" data-step="4" data-title="Study or work">
+        <h2><span class="num">4</span>Study or work</h2>
+        <div class="scr" data-scr="doing" data-tip="books|What brings you to Melbourne? Study, work or an adventure? I'll find apartments close to where you need to be.">
+        <div class="field" data-q="4.1"><label>What will you be doing in Melbourne?
+          <select name="doing" required><option value="">Select…</option><option>Studying</option><option>Working holiday</option><option>Working</option><option>Other</option></select></label></div>
+        <div class="reveal" data-show-when="doing=Studying">
+          <div class="field" data-q="4.2"><label>Where will you study?<select name="school" data-req-when="doing=Studying"></select></label>
+            <p class="hint">We use your campus to find apartments close to it.</p>
+            <div class="reveal" data-show-when="school=Other|English language school (enter name)"><label>Name of your school or college<input name="school_other" data-req-when="school=Other|English language school (enter name)"></label></div>
+          </div>
+          <div class="grid2">
+            <div class="field" data-q="4.3"><label>Course name<input name="course"></label></div>
+            <div class="field" data-q="4.3"><label>Level
+              <select name="level"><option value="">Select…</option><option>English</option><option>Diploma</option><option>Bachelor</option><option>Master's</option><option>PhD</option><option>Exchange</option><option>Other</option></select></label></div>
+            <div class="field" data-q="4.4"><label>Course start date<input name="course_start" type="date"></label></div>
+            <div class="field" data-q="4.4"><label>Course end date<input name="course_end" type="date"></label></div>
+          </div>
+        </div>
+        <div class="field reveal" data-q="4.5" data-show-when="doing=Working|Working holiday"><label>Where will you work?<input name="work" placeholder="Suburb or employer, or 'Not yet known'"></label></div>
+        </div>
+        <div class="scr" data-scr="areas" data-tip="map|Any favourite areas? Both of these are optional. I use your campus or workplace to find apartments nearby.">
+        <fieldset class="field" data-q="4.6"><legend>Preferred areas <span class="hint-inline">(optional)</span></legend>
+          <div class="chips">
+            <label class="chip"><input type="checkbox" name="areas" value="Melbourne CBD">Melbourne CBD</label>
+            <label class="chip"><input type="checkbox" name="areas" value="South Yarra">South Yarra</label>
+            <label class="chip"><input type="checkbox" name="areas" value="No preference">No preference</label>
+          </div></fieldset>
+        <div class="field" data-q="4.7"><label>Maximum travel time to campus or work <span class="hint-inline">(optional)</span>
+          <select name="travel"><option value="">Select…</option><option>5 minutes</option><option>15 minutes</option><option>30 minutes</option><option>45 minutes</option><option>60+ minutes</option></select></label></div>
+        </div>
+      </section>
+
+      <!-- SECTION 5 -->
+      <section class="card step" data-step="5" data-title="Ideal housemates">
+        <h2><span class="num">5</span>Your ideal housemates</h2>
+        <div class="scr" data-scr="smoke" data-tip="magnify|Do you smoke or vape? All our apartments are smoke-free inside, so it's balcony or courtyard only.">
+        <fieldset class="field" data-q="5.5" data-swipe="Do you smoke or vape?|No=No, I don't|Yes, outside only (balcony or courtyard)=Yes, outside only"><legend>Do you smoke or vape?</legend>
+          <div class="pills"><label class="pill"><input type="radio" name="smoke" value="No" required>No</label><label class="pill"><input type="radio" name="smoke" value="Yes, outside only (balcony or courtyard)">Yes, outside only (balcony or courtyard)</label></div>
+          <p class="hint">All ALM apartments are non-smoking inside.</p></fieldset>
+        </div>
+        <div class="scr" data-scr="smokeok" data-tip="peek|And would a housemate who smokes outside bother you? Swipe to tell me.">
+        <fieldset class="field" data-q="5.6" data-swipe="A housemate who smokes or vapes outside?|Yes=Fine by me|No=Rather not"><legend>Are you OK living with someone who smokes or vapes outside?</legend>
+          <div class="pills"><label class="pill"><input type="radio" name="smoke_ok" value="Yes" required>Yes</label><label class="pill"><input type="radio" name="smoke_ok" value="No">No</label></div></fieldset>
+        </div>
+        <div class="scr" data-scr="routine" data-tip="moon|Early bird or night owl? Swipe! Matching rhythms means fewer 6 am alarm clashes.">
+        <div class="grid2 grid2--cards">
+          <div class="field" data-q="5.7" data-swipe="Early bird or night owl?|Early riser=Early bird|Night owl=Night owl|Varies=It varies"><label>Your daily routine<select name="routine"><option value="">Select…</option><option>Early riser</option><option>Night owl</option><option>Varies</option></select></label></div>
+        </div>
+        </div>
+        <div class="scr" data-scr="tidy" data-tip="broom|Spotless or relaxed? There's no right answer, only the right housemates for you.">
+        <div class="grid2 grid2--cards">
+          <div class="field" data-q="5.8" data-swipe="Spotless or relaxed?|Very tidy=Very tidy|Relaxed=Relaxed|Average=Somewhere in between"><label>How tidy are you?<select name="tidy"><option value="">Select…</option><option>Very tidy</option><option>Average</option><option>Relaxed</option></select></label></div>
+        </div>
+        </div>
+        <div class="scr" data-scr="social" data-tip="music|Quiet nights in, or a home full of friends? Swipe to show me your style.">
+        <div class="grid2 grid2--cards">
+          <div class="field" data-q="5.9" data-swipe="Quiet night in, or a home full of people?|Quiet and private=Quiet and private|Very social=Very social|Friendly but independent=Friendly but independent"><label>Social style at home<select name="social"><option value="">Select…</option><option>Quiet and private</option><option>Friendly but independent</option><option>Very social</option></select></label></div>
+        </div>
+        </div>
+        <div class="scr" data-scr="guests" data-tip="coffee|Guests and parties: often, sometimes or rarely? Honest answers make the best matches.">
+        <div class="grid2 grid2--cards">
+          <div class="field" data-q="5.10" data-swipe="Guests and parties at home?|Rarely=Rarely|Often=Often|Sometimes=Sometimes"><label>Guests and parties<select name="guests"><option value="">Select…</option><option>Rarely</option><option>Sometimes</option><option>Often</option></select></label></div>
+        </div>
+        </div>
+        <div class="scr" data-scr="diet" data-tip="cooking|Anything I should know about your kitchen? Sharing a fridge is easier when I know this.">
+        <div class="grid2">
+          <div class="field" data-q="5.11"><label>Diet or kitchen needs<select name="diet"><option value="">Select…</option><option>None</option><option>Vegetarian</option><option>Vegan</option><option>Halal</option><option>Kosher</option><option>Other</option></select></label></div>
+        </div>
+        </div>
+        <div class="scr" data-scr="intro" data-tip="laptop|Nearly there! A short hello helps your future housemates get to know you when we introduce the group. It is not used to pick your housemates.">
+        <div class="field" data-q="5.12"><label>Anything else we should know? <span class="hint-inline">(optional)</span><textarea name="else_text" rows="2"></textarea></label></div>
+        <div class="field" data-q="5.13"><label>A short introduction about yourself for your future housemates <span class="hint-inline">(optional)</span>
+          <textarea name="intro" rows="3" maxlength="400" placeholder="e.g. Hi, I'm Anna from Stockholm, starting a Master's at Melbourne Uni in February. I love cooking, running along the Yarra and weekend trips."></textarea></label><p class="hint"><span data-role="introCount">0</span>/400</p></div>
+        </div>
+      </section>
+
+      <!-- SECTION 6 -->
+      <section class="card step" data-step="6" data-title="Consent">
+        <h2><span class="num">6</span>Almost done</h2>
+        <div class="scr" data-scr="source" data-tip="star|Almost done! How did you find us? It helps the team know where to say hello.">
+        <div class="field" data-q="6.1"><label>How did you hear about us?
+          <select name="source" required><option value="">Select…</option><option>Facebook</option><option>Instagram</option><option>Google</option><option>TikTok</option><option>YouTube</option><option>Snapchat</option><option>Reddit</option><option>Flatmates</option><option>Realestate.com</option><option>Education agent</option><option>Education Expo</option><option>Hostel</option><option>Friend or referral</option><option>ALM website</option><option>Other</option></select></label></div>
+        </div>
+        <div class="scr scr--plain" data-scr="consent" data-tip="thumbsup|Last step. Tick the boxes and I'll get straight to work finding your best housemates.">
+        <div class="consents">
+          <label class="consent" data-q="6.2"><input type="checkbox" name="consent_store" required><span>I agree that Apartment Living Melbourne may store my details to match me with housemates.</span></label>
+          <label class="consent" data-q="6.3"><input type="checkbox" name="consent_share" required><span>I agree that ALM may share my name, contact details and introduction with the people in my proposed group.</span></label>
+          <label class="consent" data-q="6.4"><input type="checkbox" name="adults_confirm" required><span>I confirm that everyone included in this enquiry, including me, will be 18 or older on the move-in date. If that is not the case, please contact the ALM team instead of continuing.</span></label>
+          <p class="hint" data-role="adultsRenew" hidden>You changed your details, your move-in date or your group, so please confirm this again for the new answers.</p>
+          <label class="consent" data-q="6.6"><input type="checkbox" name="consent_marketing"><span>Send me ALM offers and updates. <em class="opt-tag">Optional</em></span></label>
+        </div>
+        </div>
+        <!-- I19(k): card mode only. Every answer in plain language, grouped by section, each with a Change link. Holds no inputs, so
+             nothing here is submitted; the staff form (plain section layout, I19(l)) never shows it. -->
+        <div class="scr scr--plain scr--review card-only" data-scr="review" data-tip="clipboard|Here is everything you told me. Have a quick look, change anything you like, then send it over and I'll get to work.">
+          <div class="review" data-role="review" aria-live="polite">
+            <h3 class="review__title">Check your answers</h3>
+            <p class="review__intro">Tap <b>Change</b> beside an answer to edit it, then <b>Back to check your answers</b> to continue reviewing. When everything looks right, tap <b>Submit</b>.</p>
+            <div class="review__groups" data-role="reviewGroups"></div>
+          </div>
+        </div>
+      </section>
+
+      <!-- SECTION 7: STAFF (only rendered in staff mode) -->
+      <section class="card step staff-step" data-step="7" data-title="Staff only" hidden>
+        <h2><span class="num">7</span>Staff only</h2>
+        <p class="hint">Visible to ALM staff only. Never shown to enquirers.</p>
+        <div class="grid2">
+          <div class="field" data-q="7.1"><label>Enquiry channel<input name="channel" value="Phone" readonly></label></div>
+          <div class="field" data-q="7.2"><label>Campaign<input name="campaign"></label></div>
+          <div class="field" data-q="7.3"><label>Staff member<select name="staff_member" data-role="staffMember"></select></label></div>
+          <div class="field" data-q="7.4"><label>Enquiry date<input name="enq_date" readonly></label></div>
+        </div>
+        <div class="field" data-q="7.6"><label>Staff notes<textarea name="staff_notes" rows="3"></textarea></label></div>
+        <label class="consent"><input type="checkbox" name="is_test"><span>Mark this as a TEST enquiry (synthetic data, excluded from real matching)</span></label>
+      </section>
+
+      <!-- SECTION 8: STAFF SUMMARY (I19(m)/I19(p); staff mode only). The shared review block above is moved in here by form.js
+           in staff mode, so the grouped answers and Change links are the same code as the public summary. Holds no inputs. -->
+      <section class="card step staff-step staff-review" data-step="8" data-title="Check the answers" hidden>
+        <h2><span class="num">8</span>Check the answers</h2>
+        <div data-role="staffReviewHost"></div>
+        <div class="review__email card--inset" data-role="emailAction">
+          <h3>Email completed form</h3>
+          <p>Prepare a copy of the completed answers for the enquirer. This first saves the enquiry, then opens an email preview. You review it and send it from your email app.</p>
+          <button type="button" class="btn btn--ghost" data-role="emailForm">Email completed form</button>
+        </div>
+      </section>
+
+      <div class="nav" data-role="nav">
+        <!-- I19(m): when an answer is being changed from the summary, this green button is the first navigation action and
+             returns straight to "Check your answers" (after the screen is validated, like Next). Hidden everywhere else. -->
+        <button type="button" class="btn btn--return" data-role="toReview" hidden>Back to check your answers</button>
+        <button type="button" class="btn btn--ghost" data-role="back">Back</button>
+        <p class="nav__count" data-role="stepCount"></p>
+        <button type="button" class="btn" data-role="next">Next</button>
+      </div>
+      <p class="msg err" data-role="submitError" hidden></p>
+    </form>
+
+    <section class="card done" data-role="done" hidden tabindex="-1">
+      <div class="match" data-role="matchArt">
+        <picture><source srcset="img/matebot_main.webp?v=20261108e" type="image/webp"><img src="img/matebot_main.png?v=20261108e" alt="MateBot, the white robot with SI on his tummy and a red locator pin on his antenna, waving beside four young adults looking out of one shared futuristic window" width="931" height="791" loading="lazy" decoding="async"></picture>
+      </div>
+      <p class="done__kicker" data-role="doneKicker">It's a match!</p>
+      <h2 data-role="doneTitle">Thank you, <span data-role="doneName"></span>.</h2>
+      <p data-role="doneBody">MateBot AI is now analysing your profile against everyone moving to Melbourne around <b data-role="doneDate"></b>. When we've found a highly compatible group and an apartment that suits you all, our team will be in touch to introduce you.</p>
+      <p class="hint" data-role="doneRef"></p>
+      <ol class="timeline" data-role="timeline">
+        <li><b>We match you</b><span>MateBot AI compares your answers with everyone moving to Melbourne around your dates.</span></li>
+        <li><b>We introduce your group</b><span>Our team gets in touch and introduces you to your proposed housemates, with an apartment that suits you all.</span></li>
+        <li><b>You move in</b><span>Chat, meet and move into your fully furnished apartment together.</span></li>
+      </ol>
+      <div class="mate card--inset" data-role="mateBox" hidden>
+        <h3>Bring a mate</h3>
+        <p>Know someone who should live with you? Send them this link. They fill in their own form and MateBot AI keeps you in the same group. <span data-role="mateLimit"></span></p>
+        <div class="share">
+          <input class="share__link" data-role="mateLink" readonly aria-label="Your Bring a mate link">
+          <button type="button" class="btn btn--sm" data-role="copyMate">Copy link</button>
+          <a class="btn btn--ghost btn--sm" data-role="shareMate" href="#" target="_blank" rel="noopener">Share</a>
+        </div>
+        <p class="hint" data-role="mateCopied" aria-live="polite"></p>
+      </div>
+      <!-- I19(p): staff only. Prepares (never sends) an email copy of the SAVED enquiry for the enquirer. Plain text only. -->
+      <div class="emailbox card--inset" data-role="emailBox" hidden tabindex="-1">
+        <h3>Email completed form</h3>
+        <p>A copy of the saved answers for the enquirer's records. <b>Open email app</b> opens a new message in your email app addressed to them; nothing is sent until you press Send there. If your email app shows a shortened message, use <b>Copy email</b> and paste the full text in.</p>
+        <dl class="emailbox__meta">
+          <dt>To</dt><dd data-role="emailTo"></dd>
+          <dt>Subject</dt><dd data-role="emailSubject"></dd>
+        </dl>
+        <textarea class="emailbox__body" data-role="emailBody" readonly rows="18" aria-label="Email message"></textarea>
+        <div class="actions">
+          <a class="btn btn--sm" data-role="emailOpen" href="#" target="_blank" rel="noopener noreferrer">Open email app</a>
+          <button type="button" class="btn btn--ghost btn--sm" data-role="emailCopy">Copy email</button>
+          <button type="button" class="btn btn--ghost btn--sm" data-role="emailClose">Close</button>
+        </div>
+        <p class="hint" data-role="emailCopied" aria-live="polite"></p>
+      </div>
+      <p class="msg err" data-role="emailError" hidden></p>
+      <div class="actions"><button type="button" class="btn btn--ghost" data-role="emailFormDone" hidden>Email completed form</button><button type="button" class="btn btn--ghost" data-role="restart">Start again</button></div>
+    </section>
+    <div class="savebox card" data-role="saveBox" hidden tabindex="-1">
+      <h3>Saved. Finish whenever you like.</h3>
+      <p>Your answers so far are saved. Come back with this link to carry on where you left off. We keep saved forms for up to 12 months.</p>
+      <div class="share">
+        <input class="share__link" data-role="saveLink" readonly aria-label="Your link to finish later">
+        <button type="button" class="btn btn--sm" data-role="copySave">Copy link</button>
+        <a class="btn btn--ghost btn--sm" data-role="emailSave" href="#">Email it to me</a>
+      </div>
+      <p class="hint" data-role="saveCopied" aria-live="polite"></p>
+      <div class="actions"><button type="button" class="btn btn--ghost btn--sm" data-role="saveClose">Keep going</button></div>
+    </div>
+  </div>
+</template>
+
+<script src="api.js?v=20261108e"></script>
+<script src="form.js?v=20261111f"></script>
+<script src="respond.js?v=20261109y"></script>
+<script src="staff-exceptions.js?v=20261111b"></script>
+<script src="staff.js?v=20261111h"></script>
+<script src="app.js?v=20261109x"></script>
+</body>
+</html>

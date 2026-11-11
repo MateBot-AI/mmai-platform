@@ -1,0 +1,111 @@
+# DigitalOcean App Platform spec for MateBot AI (rule T17: production hosting in the Sydney region).
+# Preparation template only: do not apply before resource approval and replacement of the cluster placeholder.
+# Create the approved managed cluster separately, then attach it here and validate/propose the spec in the authorised account.
+# No secret VALUES live in this file: every entry marked type SECRET is typed into
+# the DigitalOcean control panel (Settings -> App-Level Environment Variables), where it is stored encrypted.
+name: matebot-ai
+region: syd
+
+databases:
+  - name: matebot-db            # managed PostgreSQL; DigitalOcean fills ${matebot-db.DATABASE_URL} automatically
+    engine: PG
+    version: "17"
+    production: true            # attach an existing managed cluster; does not create or size it
+    cluster_name: replace-with-approved-sydney-cluster
+
+services:
+  - name: web
+    dockerfile_path: mmai-app/Dockerfile
+    source_dir: /
+    github:                     # set to the repository that holds the mmai-app folder (or use the control panel to link it)
+      repo: MateBot-AI/mmai-platform
+      branch: main
+      deploy_on_push: false
+    http_port: 8080
+    instance_count: 1           # exactly one: the T8 scheduler and the AI queue run inside the web process
+    instance_size_slug: apps-s-1vcpu-1gb
+    health_check:
+      http_path: /api/health
+      initial_delay_seconds: 20
+      period_seconds: 30
+      timeout_seconds: 5
+      failure_threshold: 3
+    alerts:
+      - rule: DEPLOYMENT_FAILED
+      - rule: DOMAIN_FAILED
+    envs:
+      # --- database (filled in by App Platform from the component above) ---
+      - key: DATABASE_URL
+        scope: RUN_TIME
+        value: ${matebot-db.DATABASE_URL}
+      # --- addresses ---
+      - key: MMAI_PUBLIC_BASE_URL          # links the app hands out (save-and-finish-later, Bring a mate, emailed form)
+        scope: RUN_TIME
+        value: https://app.matebot.com.au
+      - key: MMAI_FRAME_ANCESTORS          # I20(g): only the ALM website may embed the public form
+        scope: RUN_TIME
+        value: "'self' https://www.apartmentlivingmelbourne.com.au https://apartmentlivingmelbourne.com.au"
+      - key: MMAI_ALLOWED_ORIGINS          # browsers calling the API from another origin: none needed (the form is served by the app)
+        scope: RUN_TIME
+        value: ""
+      - key: MMAI_TRUST_PROXY_IP           # App Platform sits behind a load balancer: rate limits use the forwarded client IP
+        scope: RUN_TIME
+        value: "1"
+      - key: MMAI_TRUST_VISITOR_ID
+        scope: RUN_TIME
+        value: "0"
+      # --- background work ---
+      - key: MMAI_HOMEBOT_REVIEW_BUILD
+        scope: RUN_TIME
+        value: "1"
+      - key: MMAI_SCHEDULER
+        scope: RUN_TIME
+        value: "0"
+      - key: MMAI_SCHEDULER_DATASETS
+        scope: RUN_TIME
+        value: real,test
+      - key: MMAI_AI_QUEUE
+        scope: RUN_TIME
+        value: "0"
+      - key: MMAI_HOMEBOT_MATCHING
+        scope: RUN_TIME
+        value: "0"
+      - key: MMAI_NOTIFICATIONS
+        scope: RUN_TIME
+        value: "0"
+      - key: MMAI_MAIL_MODE
+        scope: RUN_TIME
+        value: "off"
+      - key: MMAI_ALERT_MODE
+        scope: RUN_TIME
+        value: "off"
+      - key: MMAI_ROUTING
+        scope: RUN_TIME
+        value: "0"
+      # --- AI (MateBot AI's own Anthropic account) ---
+      - key: ANTHROPIC_API_KEY
+        scope: RUN_TIME
+        type: SECRET
+      - key: MMAI_AI_MODE
+        scope: RUN_TIME
+        value: own-key
+      - key: MMAI_AI_MODEL
+        scope: RUN_TIME
+        value: claude-sonnet-5-5
+      # --- first passwords for the staff accounts created on an EMPTY database (ignored once the accounts exist) ---
+      - key: MMAI_INITIAL_PASSWORD_BILL
+        scope: RUN_TIME
+        type: SECRET
+      - key: MMAI_INITIAL_PASSWORD_ANNA
+        scope: RUN_TIME
+        type: SECRET
+      # --- sessions ---
+      - key: MMAI_SESSION_DAYS
+        scope: RUN_TIME
+        value: "30"
+
+domains:
+  - domain: app.matebot.com.au
+    type: PRIMARY
+    # DNS is managed at VentraIP (not DigitalOcean): add a CNAME for "app" pointing at the app's default
+    # ondigitalocean.app address (shown in the control panel). Certificate is issued automatically.

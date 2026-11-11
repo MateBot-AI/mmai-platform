@@ -1,0 +1,10 @@
+# Pinned to the versions the app was tested with (security review L9). Refresh deliberately, then re-run tests/.
+fastapi==0.159.1
+starlette==1.9.0
+pydantic==2.12.5
+uvicorn[standard]==0.54.0
+anthropic==2.1.0
+openpyxl==3.1.5
+httpx==0.28.1
+psycopg[binary]==3.2.13   # PostgreSQL driver (used only when DATABASE_URL is set; SQLite needs nothing extra)
+tzdata==2026.6   # IANA zone data for the Australia/Melbourne business-date clock (lease_dates); python:slim images cannot be assumed to ship OS zoneinfo

@@ -1,0 +1,269 @@
+{
+ "generated_at": "2026-11-05T05:16:13Z",
+ "source": {
+  "apartments": {
+   "path": "mmai-app/server/data/mmai.db",
+   "note": "ALM apartment list imported into MateBot (A1/A2); whole-apartment weekly rent, not per person"
+  },
+  "capacity_rules": "mmai-app/server/rules.py APT_TYPES (A4(b) maximum, standard capacity), EXTRA_BED_CHARGE (A5)",
+  "rate_rule": "A6: rent_12m applies unless the lease starts in January or February and ends in July (of any year), when rent_6m applies",
+  "institutions": "mmai-app/server/institutions.py (I9; Other always last)"
+ },
+ "extra_bed_charge_per_week": 70.0,
+ "types": [
+  {
+   "code": "Studio",
+   "label": "Studio",
+   "bedrooms": 1,
+   "bathrooms": 1,
+   "standard_capacity": 2,
+   "max_capacity": 3,
+   "rent_12m": {
+    "min": 599,
+    "max": 695
+   },
+   "rent_6m": {
+    "min": 649,
+    "max": 745
+   },
+   "min_lease_months": {
+    "min": 2.0,
+    "max": 2.0
+   }
+  },
+  {
+   "code": "1BR",
+   "label": "1 bedroom",
+   "bedrooms": 1,
+   "bathrooms": 1,
+   "standard_capacity": 2,
+   "max_capacity": 3,
+   "rent_12m": {
+    "min": 675,
+    "max": 785
+   },
+   "rent_6m": {
+    "min": 725,
+    "max": 835
+   },
+   "min_lease_months": {
+    "min": 2.0,
+    "max": 2.0
+   }
+  },
+  {
+   "code": "2B1B",
+   "label": "2 bedrooms, 1 bathroom",
+   "bedrooms": 2,
+   "bathrooms": 1,
+   "standard_capacity": 4,
+   "max_capacity": 5,
+   "rent_12m": {
+    "min": 799,
+    "max": 1050
+   },
+   "rent_6m": {
+    "min": 874,
+    "max": 1125
+   },
+   "min_lease_months": {
+    "min": 2.0,
+    "max": 2.0
+   }
+  },
+  {
+   "code": "2B2B",
+   "label": "2 bedrooms, 2 bathrooms",
+   "bedrooms": 2,
+   "bathrooms": 2,
+   "standard_capacity": 4,
+   "max_capacity": 5,
+   "rent_12m": {
+    "min": 1025,
+    "max": 1150
+   },
+   "rent_6m": {
+    "min": 1100,
+    "max": 1225
+   },
+   "min_lease_months": {
+    "min": 2.0,
+    "max": 2.0
+   }
+  },
+  {
+   "code": "3B",
+   "label": "3 bedrooms, 2 bathrooms",
+   "bedrooms": 3,
+   "bathrooms": 2,
+   "standard_capacity": 6,
+   "max_capacity": 7,
+   "rent_12m": {
+    "min": 1295,
+    "max": 1450
+   },
+   "rent_6m": {
+    "min": 1395,
+    "max": 1550
+   },
+   "min_lease_months": {
+    "min": 2.0,
+    "max": 2.0
+   }
+  }
+ ],
+ "institutions": [
+  {
+   "name": "University of Melbourne – Parkville",
+   "group": "Universities"
+  },
+  {
+   "name": "University of Melbourne – Southbank",
+   "group": "Universities"
+  },
+  {
+   "name": "RMIT University – Melbourne City",
+   "group": "Universities"
+  },
+  {
+   "name": "RMIT University – Brunswick",
+   "group": "Universities"
+  },
+  {
+   "name": "Monash University – Law Chambers (CBD)",
+   "group": "Universities"
+  },
+  {
+   "name": "Monash University – 750 Collins Street (Docklands)",
+   "group": "Universities"
+  },
+  {
+   "name": "Monash University – Parkville",
+   "group": "Universities"
+  },
+  {
+   "name": "Monash University – Caulfield",
+   "group": "Universities"
+  },
+  {
+   "name": "Monash University – Clayton",
+   "group": "Universities"
+  },
+  {
+   "name": "Victoria University – City Campus (VU City Tower)",
+   "group": "Universities"
+  },
+  {
+   "name": "Victoria University – Footscray Park",
+   "group": "Universities"
+  },
+  {
+   "name": "Deakin University – Deakin Downtown (Docklands)",
+   "group": "Universities"
+  },
+  {
+   "name": "Deakin University – Melbourne Burwood",
+   "group": "Universities"
+  },
+  {
+   "name": "La Trobe University – City Campus",
+   "group": "Universities"
+  },
+  {
+   "name": "La Trobe University – Melbourne (Bundoora)",
+   "group": "Universities"
+  },
+  {
+   "name": "Swinburne University – Hawthorn",
+   "group": "Universities"
+  },
+  {
+   "name": "Australian Catholic University – Melbourne (Fitzroy)",
+   "group": "Universities"
+  },
+  {
+   "name": "CQUniversity – Melbourne",
+   "group": "Universities"
+  },
+  {
+   "name": "Torrens University – Melbourne (Flinders Street)",
+   "group": "Universities"
+  },
+  {
+   "name": "William Angliss Institute – Melbourne",
+   "group": "TAFE and institutes"
+  },
+  {
+   "name": "Melbourne Polytechnic – Collingwood",
+   "group": "TAFE and institutes"
+  },
+  {
+   "name": "Holmesglen Institute – Bourke Street",
+   "group": "TAFE and institutes"
+  },
+  {
+   "name": "RMIT University – Vocational (City)",
+   "group": "TAFE and institutes"
+  },
+  {
+   "name": "Monash College – Docklands",
+   "group": "Private colleges"
+  },
+  {
+   "name": "Melbourne Institute of Technology (MIT)",
+   "group": "Private colleges"
+  },
+  {
+   "name": "Victorian Institute of Technology (VIT)",
+   "group": "Private colleges"
+  },
+  {
+   "name": "Kaplan Business School – Melbourne",
+   "group": "Private colleges"
+  },
+  {
+   "name": "Holmes Institute – Melbourne",
+   "group": "Private colleges"
+  },
+  {
+   "name": "Kent Institute Australia – Melbourne",
+   "group": "Private colleges"
+  },
+  {
+   "name": "Engineering Institute of Technology – Melbourne",
+   "group": "Private colleges"
+  },
+  {
+   "name": "Asia Pacific International College – Melbourne",
+   "group": "Private colleges"
+  },
+  {
+   "name": "Academy of Information Technology – Melbourne",
+   "group": "Private colleges"
+  },
+  {
+   "name": "Australian Institute of Music – Melbourne",
+   "group": "Private colleges"
+  },
+  {
+   "name": "Collarts – Wellington Street (Collingwood)",
+   "group": "Private colleges"
+  },
+  {
+   "name": "JMC Academy – Melbourne (South Melbourne)",
+   "group": "Private colleges"
+  },
+  {
+   "name": "SAE University College – Melbourne",
+   "group": "Private colleges"
+  },
+  {
+   "name": "English language school (enter name)",
+   "group": "English language"
+  },
+  {
+   "name": "Other",
+   "group": "Other"
+  }
+ ]
+}

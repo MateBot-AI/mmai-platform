@@ -1,0 +1,13 @@
+.git
+**/__pycache__
+**/.pytest_cache
+**/node_modules
+**/*.db
+**/*.db-*
+**/*.sqlite*
+**/*.log
+**/.env
+**/.env.*
+**/reports
+**/probes
+**/bootstrap/staff_accounts*
