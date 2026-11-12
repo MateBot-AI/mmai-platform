@@ -87,7 +87,8 @@ def test_object_binding_reasons_are_plain_and_bounded():
 def test_catalogue_version_moved_with_the_binding():
     # BEFORE: t4c-v2.3 (home-context binding). AFTER: t4c-v2.4 (person/home object binding) - earlier accepted projections are
     # no longer current and are re-read through the existing currentness path; prompt version unchanged.
-    assert notes_facts.CATALOGUE_VERSION == "t4c-v2.4" and notes_facts.PROMPT_VERSION == "notes-extract-3"
+    # The later no-inference guidance advances the prompt, not this catalogue binding.
+    assert notes_facts.CATALOGUE_VERSION == "t4c-v2.4" and notes_facts.PROMPT_VERSION == "notes-extract-5"
 
 
 # ------------------------------------------------------------------------------------------------------------------ N1: stored introductions

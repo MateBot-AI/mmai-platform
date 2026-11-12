@@ -2729,7 +2729,9 @@ def exit_exception_withdraw(xid: int, staff=Depends(current_staff)):
 # ---------------------------------------------------------------------------
 # T5 scheduled purge (daily) in a background thread
 # ---------------------------------------------------------------------------
-_next_purge_at = None
+# importlib.reload retains this module's globals. Preserve the existing worker's
+# schedule rather than spawning another sleeping daily worker on every reload.
+_next_purge_at = globals().get("_next_purge_at")
 
 
 def _purge_loop():
@@ -2747,7 +2749,11 @@ def _purge_loop():
             pass
 
 
-threading.Thread(target=_purge_loop, daemon=True).start()
+if globals().get("_purge_thread") is None or not _purge_thread.is_alive():
+    _purge_thread = threading.Thread(
+        target=_purge_loop, name="mmai-retention-purge", daemon=True
+    )
+    _purge_thread.start()
 
 
 # ---------------------------------------------------------------------------

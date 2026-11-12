@@ -7,7 +7,7 @@ from pathlib import Path
 import re
 import shutil
 
-ROOT_FILES = {".dockerignore", "mmai-app/Dockerfile", "mmai-app/start.sh", "mmai-app/publish.env",
+ROOT_FILES = {".dockerignore", "Dockerfile", "mmai-app/Dockerfile", "mmai-app/start.sh", "mmai-app/publish.env",
               "mmai-app/requirements.txt", "mmai-app/README.md", "mmai-app/FLOWS.md",
               "mmai-app/DEPLOY_DIGITALOCEAN.md", "mmai-app/NOTIFICATION_OPERATIONS.md",
               "mmai-app/RELEASE_OPERATIONS.md", "mmai-app/.do/app.yaml",

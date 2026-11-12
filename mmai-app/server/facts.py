@@ -344,7 +344,7 @@ STUDY_FIELDS = ("doing", "school", "course", "level", "campus_km")
 _TIMETABLE = re.compile(r"\b(time ?tables?|class(?:es)? (?:times?|schedules?|hours)|lecture (?:times?|schedules?)|(?:study|uni|university|campus|contact) "
                         r"(?:hours|schedules?|days)|attendance|on campus (?:at|around) the same (?:time|hours))\b", re.I)
 _SCHEDULE = re.compile(r"\bschedules?\b", re.I)
-_ASSERTS = re.compile(r"\b(line up|lines up|align(?:s|ed)?|overlap(?:s|ping)?|match(?:es|ing)?|coincide|similar|same|compatible|together|in sync|"
+_ASSERTS = re.compile(r"\b(line up|lines up|align(?:s|ed|ment)?|overlap(?:s|ping)?|match(?:es|ing)?|coincide|similar|same|compatible|together|in sync|"
                       r"likely|probably|will|should|would|can|could|easy|convenient|fit|fits|suit|suits|work|works)\b", re.I)
 _NEGATED = re.compile(r"\b(not|no|never|none|nothing|isn't|aren't|don't|doesn't|won't|cannot|can't|without|unknown|unrecorded|unclear|whether)\b", re.I)
 _NEGATED_IDIOM = re.compile(r"\b(not only|not just|not least|no doubt|without doubt|without question)\b", re.I)
@@ -369,12 +369,6 @@ def _mask_recorded_values(note: str, literal) -> str:
 # the asserting span: optional relational suffix (with/between/among/across/for + 1-3 words), copula, then one of a CLOSED list of
 # uncertainty predicates. A finite verb ("timetables align ..."), any other trailing words, positive certainty ("undeniable") or a
 # plain "not <word>" ("not disputed") never negate (root counterexamples, three rounds).
-_NOMINAL_ASSERTS = ("overlap", "overlaps", "alignment")
-_TRAIL_UNCERTAIN = re.compile(r"^(?:\s+(?:with|between|among|across|for)\s+(?:[\w'\u2019-]+\s*){1,3})?\s*(?:is|are|remains?|stays?)\s+"
-                              r"(?:unknown|unrecorded|unclear|uncertain|undetermined|unconfirmed|unverified|not (?:yet )?(?:recorded|known|established|confirmed|verified)|"
-                              r"yet to be (?:confirmed|established|checked)|to be confirmed)\b", re.I)
-
-
 # r4 (9 Nov 2026, root replay of C200 live-1 group 21: "...any study or timetable overlap with U1 or U3 is unknown."): the clause splitter
 # cuts a coordinated ref suffix ("U1 or U3") BEFORE the nominal matcher can see the copula, so an honest unknown was rejected. Narrow
 # repair: a FULLY BOUND nominal-uncertainty span - timetable phrase, at most one word, nominal overlap/alignment, optional relational
@@ -385,10 +379,11 @@ _BOUND_UNCERTAIN = re.compile(_TIMETABLE.pattern + r"(?:\s+[\w'\u2019-]+)?\s+(?:
                               r"(?:\s+(?:with|between|among|across|for)\s+(?:[\w'\u2019-]+,?\s*){1,3}(?:(?:or|and)\s+[\w'\u2019-]+\s*)?)?"
                               r"\s*(?:is|are|remains?|stays?)\s+"
                               r"(?:unknown|unrecorded|unclear|uncertain|undetermined|unconfirmed|unverified|not (?:yet )?(?:recorded|known|established|confirmed|verified)|"
-                              r"yet to be (?:confirmed|established|checked)|to be confirmed)\b", re.I)
-_UNCERTAIN_SPAN = "[uncertain-timetable]"
-# A nominal "timetable fit ... is unknown" is also an honest gap. Unlike
-# the older overlap forms, permit it only at the sentence end: masking must
+                              r"yet to be (?:confirmed|established|checked)|to be confirmed)"
+                              r"(?: and worth confirming)?\b(?=[.!?]?\s*$)", re.I)
+_UNCERTAIN_SPAN = "[uncertain]"
+# A nominal "timetable fit ... is unknown" is also an honest gap.
+# All nominal masks are sentence-end bound: masking must
 # not launder a trailing endorsement such as "unknown, though likely fine".
 _BOUND_FIT_UNCERTAIN = re.compile(_TIMETABLE.pattern + r"(?:\s+[\w'\u2019-]+)?\s+fit\b"
                                 r"(?:\s+(?:with|between|among|across|for)\s+(?:[\w'\u2019-]+,?\s*){1,3}(?:(?:or|and)\s+[\w'\u2019-]+\s*)?)?"
@@ -396,9 +391,31 @@ _BOUND_FIT_UNCERTAIN = re.compile(_TIMETABLE.pattern + r"(?:\s+[\w'\u2019-]+)?\s
                                 r"(?:unknown|unrecorded|unclear|uncertain|undetermined|unconfirmed|unverified|not (?:yet )?(?:recorded|known|established|confirmed|verified)|"
                                 r"yet to be (?:confirmed|established|checked)|to be confirmed)\b(?=[.!?]?\s*$)", re.I)
 
+# Bare schedule overlap can also be the subject of an explicit unknown.
+# Only a closed, sentence-ending uncertainty is exempt; never a positive
+# finite alignment or a trailing endorsement. A request to confirm is not one.
+_BOUND_SCHEDULE_UNCERTAIN = re.compile(
+    _SCHEDULE.pattern + r"\s+(?:overlap|overlaps|alignment)\b"
+    r"(?:\s+(?:with|between|among|across|for)\s+(?:[\w'\u2019-]+,?\s*){1,3}"
+    r"(?:(?:or|and)\s+[\w'\u2019-]+\s*)?)?"
+    r"\s*(?:is|are|remains?|stays?)\s+"
+    r"(?:unknown|unrecorded|unclear|uncertain|undetermined|unconfirmed|unverified|"
+    r"not (?:yet )?(?:recorded|known|established|confirmed|verified)|"
+    r"yet to be (?:confirmed|established|checked)|to be confirmed)"
+    r"(?: and worth confirming)?\b(?=[.!?]?\s*$)", re.I)
+
+# A narrowly stated refusal to infer is also a gap, not an alignment claim.
+_BOUND_REFUSAL = re.compile(
+    r"(?:" + _TIMETABLE.pattern + "|" + _SCHEDULE.pattern + r")"
+    r"\s+(?:overlap|alignment|fit)\s+cannot be "
+    r"(?:inferred|determined|assessed|established|confirmed)"
+    r"(?: from (?:the )?recorded facts)?\b(?=[.!?]?\s*$)", re.I)
+
 
 def _mask_bound_uncertainty(sentence: str) -> str:
     """Replace each fully bound nominal-uncertainty span with a neutral token so the clause splitter cannot cut inside it."""
+    sentence = _BOUND_REFUSAL.sub(_UNCERTAIN_SPAN, sentence)
+    sentence = _BOUND_SCHEDULE_UNCERTAIN.sub(_UNCERTAIN_SPAN, sentence)
     return _BOUND_UNCERTAIN.sub(_UNCERTAIN_SPAN, _BOUND_FIT_UNCERTAIN.sub(_UNCERTAIN_SPAN, sentence))
 
 
@@ -407,17 +424,6 @@ def _locally_negated(clause: str, lo: int, hi: int) -> bool:
     'not only' and similar idioms are not negations."""
     window = clause[max(0, lo - 32):hi]
     return bool(_NEGATED.search(_NEGATED_IDIOM.sub(" ", window)))
-
-
-def _nominal_uncertainty(clause: str, m, a) -> bool:
-    """'timetable overlap with U1 is unknown': asserting word is nominal, directly follows the timetable phrase (at most one word between),
-    and the clause predicate is an explicit uncertainty from the closed list."""
-    if a.group(0).lower() not in _NOMINAL_ASSERTS or a.start() < m.end():
-        return False
-    between = clause[m.end():a.start()].strip()
-    if between and (len(between.split()) > 1):
-        return False
-    return bool(_TRAIL_UNCERTAIN.match(clause[a.end():]))
 
 
 def timetable_inference(note: str, routine_cited: bool, literal=()) -> str | None:
@@ -436,8 +442,6 @@ def timetable_inference(note: str, routine_cited: bool, literal=()) -> str | Non
             if not a:
                 continue
             if _locally_negated(clause, min(m.start(), a.start()), max(m.end(), a.end())):
-                continue
-            if _nominal_uncertainty(clause, m, a):
                 continue
             return m.group(0).strip()
     return None

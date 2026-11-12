@@ -308,7 +308,7 @@ def test_coverage_floor_marks_fields_the_model_left_unrepresented_for_staff_only
 
 def test_prompt_contract_asks_for_one_object_and_verbatim_spans():
     p = notes_facts.build_prompt(_fields(else_text="x"), 1)
-    assert "exactly ONE JSON object" in p and "character-for-character" in p and notes_facts.PROMPT_VERSION == "notes-extract-3"
+    assert "exactly ONE JSON object" in p and "character-for-character" in p and notes_facts.PROMPT_VERSION == "notes-extract-5"
     assert notes_facts.cache_key(_fields(else_text="x"), 1) != notes_facts.cache_key(_fields(else_text="y"), 1)
 
 

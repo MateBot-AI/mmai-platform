@@ -9,6 +9,9 @@ def test_sanitised_export_keeps_runtime_assets_and_template(tmp_path):
     output = tmp_path / "export"
     export(root, output)
     assert (output / ".dockerignore").is_file()
+    # The control-panel detector needs the root Dockerfile. Both entry points
+    # must build the same combined app using the repository root as context.
+    assert (output / "Dockerfile").read_bytes() == (output / "mmai-app/Dockerfile").read_bytes()
     assert (output / "mmai-app/data/ALM_Apartments_2026-10-23_features_template.xlsx").is_file()
     assert not list(output.rglob("*.db"))
     assert not (output / "mmai-app/bootstrap/staff_accounts.db").exists()

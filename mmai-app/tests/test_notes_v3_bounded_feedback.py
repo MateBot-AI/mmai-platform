@@ -243,7 +243,7 @@ def test_turn_ledger_matches_calls_on_success_and_failure(monkeypatch, replies, 
 # ---------------------------------------------------------------- cache contract and unchanged strict core
 def test_feedback_version_is_part_of_the_cache_input_key():
     tup = notes_facts.input_tuple(FIELDS, PARTY)
-    assert tup["feedback_version"] == notes_facts.FEEDBACK_VERSION == "notes-feedback-3" and tup["prompt_version"] == "notes-extract-3"
+    assert tup["feedback_version"] == notes_facts.FEEDBACK_VERSION == "notes-feedback-3" and tup["prompt_version"] == "notes-extract-5"
     old = {k: v for k, v in tup.items() if k != "feedback_version"}
     old_key = hashlib.sha256(json.dumps(old, sort_keys=True, ensure_ascii=False, separators=(",", ":")).encode("utf-8")).hexdigest()
     assert notes_facts.cache_key(FIELDS, PARTY) != old_key, "v2 cache rows (partial accepted items under the old contract) are never reused"
@@ -260,7 +260,7 @@ def test_strict_parser_and_validator_source_unchanged_from_v2():
     pinned = {
         "validate_reply": "d7167581dd51edd41831fc9c61557ef656b7e829c4dfcc4604640c69b59519d2",
         "anchor_items": "83c8131982fc454ac8161687dafedf4f2f0cc9e43c5902ce18e3fe78908171b3",
-        "build_prompt": "e09428491a5c6f2eeb3931d26fbfeffa9acfb4b2bbe054216467a8dda2bac5a4",   # was 979bee1d... before fix 2
+        "build_prompt": "947643953c43d92f9368f4594a71d3b97f5b3a7fdbe43a5dc54fc59d69f8c993",   # notes-extract-5: explicit no-inference guidance; strict core hashes unchanged
         "_clean_value": "a56a4ad9dd6b86618e3604022d3c276dff04bd2e19313040c8af9bec273b817f",
         "grounding_failure": "d03f41cf785535a6d80dfe56ef9ea747ed1d912a36008a3bd7962a236bfd6f1f",   # was 25cbf722... before the succ3 person/home binding, c889e6a8... before the tidy home-context binding
         "excluded_content": "0afdc98a2018b1d78bb1f097fc571a0a50838d26162429f67a8438f7d03bf17e",

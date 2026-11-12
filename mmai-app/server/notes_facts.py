@@ -29,7 +29,7 @@ import re
 from datetime import date
 
 CATALOGUE_VERSION = "t4c-v2.4"   # v2.4 (10 Nov 2026, succ3 N2): a tidiness degree must be said of the person or the home - said of anything else (driving record, uniform, workshop, desk) it grounds nothing; v2.3 (9 Nov 2026, second round): a tidiness degree binds to the HOME context only ('very neat at work' grounds nothing; 'spotless' is tidy wording); v2.2 (triage fix 2): "Very tidy" grounding needs the degree in the words
-PROMPT_VERSION = "notes-extract-3"   # v3 prompt: rule 9 - living-habit items only when the words state the degree (triage fix 2); v2: one-object reply contract + verbatim-span anchoring note (component pilot, 9 Nov 2026); v3 adds a bounded correction turn (FEEDBACK_VERSION)
+PROMPT_VERSION = "notes-extract-5"   # explicit no-inference guidance; do not reuse older extraction-contract cache entries
 SOURCE_FIELDS = ("else_text", "work", "intro")
 BASIS = "self-report (free text), unverified"
 
@@ -371,6 +371,36 @@ VALUE_SHAPES = {
     "lifestyle":       {"field": ("routine", "tidy", "social", "guests", "diet"), "answer": "lifestyle_answer"},
 }
 VALUE_REQUIRED = {"date_constraint": ("comparator", "date"), "transport": ("mode",), "smoke_scope": ("scope",), "lifestyle": ("field", "answer")}
+
+# Shape only: category-specific values, exact spans, grounding and exclusions
+# remain authoritative in validate_reply. No new facts or retry allowance.
+NOTES_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "items": {"type": "array", "items": {
+            "type": "object",
+            "properties": {
+                **{k: {"type": "string"} for k in
+                   ("category", "polarity", "strength", "subject", "field", "span")},
+                "start": {"type": "integer"},
+                "end": {"type": "integer"},
+                "value": {"anyOf": [
+                    {"type": "null"},
+                    {"type": "object", "properties": {
+                        key: {"type": "string"}
+                        for shape in VALUE_SHAPES.values() for key in shape
+                    }, "additionalProperties": False},
+                ]},
+            },
+            "required": ["category", "polarity", "strength", "subject", "field",
+                         "start", "end", "span", "value"],
+            "additionalProperties": False,
+        }},
+        "residual": {"type": "boolean"},
+    },
+    "required": ["items", "residual"],
+    "additionalProperties": False,
+}
 
 
 def _clean_value(kind: str | None, value):
@@ -797,6 +827,11 @@ def build_prompt(fields: dict, party_size: int, compact: bool = False) -> str:
         "9. lifestyle_self_description: choose a form answer ONLY when the words state that degree ('very tidy', 'spotless' -> Very tidy; 'fairly tidy' -> Average; "
         "'messy', 'relaxed about mess' -> Relaxed). Plain 'tidy', 'neat', 'clean' or 'keep shared spaces clean' names no degree: make NO item for it (code rejects "
         "an answer the words do not support, and the person's form answer already covers it).\n"
+        "10. Do not infer working hours from a job title, industry or employment type: 'casual', 'barista' and 'hospitality' do not state variable or night hours. "
+        "Do not turn 'early sleeper' into 'Early riser': bedtime does not establish waking time. Do not turn 'reasonably clean' into the form answer 'Average'; "
+        "the supported tidy wording for that option includes 'fairly tidy', 'reasonably tidy' or 'moderately'. "
+        "If practical text has no explicitly supported category/value, omit that item and set residual=true so staff can review it. "
+        "An empty items list with residual=true is valid; never manufacture an item to avoid an empty list.\n"
         "Categories:\n" + cats + "\n"
         "Reply with JSON only: {\"items\": [{\"category\":..., \"polarity\":..., \"strength\":..., \"subject\":..., \"field\":..., \"start\":..., \"end\":..., "
         "\"span\":..., \"value\":{...} or null}], \"residual\": true|false}" + (" Keep it minimal." if compact else "") + "\n\n"
@@ -857,12 +892,16 @@ def _close_types(data: dict) -> dict:
 
 
 def _parse_problem(text: str):
-    """Classify a raw reply with the UNCHANGED strict parser: returns (type-closed data, None) or (None, closed problem key)."""
+    """Require the entire notes reply to be one JSON object, never a prose fragment."""
     from . import ai
     try:
         data = ai._json_from(text)
     except ai.AIUnusableReply as e:
         return None, ("no_json" if "no JSON" in str(e) else "malformed")
+    try:
+        data = json.loads(text)
+    except (ValueError, TypeError):
+        return None, "malformed"
     if not isinstance(data, dict) or not isinstance(data.get("items"), list):
         return None, "not_object"
     return _close_types(data), None
@@ -919,6 +958,7 @@ def correction_prompt(fields: dict, party_size: int, parse_problem: str | None, 
         proj = {k: it[k] for k in ("item", "shape", "field", "category", "polarity", "strength", "subject", "start", "end", "value_given") if k in it}
         lines.append(f"Item {it['item']} {json.dumps(proj, ensure_ascii=False)}: {it['code']} - {it['feedback']}.")
     lines.append("Reply again with exactly ONE JSON object covering ALL the facts (not only the corrected items); drop any item you cannot ground in the text. "
+                 "Do not replace a rejected item with another inferred category or unsupported form answer. Leave unrepresented practical information as residual=true. "
                  "This is the last reply that will be read.")
     return build_prompt(fields, party_size) + "\n".join(lines)
 
@@ -950,10 +990,11 @@ def _ask(fields: dict, party_size: int, meter: dict | None = None) -> dict:
             def prompt_for(compact: bool) -> str:
                 _turn(meter, "compact" if compact else "first")
                 return build_prompt(fields, party_size, compact)
-            text = ai._ask_bounded(prompt_for, 1200, "notes extraction", meter=meter)
+            text = ai._ask_bounded(prompt_for, 1200, "notes extraction", meter=meter, schema=NOTES_SCHEMA)
         else:
             _turn(meter, "first"); ai._count(meter)
-            text = ai._ask(build_prompt(fields, party_size), max_tokens=min(1200, ai.OUTPUT_TOKEN_CEILING))
+            with ai._output_schema(NOTES_SCHEMA):
+                text = ai._ask(build_prompt(fields, party_size), max_tokens=min(1200, ai.OUTPUT_TOKEN_CEILING))
     except ai.AINoRetry:
         raise
     except ai.AIUnavailable as e:
@@ -973,7 +1014,8 @@ def _ask(fields: dict, party_size: int, meter: dict | None = None) -> dict:
     _turn(meter, "correction"); ai._count(meter)
     meter["correction"] = True
     try:
-        text2 = ai._ask(correction_prompt(fields, party_size, problem, fb), max_tokens=min(1200, ai.OUTPUT_TOKEN_CEILING))
+        with ai._output_schema(NOTES_SCHEMA):
+            text2 = ai._ask(correction_prompt(fields, party_size, problem, fb), max_tokens=min(1200, ai.OUTPUT_TOKEN_CEILING))
     except ai.AINoRetry:
         raise                                        # AIOutputTruncated on the correction reply: terminal, no compact retry
     except ai.AIUnavailable as e:

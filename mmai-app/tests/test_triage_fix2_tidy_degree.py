@@ -69,7 +69,8 @@ def test_prompt_and_versions_carry_the_change():
     # withdraw_outdated_notes re-queues them (the same currentness path fix 2 introduced). Prompt version unchanged.
     # BEFORE (succ3): t4c-v2.3. AFTER (10 Nov 2026, succ3 N2): t4c-v2.4 - the degree must also be said of the person or the home
     # ('a spotless driving record', 'my workshop is spotless' ground nothing), so v2.3 projections are no longer current either.
-    assert notes_facts.PROMPT_VERSION == "notes-extract-3" and notes_facts.CATALOGUE_VERSION == "t4c-v2.4"
+    # The later no-inference guidance advances the prompt, preserving the validator.
+    assert notes_facts.PROMPT_VERSION == "notes-extract-5" and notes_facts.CATALOGUE_VERSION == "t4c-v2.4"
     assert notes_facts.FEEDBACK_VERSION == "notes-feedback-3" and notes_facts.MAX_LOGICAL_REQUESTS == 2
 
 
