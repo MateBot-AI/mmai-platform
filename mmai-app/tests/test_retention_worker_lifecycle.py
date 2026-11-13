@@ -1,6 +1,7 @@
 """Reloading the API must not accumulate daily T5 purge workers."""
 import importlib
 import threading
+from datetime import datetime, timezone
 
 from tests.test_data_and_api import client  # shared authenticated API fixture
 
@@ -33,12 +34,21 @@ def test_reload_replaces_a_dead_purge_worker_once(client, monkeypatch):
             return self.started
 
         def start(self):
+            # The startup pass must finish before a thread could run or requests
+            # could be served. A retained timestamp from an old pass is not proof.
+            assert appmod._last_purge_completed_at
+            assert appmod._purge_failures == {}
+            delay = (datetime.fromisoformat(appmod._next_purge_at)
+                     - datetime.now(timezone.utc)).total_seconds()
+            assert 86398 <= delay <= 86400
             self.start_calls += 1
             self.started = True
 
     # Keep the genuine sleeping worker untouched. The module's reference and
     # threading factory are restored by monkeypatch after the simulated restart.
     monkeypatch.setattr(appmod, "_purge_thread", FakeThread())
+    monkeypatch.setattr(appmod, "_last_purge_completed_at", None)
+    monkeypatch.setattr(appmod, "_next_purge_at", None)
     monkeypatch.setattr(threading, "Thread", FakeThread)
     importlib.reload(appmod)
     replacement = appmod._purge_thread

@@ -10,6 +10,7 @@ import hashlib
 import os
 import re
 import secrets
+import sys
 import threading
 import time
 from datetime import date, datetime, timedelta, timezone
@@ -862,10 +863,13 @@ def retention_purge(staff=Depends(current_staff)):
 @app.get("/api/retention/preview")
 def retention_preview(staff=Depends(current_staff)):
     today = date.today()
-    cutoff = date(today.year - 1, today.month, min(today.day, 28)).isoformat()
+    cutoff = homebot.retention_cutoff(today)
     due = rows(db.execute("""SELECT id, first_name, last_name, is_test, status, last_contact_at FROM enquiries e WHERE substr(last_contact_at,1,10) < ? AND status <> 'Leased'
                               AND NOT EXISTS (SELECT 1 FROM group_members gm JOIN groups g ON g.id=gm.group_id WHERE gm.enquiry_id=e.id AND g.status='Leased')""", (cutoff,)))
-    return {"cutoff": cutoff, "due": due, "homebot_due": homebot.retention_due(db, today), "next_scheduled_run": _next_purge_at}
+    return {"cutoff": cutoff, "due": due, "homebot_due": homebot.retention_due(db, today),
+            "next_scheduled_run": _next_purge_at,
+            "last_completed_at": _last_purge_completed_at,
+            "failures": dict(_purge_failures)}
 
 
 # ---------------------------------------------------------------------------
@@ -2732,24 +2736,50 @@ def exit_exception_withdraw(xid: int, staff=Depends(current_staff)):
 # importlib.reload retains this module's globals. Preserve the existing worker's
 # schedule rather than spawning another sleeping daily worker on every reload.
 _next_purge_at = globals().get("_next_purge_at")
+_purge_failures = globals().get("_purge_failures", {})
+_last_purge_completed_at = globals().get("_last_purge_completed_at")
+
+
+def _purge_pass():
+    """Attempt both retention domains; log categories only, never exception text."""
+    global _purge_failures, _last_purge_completed_at
+    failures = {}
+    for name, action in (
+        ("matebot", lambda: purge_expired(db, "scheduler")),
+        ("homebot", lambda: homebot.purge_expired(db)),
+    ):
+        try:
+            action()
+        except Exception as error:
+            failures[name] = type(error).__name__
+            # No traceback or error message: drivers can include private record data.
+            print(f"[mmai retention] {name} purge failed ({type(error).__name__}); retry scheduled",
+                  file=sys.stderr, flush=True)
+    _purge_failures = failures
+    if not failures:
+        _last_purge_completed_at = now_iso()
+    return not failures
+
+
+def _schedule_purge():
+    global _next_purge_at
+    seconds = 60 if _purge_failures else 24 * 3600
+    _next_purge_at = (datetime.now(timezone.utc) + timedelta(seconds=seconds)).replace(microsecond=0).isoformat()
+    return seconds
 
 
 def _purge_loop():
-    global _next_purge_at
     while True:
-        _next_purge_at = (datetime.now(timezone.utc) + timedelta(hours=24)).replace(microsecond=0).isoformat()
-        time.sleep(24 * 3600)
-        try:
-            purge_expired(db, "scheduler")
-        except Exception:
-            pass
-        try:
-            homebot.purge_expired(db)
-        except Exception:
-            pass
+        time.sleep(_schedule_purge())
+        _purge_pass()
 
 
 if globals().get("_purge_thread") is None or not _purge_thread.is_alive():
+    # Complete the first attempt before accepting requests. A daily restart must
+    # not postpone deletion forever, and import/reload must not race the first
+    # request against a newly started purge using the shared connection.
+    _purge_pass()
+    _schedule_purge()
     _purge_thread = threading.Thread(
         target=_purge_loop, name="mmai-retention-purge", daemon=True
     )

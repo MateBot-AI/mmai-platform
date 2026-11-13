@@ -21,12 +21,24 @@ from psycopg.conninfo import conninfo_to_dict
 def env_for(url):
     c = conninfo_to_dict(url)
     env = os.environ.copy()
-    for key in ("PGHOST", "PGPORT", "PGUSER", "PGPASSWORD", "PGDATABASE", "PGOPTIONS", "PGSERVICE", "PGSERVICEFILE"):
-        env.pop(key, None)
-    for key, dest in (("host", "PGHOST"), ("port", "PGPORT"), ("user", "PGUSER"),
-                      ("password", "PGPASSWORD"), ("dbname", "PGDATABASE"), ("sslmode", "PGSSLMODE")):
-        if key in c:
-            env[dest] = c[key]
+    # Never let the shell's connection/service/TLS defaults override the explicit
+    # source or restore URL. The CA parameter is essential on the managed host.
+    for key in list(env):
+        if key.startswith("PG"):
+            env.pop(key)
+    mapping = {
+        "host": "PGHOST", "hostaddr": "PGHOSTADDR", "port": "PGPORT",
+        "user": "PGUSER", "password": "PGPASSWORD", "dbname": "PGDATABASE",
+        "sslmode": "PGSSLMODE", "sslrootcert": "PGSSLROOTCERT",
+        "sslcert": "PGSSLCERT", "sslkey": "PGSSLKEY", "sslcrl": "PGSSLCRL",
+        "sslcrldir": "PGSSLCRLDIR", "channel_binding": "PGCHANNELBINDING",
+        "connect_timeout": "PGCONNECT_TIMEOUT", "application_name": "PGAPPNAME",
+        "target_session_attrs": "PGTARGETSESSIONATTRS", "gssencmode": "PGGSSENCMODE",
+    }
+    if set(c) - set(mapping):
+        raise ValueError("unsupported recovery connection parameter")
+    for key, value in c.items():
+        env[mapping[key]] = value
     return env
 
 
