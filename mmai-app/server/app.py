@@ -2963,6 +2963,8 @@ scheduler.start(db)  # T8 (disabled with MMAI_SCHEDULER=0)
 notifications.start(db)  # Independent of the hourly matching loop; all delivery modes remain off by default.
 homebot_shortlist.start_worker(db)  # T3(a) H2 HomeBot options worker (only when MMAI_HOMEBOT_MATCHING is set; off by default)
 ai_queue.start(db)   # T6 AI assessment queue (disabled with MMAI_AI_QUEUE=0, e.g. tests)
+from . import pilot_selfcheck  # noqa: E402
+pilot_selfcheck.start(sec.pilot_gate_enabled())  # opt-in (MMAI_PILOT_SELFCHECK=1): prints the gate's own refusals to the runtime log
 
 if __name__ == "__main__":
     import uvicorn

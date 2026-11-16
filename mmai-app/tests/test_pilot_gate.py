@@ -492,3 +492,51 @@ def test_gate_off_keeps_the_existing_behaviour(ungated):
     r = c.post("/api/public/enquiries", json=good_answers())
     assert r.status_code == 201
     assert appmod.db.execute("SELECT COALESCE(is_test,0) FROM enquiries").fetchone()[0] == 0   # a real enquiry stays real
+
+
+# ---------------- hosted self-check (MMAI_PILOT_SELFCHECK) ----------------
+def _through(c):
+    def fetch(method, path, headers, body):
+        r = c.request(method, path, headers=headers, json=body) if body is not None else c.request(method, path, headers=headers)
+        return r.status_code, dict(r.headers), r.content
+    return fetch
+
+
+def test_self_check_passes_behind_the_gate_and_changes_nothing(gated):
+    from server import pilot_selfcheck
+    c, appmod, _ = gated
+    before, lines = _counts(appmod), []
+    assert pilot_selfcheck.run(_through(c), lines.append) is True
+    assert _counts(appmod) == before
+    assert len(lines) == len(pilot_selfcheck.PROBES) + 1 and all(line.startswith("pilot self-check: OK ") for line in lines[:-1])
+    assert lines[-1].startswith(f"pilot self-check: PASS {len(pilot_selfcheck.PROBES)}/{len(pilot_selfcheck.PROBES)} ")
+    text = "\n".join(lines)
+    assert "Bearer" not in text and "not-a-real-token" not in text and "set-cookie" not in text.lower()
+
+
+def test_self_check_fails_loudly_when_the_gate_is_not_working(ungated):
+    from server import pilot_selfcheck
+    c, _, _ = ungated
+    lines = []
+    assert pilot_selfcheck.run(_through(c), lines.append) is False
+    assert lines[-1].startswith("pilot self-check: FAIL ")
+    assert any(line.startswith("pilot self-check: MISMATCH GET /api/health ") for line in lines)        # the full health reply is not the minimal one
+    assert any(line.startswith("pilot self-check: MISMATCH GET / ") for line in lines)                  # the front page is served, not refused
+    # a server that does not answer is a failure, never a pass
+    lines.clear()
+    assert pilot_selfcheck.run(lambda *a: (_ for _ in ()).throw(ConnectionRefusedError()), lines.append) is False
+    assert all("MISMATCH" in line and "no reply (ConnectionRefusedError)" in line for line in lines[:-1])
+
+
+def test_self_check_only_starts_when_asked_and_reports_a_gate_that_is_off(monkeypatch, capsys):
+    from server import pilot_selfcheck
+    monkeypatch.setattr(pilot_selfcheck, "_started", False)
+    monkeypatch.delenv("MMAI_PILOT_SELFCHECK", raising=False)
+    assert pilot_selfcheck.start(True) is False and pilot_selfcheck._started is False
+    for value in ("0", "true", "yes", ""):
+        monkeypatch.setenv("MMAI_PILOT_SELFCHECK", value)
+        assert pilot_selfcheck.start(True) is False and pilot_selfcheck._started is False
+    monkeypatch.setenv("MMAI_PILOT_SELFCHECK", "1")
+    assert pilot_selfcheck.start(False) is False
+    assert "FAIL MMAI_PILOT_SELFCHECK is set but the pilot gate is OFF" in capsys.readouterr().out
+    assert pilot_selfcheck.start(True) is False            # once per process

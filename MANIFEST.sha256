@@ -1,6 +1,6 @@
 080bc63d937532e7fdebd4054f0d1c5111fbe59c2547ee8797f19d8e02d990d5  ./.dockerignore
 221abe934d1c64fe01a3f652a36f3f1137742a933dba6bd7896688e1dd8f4f8d  ./Dockerfile
-8e6a86a329b7ba879e35cccde98e962264e12de3bbb982bbd890f5315a04f0db  ./SOURCE-MANIFEST.json
+08c477e2d768de040457e3876a576b4456bbb92f949c9300b771e3ad8898078e  ./SOURCE-MANIFEST.json
 a9ad1a503d3011dc2a832d89feec0ad4c35857a32698d20ee8969a757717fc54  ./homebot-app/README.md
 9b06d001e20ae9d7f0b2add9a2a207d1fd9cc0521631c9a15f46c5314a7e9477  ./homebot-app/app.js
 8801646d743cc1f98760727547093b8d08c1dfae8467d383242ffd2f471a6d54  ./homebot-app/data/homebot_data.json
@@ -21,7 +21,7 @@ cff099a435e6ecf7d590cf7ea3c38994e5e5e1a9116bf139689e1ad38273c4a2  ./homebot-app/
 541c0ac0f494b7a20223b0bd85588a6d5755c6fb9790dc062f1cc0331d3e2746  ./homebot-app/index.html
 f01279b4d0d5a0fafdc6cbe239ae5d56bb742ba94069e733a8943245b4308eb3  ./homebot-app/styles.css
 f8c4f62dfd9c026a10932109eeedd6f261156710bc2921c12b73ec17beaeb2ae  ./mmai-app/.do/app.yaml
-d1f4557f6182211a81ba5e2b7f05d5e64016cf23304d30e69ed4fcc3ffa27524  ./mmai-app/DEPLOY_DIGITALOCEAN.md
+c42c29dc52cb31b9970d140785e69b6a6d3ba7adf2806f58ac4b352fad2296f9  ./mmai-app/DEPLOY_DIGITALOCEAN.md
 221abe934d1c64fe01a3f652a36f3f1137742a933dba6bd7896688e1dd8f4f8d  ./mmai-app/Dockerfile
 51f3399c8178cad163971c95313517c138e500ec830807335dd54dfaa73cf805  ./mmai-app/FLOWS.md
 64d2edaf84ca28680f815c043bf37c8c44d3ffb466a2df814bb6e3e614c6b7db  ./mmai-app/NOTIFICATION_OPERATIONS.md
@@ -115,7 +115,7 @@ e0989cfb15a79d078adf6a2de231d61394e8225bc53ad71f31b81b57d9e7097b  ./mmai-app/ser
 4a6b062b00bfb0a69c3cdde767b259c1819c7c879ad45fd8bb1af683b952c585  ./mmai-app/server/alerts.py
 a4310685a621c383012741d577d39926671aa18c7bcb566d9c78730a17fbd626  ./mmai-app/server/apartment_features.py
 635e25d558a6ba461b13d3fa33eb5d44c94bff4194b9865dc153413a23b62942  ./mmai-app/server/apartment_rejections.py
-9f34c76b46c9fbc87096352e16a9bfcf0621de5005ec0f3ff121b25b7867c66b  ./mmai-app/server/app.py
+65f9f604c5861ca4e98ffedded6acd36d2e9ec319878c2c9053971c05d69d2f5  ./mmai-app/server/app.py
 9289bca24298c744ae24a6b5b6108e89ccdb668065e978a0743263d08d01eac7  ./mmai-app/server/budget.py
 8ea6306808b528b7a6ca62d973a001a2395a8848377c0b0e263979d623021066  ./mmai-app/server/countries.py
 9b59b72bde2a269352ceb499b4f588ec4430d3f04f253b9815fb44da89a1d4c5  ./mmai-app/server/data/geocode.json
@@ -150,6 +150,7 @@ f3b9eaf01d0a114f41ac869bb47df8255cc2270f64f0f380d31bb1cd48c945ab  ./mmai-app/ser
 17075ef874064d858ada0f516348fa265408270de99cd528845416f3dab78651  ./mmai-app/server/pilot/index.html
 41dfffa5463ac92717c7c18845050fa963c7841eb40b3ff683b8e5fa37c0ff19  ./mmai-app/server/pilot/pilot.css
 df78cd62b9d8ecd9948cb6a45b62567d8a710cac070de1d7587c94d3e67100cc  ./mmai-app/server/pilot/pilot.js
+a2d0fcf2381efa85b4f05269df7e0c01b943531b830d8068139b8d3b6379b44c  ./mmai-app/server/pilot_selfcheck.py
 a6e14332524673e811a92c54c334cdba3a0dac69e37a25bb9db06f60833b07b6  ./mmai-app/server/receipts.py
 9d325af01ceca9232d31a092fa9e21b44f5124177af082362eeff19173abd7bb  ./mmai-app/server/review_loop.py
 9160bb5e6b0a87e8e46395cae41b54a63f331cf061bb5c610dc8698bd8625255  ./mmai-app/server/routing.py
@@ -236,7 +237,7 @@ de7378cd22453aa206a8c3036f8133f20ca063a39b71013c5002faec0b9ef832  ./mmai-app/tes
 9fcd2adee75da488bbaa218b4578249c08ca436cff37b454c3a94cfd6a4ce0e6  ./mmai-app/tests/test_packet_date_campus_provenance.py
 5fd52481d207143203a6b40bff648a82ca665fe7b4c2f40d7a2971f3b415f6ac  ./mmai-app/tests/test_phase_a_helpers.py
 4e7b05601ef8871713ded28facdf9d3486cc38ebd41f0b97284be99afee25ffa  ./mmai-app/tests/test_phone_copy_shortlist.py
-a2329ee46ddeddb0bb3c760e005289e611bdee2bccafb01fae23d43fca9f74e1  ./mmai-app/tests/test_pilot_gate.py
+c8a7c372e7e04ad4ae9da8c761d2a8b68e6ff358d5bc1f0af16eca6ad488ea5f  ./mmai-app/tests/test_pilot_gate.py
 c3212ed7100719c8552c1f4844a24e435601869a3e54e59fdc9578aa849ce30f  ./mmai-app/tests/test_production_export.py
 7a33c467db05981d0198876255392dff568b2a1ef8b59f49fbc5a1d105ad6a66  ./mmai-app/tests/test_production_hosting.py
 17d31580e9cae96206b93e887d96e8ef6ae11ec12e28bd583c472989c7b53da1  ./mmai-app/tests/test_queue_state_errors.py
