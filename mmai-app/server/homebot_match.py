@@ -83,9 +83,12 @@ FOURTH_OPTION_PROVISIONAL = "FOURTH_OPTION_PROVISIONAL"  # RETIRED 16 Nov 2026 (
 TRAVEL_NOT_CHECKED = "TRAVEL_NOT_CHECKED"           # GP6(d): travel is checked last, on the shortlisted apartments only
 REPLACED_AFTER_TRAVEL = "REPLACED_AFTER_TRAVEL"     # GP6(d): shortlisted on the other points, failed the travel check, replaced
 REPLACEMENT_AFTER_TRAVEL = "REPLACEMENT_AFTER_TRAVEL"   # GP6(d): took the place of an apartment that failed the travel check
-MAX_SHORTLIST = 3
-MAX_RESERVES = 3      # how many of the next candidates the saved AI review also covers, in case one has to step in
-MAX_RESERVE_BATCHES = 4   # the first batch is reviewed with the options; a further batch only when a travel check needs it                                   # GP6(d)/H25/O4(d): never more, and never padded to reach it
+MAX_SHORTLIST = 3     # GP6(d)/H25/O4(d): never more than three shown, and never padded to reach it
+# How many of the next candidates, in the order fixed before travel is looked at, the saved AI review also covers, so that
+# one that has to step in after a failed travel check has been reviewed. The whole pool is fixed and reviewed BEFORE any
+# journey is measured: nothing about it is decided or written because of a journey result. Finite on purpose (never the
+# whole inventory): a replacement from beyond it is held for staff.
+MAX_RESERVES = 12
 BUNK_CHEAPER_OTHER_DATES = "BUNK_CHEAPER_OTHER_DATES"  # H21: not cheaper at the offered dates, cheaper at other accepted dates
 
 PLAIN = {
@@ -854,7 +857,6 @@ class Shortlist:
     unresolved: list = field(default_factory=list)   # candidates whose dates/cost could not be enumerated (explicit unknown)
     notes_review: bool = False
     reserves: list = field(default_factory=list)     # next in order, not shown: would replace a shortlisted one that fails travel
-    reserve_queue: list = field(default_factory=list)   # ids of the candidates behind the reserves, same order (the next batches)
 
     @property
     def has_shortlist(self) -> bool:
@@ -876,7 +878,6 @@ class Shortlist:
         return {"summary": self.summary(), "listed": [c.as_dict() for c in self.listed], "alternatives": [c.as_dict() for c in self.alternatives],
                 "fourth_option": self.fourth_option.as_dict() if self.fourth_option else None,
                 "unresolved": [c.as_dict() for c in self.unresolved], "reserves": [c.as_dict() for c in self.reserves],
-                "reserve_queue": list(self.reserve_queue),
                 "candidates": [c.as_dict() for c in self.candidates]}
 
 
@@ -936,8 +937,7 @@ def build_shortlist(req: Requirements, apartments: list, today: date, estimates:
     # the next in the same order: the ones that would step in if a shortlisted apartment later failed the travel check. They
     # are not shown as options. They are named so that the saved AI review covers them on the same footing as the three
     # (T6): a replacement the review never saw cannot be treated as reviewed.
-    behind = next_full + next_alts
-    reserves, reserve_queue = behind[:MAX_RESERVES], [c.apartment_id for c in behind[MAX_RESERVES:]]
+    reserves = (next_full + next_alts)[:MAX_RESERVES]
     # everything else was not shortlisted, so its journeys are not measured: it reads 'not checked', never a pass
     for c in cands:
         if c.travel is None and req.known_people:
@@ -946,4 +946,4 @@ def build_shortlist(req: Requirements, apartments: list, today: date, estimates:
                 c.flags.append(TRAVEL_NOT_CHECKED)
     for i, c in enumerate(listed, start=1):
         c.order = i
-    return Shortlist(req.scenario, listed, alts, cands, None, None, [c for c in cands if c.unresolved], req.notes_review, reserves, reserve_queue)
+    return Shortlist(req.scenario, listed, alts, cands, None, None, [c for c in cands if c.unresolved], req.notes_review, reserves)

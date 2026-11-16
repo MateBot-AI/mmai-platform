@@ -146,6 +146,72 @@ def test_the_review_covers_the_reserves_that_would_replace_a_failed_travel_check
         hr.parse_review(_good_reply(pk, note_for={"O4": "The journey is confirmed within the stated limit."}), pk)
 
 
+def _sixteen(on):
+    """Sixteen apartments that all match: three listed, twelve reserves, one beyond the pool."""
+    from tests.test_homebot_shortlist import _apt
+    on.db.execute("DELETE FROM apartments")
+    for i in range(1, 17):
+        _apt(on.db, i, rent12=900 + i, building=f"{i}0 Stage Street")
+    on.db.commit()
+    eid = submit(on)
+    assert hs.run_pending(on.db)
+    return eid, current(on, eid)
+
+
+def _longest_reply(pk):
+    """The longest reply the validator accepts for this packet: every text at its maximum length, the most findings."""
+    fill = lambda n: ("Consistent with the recorded offer and requirements; open points stay with staff. " * 9)[:n].strip()   # noqa: E731
+    refs = [o["ref"] for o in pk["options"]]
+    findings = [{"fact_ids": [pk["fact_ids"][0], refs[i % len(refs)] + ".offer", refs[i % len(refs)] + ".bedding"], "note": fill(hr.NOTE_MAX)}
+                for i in range(hr.FINDINGS_MAX)]
+    return json.dumps({"verdict": "approve", "rationale": fill(hr.RATIONALE_MAX), "findings": findings,
+                       "option_notes": [{"ref": r, "agrees": True, "note": fill(hr.NOTE_MAX)} for r in refs]})
+
+
+def test_the_output_budget_follows_the_number_of_options_and_holds_the_longest_valid_reply(on, monkeypatch):
+    """The review now covers up to twelve reserves, fixed before any journey is measured, so its reply carries up to twelve
+    more notes. The output budget follows the number of options: never below the earlier fixed budget, never above the
+    ceiling, and enough for the longest reply the validator accepts at three characters a token (a cautious engineering
+    figure, not a measurement against the model). Every option still needs its own valid note; a reply cut off twice is
+    not a review."""
+    eid, sl = _sixteen(on)
+    pk = hr.packet(on.db, sl)
+    assert [(o["apartment_id"], o["listed_as"]) for o in pk["options"]] == [(i, "listed") for i in (1, 2, 3)] + [(i, "reserve") for i in range(4, 16)]
+    assert hm.MAX_RESERVES == 12 and len(pk["options"]) == 15                               # 16 is beyond the pool: not sent
+    budget = hr.output_tokens(pk)
+    assert budget == hr.OUTPUT_TOKENS_BASE + hr.OUTPUT_TOKENS_PER_OPTION * 15 == 3300
+    assert budget < int(budget * 1.5) == 4950 < ai.OUTPUT_TOKEN_CEILING == 8000              # the compact retry has room too
+    longest = _longest_reply(pk)
+    clean = hr.parse_review(longest, pk)                                                    # valid as a whole, option by option
+    assert len(clean["option_notes"]) == 15 and len(clean["findings"]) == hr.FINDINGS_MAX
+    assert all(len(n["note"]) >= hr.NOTE_MAX - 1 for n in clean["option_notes"]) and len(clean["rationale"]) >= hr.RATIONALE_MAX - 1
+    assert len(longest) / 3 <= budget
+    assert 60000 < len(hr.build_prompt(pk)) < 80000                                         # the request for a full pool, in characters
+    # the same holds for every size of packet up to the pool's bound, and small packets keep the earlier budget
+    for n in range(1, 16):
+        part = dict(pk, options=pk["options"][:n])
+        assert len(_longest_reply(part)) / 3 <= hr.output_tokens(part) <= ai.OUTPUT_TOKEN_CEILING
+    assert hr.output_tokens({"options": []}) == hr.output_tokens(dict(pk, options=pk["options"][:2])) == hr.OUTPUT_TOKENS == 1800
+    assert hr.output_tokens(dict(pk, options=pk["options"] * 10)) == ai.OUTPUT_TOKEN_CEILING
+    # per-option validation is unchanged for the larger packet: a missing, repeated or unknown note is an unusable reply
+    doc = json.loads(longest)
+    for broken in (doc["option_notes"][:-1], doc["option_notes"] + [doc["option_notes"][0]],
+                   doc["option_notes"][:-1] + [dict(doc["option_notes"][-1], ref="O16")],
+                   doc["option_notes"][:-1] + [dict(doc["option_notes"][-1], note="x" * (hr.NOTE_MAX + 1))]):
+        with pytest.raises(hr.UnusableReview):
+            hr.parse_review(json.dumps(dict(doc, option_notes=broken)), pk)
+    # what is asked of the model: that budget, then one compact retry at 1.5 times; cut off twice = held, never reviewed
+    asked = []
+
+    def cut(prompt, model=None, max_tokens=1500, system=""):
+        asked.append(max_tokens)
+        raise ai.AIOutputTruncated("cut off", max_tokens=max_tokens)
+    monkeypatch.setattr(ai, "_ask", cut)
+    assert hr.process_pending(on.db)["reviewed"] == 0 and asked == [3300, 4950]
+    assert ai_queue.homebot_review_state(on.db, sl["id"])["reviewed"] is None
+    assert hs._review_state(on.db, current(on, eid))["state"] != "reviewed"
+
+
 def test_the_review_is_sent_under_homebots_own_system_text_and_matebot_calls_keep_theirs(on, monkeypatch):
     """Before 16 Nov 2026 the HomeBot review went out under the MateBot system line (its own SYSTEM text was defined and
     never sent). Now: HomeBot's text on the first call and on the compact retry; a caller that gives none reaches ai._ask

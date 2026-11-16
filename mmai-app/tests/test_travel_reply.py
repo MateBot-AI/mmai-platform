@@ -648,105 +648,58 @@ def _held(why):
     return {"state": "held", "held": True, "reason": why, "plain": tr.HELD_PREFIX + tr.HELD_REASON[why]}
 
 
-def _reserve_audits(c):
-    return [json.loads(r["detail"]) for r in c.db.execute("SELECT detail FROM audit_log WHERE action=? ORDER BY id", (hs.RESERVE_REVIEW_ACTION,)).fetchall()]
-
-
 def _review_rows(c):
     return [(r["state"], r["verdict"]) for r in c.db.execute("SELECT state, verdict FROM homebot_reviews ORDER BY id").fetchall()]
 
 
-def test_a_replacement_from_beyond_the_reviewed_reserves_is_sent_for_review_and_then_passes(on, monkeypatch):
-    """GP6(d): a later replacement is not held for good. The check that needs it is held, and sends the next reserves to
-    the same review queue; once that review is complete, a check of the same options passes. One batch per request, no
-    model call inside the check, and nothing about the journeys or the failed apartments is written."""
+def _saved(c, eid):
+    sl = current(c, eid)
+    return {k: sl[k] for k in ("id", "result_json", "summary_json", "review_enqueued_at", "review_enqueue_attempts")}
+
+
+def _audit_actions(c):
+    return [r["action"] for r in c.db.execute("SELECT action FROM audit_log ORDER BY id").fetchall()]
+
+
+def test_every_reserve_is_reviewed_before_any_journey_so_a_second_replacement_passes_without_anything_written(on, monkeypatch):
+    """GP6(d) with T6: the reserve pool is fixed from the order on the other points and reviewed with the options, before
+    any journey is measured. Two shortlisted apartments failing the travel check are therefore replaced by apartments
+    that have already been reviewed, in one check, and that check writes nothing about candidates: the saved options,
+    their review hand-over and the review rows are exactly as they were, and the only audit rows are request counts."""
     from tests.test_live_travel import ByBuilding
-    monkeypatch.setattr(hm, "MAX_RESERVES", 1)                                         # the first review covers 1, 2, 3 and 4 only
+    assert hm.MAX_RESERVES == 12
+    eid, travel_model, packets = _reviewed_five(on, monkeypatch)
+    assert [(o["apartment_id"], o["listed_as"]) for o in packets[0]["options"]][3:] == [(4, "reserve"), (5, "reserve")]
+    before, actions = _saved(on, eid), _audit_actions(on)
+    out = hs.live_travel_check(on.db, eid, CUR, "Anna", now=NOW, post=ByBuilding(far=["20 Stage Street", "30 Stage Street"]))
+    assert [x["apartment_id"] for x in out["listed"]] == [1, 4, 5]
+    assert out["ai_reply"]["state"] == "ready" and out["ai_gate"] == {"state": "assessed", "held": False, "plain": tr.ASSESSED_TEXT}
+    assert _saved(on, eid) == before and _review_rows(on) == [(hr.REVIEWED, hr.APPROVE)] and len(packets) == 1
+    added = _audit_actions(on)[len(actions):]
+    assert added and set(added) == {hs.TRAVEL_CHECK_ACTION}                            # request counts and nothing else
+
+
+def test_a_replacement_from_beyond_the_reviewed_reserves_is_held_for_staff_and_nothing_is_written(on, monkeypatch):
+    """The pool is finite. A replacement from beyond it has not been reviewed: the result is held and says so. No further
+    candidates are sent for review because of a journey result, however often the check is run."""
+    from tests.test_live_travel import ByBuilding
+    monkeypatch.setattr(hm, "MAX_RESERVES", 1)                                         # the saved review covers 1, 2, 3 and 4 only
     eid, travel_model, packets = _reviewed_five(on, monkeypatch)
     assert [o["apartment_id"] for o in packets[0]["options"]] == [1, 2, 3, 4]
-    before = current(on, eid)
-    assert json.loads(before["result_json"])["reserve_queue"] == [5]
-    out = hs.live_travel_check(on.db, eid, CUR, "Anna", now=NOW, post=ByBuilding(far=["20 Stage Street"]))
-    assert [x["apartment_id"] for x in out["listed"]] == [1, 3, 4] and out["ai_gate"]["state"] == "assessed"
-    assert _reserve_audits(on) == [] and current(on, eid)["result_json"] == before["result_json"]   # nothing written when covered
+    before, actions = _saved(on, eid), _audit_actions(on)
+    assert "reserve_queue" not in json.loads(before["result_json"])
     far = ByBuilding(far=["20 Stage Street", "30 Stage Street"])
-    out = hs.live_travel_check(on.db, eid, CUR, "Anna", now=NOW, post=far)
-    assert [x["apartment_id"] for x in out["listed"]] == [1, 4, 5]                     # 5 has not been reviewed
-    assert out["ai_reply"]["state"] == "ready" and out["ai_gate"] == _held("replacement_queued")
-    after = current(on, eid)
-    saved = json.loads(after["result_json"])
-    assert after["id"] == before["id"] and [x["apartment_id"] for x in saved["reserves"]] == [4, 5] and saved["reserve_queue"] == []
-    assert saved["summary"]["reserves"] == [4, 5] and json.loads(after["summary_json"])["reserves"] == [4, 5]
-    was = json.loads(before["result_json"])
-    for key in ("listed", "alternatives", "unresolved", "candidates", "fourth_option"):  # the options themselves are untouched
-        assert saved[key] == was[key]
-    assert all(x["travel"]["status"] == tv.NEEDS_CONFIRMATION for x in saved["listed"] + saved["reserves"])   # no journey result saved
-    assert _reserve_audits(on) == [{"scenario": CUR, "shortlist_id": before["id"], "added": 1, "reserves": 2}]
-    assert _review_rows(on) == [(hr.REVIEWED, hr.APPROVE), (hr.PENDING, None)] and len(packets) == 1   # queued; no model call in the check
-    assert hs._review_state(on.db, after)["state"] == "queued"
-    # while that review is outstanding the result is held for that reason and nothing more is queued
-    out = hs.live_travel_check(on.db, eid, CUR, "Anna", now=NOW, post=far)
-    assert out["ai_gate"] == _held("review") and len(_reserve_audits(on)) == 1 and len(_review_rows(on)) == 2
-    assert hr.process_pending(on.db)["reviewed"] == 1 and len(packets) == 2
-    assert [(o["apartment_id"], o["listed_as"]) for o in packets[1]["options"]] == [(1, "listed"), (2, "listed"), (3, "listed"), (4, "reserve"), (5, "reserve")]
-    out = hs.live_travel_check(on.db, eid, CUR, "Anna", now=NOW, post=far)
-    assert [x["apartment_id"] for x in out["listed"]] == [1, 4, 5]
-    assert out["ai_gate"] == {"state": "assessed", "held": False, "plain": tr.ASSESSED_TEXT}
-    assert len(_reserve_audits(on)) == 1 and len(_review_rows(on)) == 2
-    # the request allowance counts journey requests only: the reserve record adds nothing to it
-    assert all("requests" not in a for a in _reserve_audits(on))
-    for text in (tr.HELD_REASON["replacement_queued"], tr.HELD_REASON["replacement_limit"]):
-        assert not re.search(r"\b(?:T|H|GP|I)\d+(?:\([a-z]\))?", text)
-
-
-def test_the_reserves_sent_for_review_are_bounded_and_then_the_result_stays_held(on, monkeypatch):
-    from tests.test_live_travel import ByBuilding
-    monkeypatch.setattr(hm, "MAX_RESERVES", 1)
-    monkeypatch.setattr(hm, "MAX_RESERVE_BATCHES", 1)                                  # the first batch is all there may be
-    eid, travel_model, packets = _reviewed_five(on, monkeypatch)
-    before = current(on, eid)
-    out = hs.live_travel_check(on.db, eid, CUR, "Anna", now=NOW, post=ByBuilding(far=["20 Stage Street", "30 Stage Street"]))
-    assert [x["apartment_id"] for x in out["listed"]] == [1, 4, 5] and out["ai_gate"] == _held("replacement_limit")
-    after = current(on, eid)
-    assert after["result_json"] == before["result_json"] and after["review_enqueued_at"] == before["review_enqueued_at"]
-    assert _reserve_audits(on) == [] and _review_rows(on) == [(hr.REVIEWED, hr.APPROVE)] and len(packets) == 1
-    assert hm.MAX_RESERVES * hm.MAX_RESERVE_BATCHES == 1
-    # the outcomes that leave the result held as it was
-    plain = _held("replacement")
-    for outcome in ("none_left", "changed", "unavailable", "failed", "anything"):
-        assert tr.after_reserve_review(plain, outcome) == plain
-    assert tr.after_reserve_review(_held("review"), "queued") == _held("review")       # only a held replacement is rewritten
-    assert tr.after_reserve_review({"state": "assessed", "held": False, "plain": tr.ASSESSED_TEXT}, "queued")["state"] == "assessed"
-
-
-def test_the_shipped_bound_is_three_reserves_a_batch_and_four_batches():
-    assert (hm.MAX_RESERVES, hm.MAX_RESERVE_BATCHES) == (3, 4)
-
-
-def test_a_failed_hand_over_of_the_next_reserves_writes_nothing(on, monkeypatch):
-    """One guarded step: if the review queue cannot take the options, the longer reserve list is not kept either, so the
-    completed review still belongs to the options as saved and the next check asks again."""
-    from server import ai_queue
-    from tests.test_live_travel import ByBuilding
-    monkeypatch.setattr(hm, "MAX_RESERVES", 1)
-    eid, travel_model, packets = _reviewed_five(on, monkeypatch)
-    before = current(on, eid)
-    real = ai_queue.enqueue_homebot_review
-    monkeypatch.setattr(ai_queue, "enqueue_homebot_review", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("queue down")))
-    far = ByBuilding(far=["20 Stage Street", "30 Stage Street"])
-    out = hs.live_travel_check(on.db, eid, CUR, "Anna", now=NOW, post=far)
-    assert out["ai_gate"] == _held("replacement")
-    after = current(on, eid)
-    assert after["result_json"] == before["result_json"] and after["summary_json"] == before["summary_json"]
-    assert after["review_enqueued_at"] == before["review_enqueued_at"] and after["review_enqueue_attempts"] == before["review_enqueue_attempts"]
-    assert _reserve_audits(on) == [] and _review_rows(on) == [(hr.REVIEWED, hr.APPROVE)]
-    assert hs._review_state(on.db, after)["state"] == "reviewed"
-    monkeypatch.setattr(ai_queue, "enqueue_homebot_review", real)                      # the queue is back: the next check asks again
-    out = hs.live_travel_check(on.db, eid, CUR, "Anna", now=NOW, post=far)
-    assert out["ai_gate"] == _held("replacement_queued") and len(_reserve_audits(on)) == 1
-    # without the review hook at all there is nothing to hand over to
-    monkeypatch.delattr(ai_queue, "enqueue_homebot_review")
-    assert hs.review_next_reserves(on.db, current(on, eid), "Anna", "2026-11-16T00:00:00+00:00") == "unavailable"
+    for _ in range(2):
+        out = hs.live_travel_check(on.db, eid, CUR, "Anna", now=NOW, post=far)
+        assert [x["apartment_id"] for x in out["listed"]] == [1, 4, 5]                 # 5 has not been reviewed
+        assert out["ai_reply"]["state"] == "ready" and out["ai_gate"] == _held("replacement")
+        assert _saved(on, eid) == before and _review_rows(on) == [(hr.REVIEWED, hr.APPROVE)] and len(packets) == 1
+        assert hs._review_state(on.db, current(on, eid))["state"] == "reviewed"        # the saved review still stands
+    assert set(_audit_actions(on)[len(actions):]) == {hs.TRAVEL_CHECK_ACTION}
+    assert "staff decide" in tr.HELD_REASON["replacement"]
+    # the travel-led batch step of ea21c1b is gone, with its reasons and its audit action
+    assert not hasattr(hs, "review_next_reserves") and not hasattr(hs, "RESERVE_REVIEW_ACTION") and not hasattr(tr, "after_reserve_review")
+    assert not hasattr(hm, "MAX_RESERVE_BATCHES") and not {"replacement_queued", "replacement_limit"} & set(tr.HELD_REASON)
 
 
 def test_the_travel_assessment_is_sent_under_homebots_own_system_text(grounded, monkeypatch):

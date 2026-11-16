@@ -539,21 +539,23 @@ def test_alternatives_stay_inside_the_same_maximum_of_three_and_are_travel_check
 
 def test_the_next_in_order_are_named_as_reserves_and_are_not_options():
     """The apartments that would step in if a shortlisted one failed the travel check are named, in the same order, so the
-    saved AI review can cover them. They are never shown as options and never raise the maximum of three."""
+    saved AI review can cover them. They are never shown as options and never raise the maximum of three. The pool is
+    fixed before any journey is measured and is finite: twelve, never the whole inventory."""
     r = req()
-    many = [apt(i, building=f"{i} Z Street") for i in range(1, 9)]
+    many = [apt(i, building=f"{i} Z Street") for i in range(1, 20)]
     sl = hm.build_shortlist(r, many, TODAY)                                   # the stored options: no journeys measured
-    assert [c.apartment_id for c in sl.listed] == [1, 2, 3] and [c.apartment_id for c in sl.reserves] == [4, 5, 6]
-    assert hm.MAX_RESERVES == 3 and len(sl.listed) + len(sl.alternatives) == 3
-    assert sl.reserve_queue == [7, 8] and sl.as_dict()["reserve_queue"] == [7, 8]      # the ones behind them, same order: ids only
+    assert [c.apartment_id for c in sl.listed] == [1, 2, 3] and [c.apartment_id for c in sl.reserves] == list(range(4, 16))
+    assert hm.MAX_RESERVES == 12 and len(sl.listed) + len(sl.alternatives) == 3
     d = sl.as_dict()
-    assert [x["apartment_id"] for x in d["reserves"]] == [4, 5, 6] and sl.summary()["reserves"] == [4, 5, 6]
+    assert "reserve_queue" not in d and not hasattr(sl, "reserve_queue")              # nothing is kept for a later, travel-led batch
+    assert [x["apartment_id"] for x in d["reserves"]] == list(range(4, 16)) and sl.summary()["reserves"] == list(range(4, 16))
+    assert all(c.travel["status"] == travel.NEEDS_CONFIRMATION for c in sl.candidates if c.apartment_id > 15)   # the rest: not reserves
     assert all(hm.TRAVEL_NOT_CHECKED in c.flags and c.travel["status"] == travel.NEEDS_CONFIRMATION for c in sl.reserves)
     assert not {c.apartment_id for c in sl.reserves} & {c.apartment_id for c in sl.listed + sl.alternatives}
     # exactly the ones that step in, in that order, when the travel check is made
     est = Staged({1: 61, 3: 61})
     live = hm.build_shortlist(r, many, TODAY, est)
-    assert [c.apartment_id for c in live.listed] == [2, 4, 5] and [c.apartment_id for c in live.reserves] == [6, 7, 8]
+    assert [c.apartment_id for c in live.listed] == [2, 4, 5] and [c.apartment_id for c in live.reserves] == list(range(6, 18))
     # fewer than three full matches: the reserves are the alternatives not reached; a failed full match is replaced by them
     r2 = req(enquiry(area="South Yarra"))
     full = [apt(i, suburb="South Yarra", building=f"{i}0 SY Street") for i in (1, 2)]
@@ -565,10 +567,10 @@ def test_the_next_in_order_are_named_as_reserves_and_are_not_options():
     # three full matches with alternatives behind them: an alternative is the reserve when no further full match exists
     three = full + [apt(3, suburb="South Yarra", building="30 SY Street")]
     sl = hm.build_shortlist(r2, three + alts, TODAY)
-    assert sl.alternatives == [] and [c.apartment_id for c in sl.reserves] == [7, 8, 9] and sl.reserve_queue == []
+    assert sl.alternatives == [] and [c.apartment_id for c in sl.reserves] == [7, 8, 9]
     # nothing behind the three: no reserves
     none = hm.build_shortlist(r, many[:3], TODAY)
-    assert none.reserves == [] and none.reserve_queue == []
+    assert none.reserves == []
 
 
 def test_no_candidate_means_no_shortlist():

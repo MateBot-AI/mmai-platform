@@ -198,7 +198,7 @@ made. It is off by default.
   a ready shortlist" with the reason. The journey figures stay visible. There is no
   rules-only result.
 - How a replacement is reviewed. The saved options now also name the reserves: up to
-  three apartments next in the same order, which are the ones that step in when a
+  twelve apartments next in the same order, which are the ones that step in when a
   shortlisted apartment fails the travel check. They are not shown as options. The
   saved AI review (review contract "homebot-review-v2") is given each reserve with
   the same recorded facts as a listed option (offer, cost, dates, bedding, features,
@@ -209,29 +209,31 @@ made. It is off by default.
   the journeys measured in that check, which are not stored. The saved review covers
   the listed options, the alternatives, the unresolved candidates and the reserves;
   an alternative it reviewed as an alternative counts as reviewed if it steps in.
-- A replacement from beyond the reviewed reserves. When a check needs a replacement
-  the saved review has not covered, and that is the only thing in the way, the
-  result of that check is held and the next three candidates in the same order are
-  added to the saved options' reserves and handed to the same review queue. The
-  review is bound to the reserves, so it is made again for the options with the
-  longer list (one model call by the review worker, none inside the check). While
-  it is outstanding the page says the review has not completed; once it is
-  complete, a check of the same options can read "AI-assessed". One batch per
-  check, never while a review is outstanding, and at most four batches (twelve
-  reserves) for one set of options; after that the result stays held and the page
-  says staff decide. If the hand-over fails, nothing is written and the next check
-  asks again.
-- What that step writes. The longer reserve list (candidates chosen and ordered
-  before travel was looked at, with the same stored facts as every other candidate)
-  and one audit row (action "homebot.reserve_review") holding the scenario, the
-  options' number, how many reserves were added and how many there now are. It
-  writes no journey, time, result or failed apartment. It does show that a check
-  needed more candidates than had been reviewed; that is the one thing saved as a
-  consequence of a travel check, and it should be weighed against the service's
-  no-storage terms before the switch is set.
-- What is still held. More than twelve replacements for one set of options. Options
-  saved before this package hold no reserves; they are out of date under the new
-  matching version and are rebuilt and reviewed again before use.
+- The reserves are fixed before any journey is measured. They are taken from the
+  order on the other points when the options are prepared, and reviewed with the
+  options in the same single review. Nothing about the reserves is decided, added
+  or written because of a journey result: a travel check does not change the saved
+  options, their hand-over to the review or the review rows, and its only records
+  are the count-only request rows. (An earlier build of this branch sent further
+  reserves for review when a check needed them; that step, its audit action and
+  its two hold reasons have been removed.)
+- The bound. Twelve reserves for one set of options, never the whole apartment
+  list, and never more than three options shown. A replacement from beyond the
+  twelve has not been reviewed: the result of that check is held and the page says
+  staff decide how to proceed. The saved options do not change.
+- Size of the review. A full pool makes the review request about 69,000 characters
+  (three options and twelve reserves, measured on test data) and its reply carries
+  fifteen option notes. The output budget now follows the number of options:
+  1,500 tokens plus 120 for each option, never below the earlier fixed 1,800 and
+  never above the 8,000 ceiling; 3,300 for a full pool, and 4,950 for the one
+  compact retry. It is sized so that the longest reply the validator accepts fits
+  at three characters a token. That figure is an engineering estimate; it has not
+  been measured against the model. Every option, reserve or not, still needs its
+  own valid note, and a reply cut off twice is recorded as held, not as a review.
+  A larger request for every review is the cost of this design, whether or not a
+  travel check ever needs a reserve.
+- Options saved before this package hold no reserves; they are out of date under
+  the new matching version and are rebuilt and reviewed again before use.
 - System text. The saved review and the travel assessment are each sent under
   HomeBot's own system text. Before this package both went out under the MateBot
   system line, because the HomeBot text was defined and never passed on. MateBot's

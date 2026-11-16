@@ -91,6 +91,12 @@ MAX_ATTEMPTS = 3
 FINDINGS_MAX = 10
 NOTE_MAX, RATIONALE_MAX = 300, 600
 OUTPUT_TOKENS = 1800
+# The reply carries one note per option in the packet, and the packet now names up to twelve reserves as well as the options
+# shown, so the output budget follows the number of options instead of staying fixed: room for the rationale and the findings
+# at their maximum, plus each option note at its maximum. An engineering limit, not a rule: sized at three characters per
+# token (a cautious figure for English prose inside JSON; not measured against the model), never below the earlier fixed
+# budget and never above ai.OUTPUT_TOKEN_CEILING. A reply cut off there gets the usual one compact retry and no more.
+OUTPUT_TOKENS_BASE, OUTPUT_TOKENS_PER_OPTION = 1500, 120
 # automatic consumer (runs inside the existing AI queue worker, ai_queue._iteration): rows per batch, batches per wake, and the
 # delay before a row that stays pending after an attempt (provider failure / unusable reply) is tried again
 BATCH = int(os.environ.get("MMAI_HOMEBOT_REVIEW_BATCH", "5"))
@@ -549,10 +555,16 @@ def _failure_text(e: BaseException) -> str:
 CONFIGURATION_KINDS = frozenset(("credentials", "setup"))   # explicit operator problems (ai.failure_kind): named, terminal, never a provider retry
 
 
+def output_tokens(pk: dict) -> int:
+    """The output budget asked for one review of this packet. Pure."""
+    wanted = OUTPUT_TOKENS_BASE + OUTPUT_TOKENS_PER_OPTION * len(pk.get("options") or [])
+    return min(ai.OUTPUT_TOKEN_CEILING, max(OUTPUT_TOKENS, wanted))
+
+
 def review_shortlist(pk: dict, meter: dict | None = None) -> dict:
     """One bounded model call (normal + at most one compact retry, ai._ask_bounded) and the validator. Raises ai exceptions /
     UnusableReview; returns the clean review."""
-    text = ai._ask_bounded(lambda compact: build_prompt(pk, compact), OUTPUT_TOKENS, "homebot review", meter, system=SYSTEM)
+    text = ai._ask_bounded(lambda compact: build_prompt(pk, compact), output_tokens(pk), "homebot review", meter, system=SYSTEM)
     try:
         return parse_review(text, pk)
     except UnusableReview as e:
