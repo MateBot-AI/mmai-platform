@@ -48,11 +48,15 @@ PRIMARY = ["Study", "Work"]
 BEDROOMS = ["Studio", "1 bedroom", "2 bedrooms", "3 bedrooms"]
 BATHROOMS = ["1 bathroom is fine", "Prefer 2 bathrooms", "Must have 2 bathrooms"]
 AREAS = ["Melbourne CBD", "South Yarra", "Either"]
-TRANSPORT = ["Walk", "Tram", "Train", "Bus", "Bike or scooter"]
-# No longer offered (16 Nov 2026): journeys are worked out for the five ways of travelling above only. An enquiry sent
-# while Car was offered keeps that answer exactly as given. It is never read as agreement to another way of travelling;
-# staff may untick it once the applicant has said how they will travel, and it can never be added.
-TRANSPORT_RETIRED = ("Car",)
+# H28(c) / H31 (16 Nov 2026): the travel choices are walking, bicycle and public transport. Public transport is ONE combined
+# choice: the journey service cannot tell a tram from a train, bus or ferry, so nothing narrower can be measured.
+TRANSPORT = ["Walk", "Bicycle", "Public transport"]
+# No longer offered. An enquiry sent while these were offered keeps its answer exactly as given. Tram, Train, Bus and Car are
+# never read as agreement to "Public transport" or to any other choice: those journeys are not measured and travel reads
+# "needs confirmation" until the applicant has told staff how they will travel. Staff may then untick the old answer and tick
+# what the applicant said; an old answer can never be added. "Bike or scooter" was always measured as a bicycle journey and
+# still is (it is not widened).
+TRANSPORT_RETIRED = ("Tram", "Train", "Bus", "Bike or scooter", "Car")
 MAX_TRAVEL = ["5 minutes — walking distance only", "15 minutes", "30 minutes", "45 minutes", "60 minutes or more"]
 EXTRAS = list(feat.LABELS)   # the 20 approved apartment and building features (8 Nov 2026), one catalogue shared with MateBot and the apartment list
 EXTRAS_MAX_TOP = feat.MAX_TOP   # "Which three matter most to you?": up to three of the ticked extras, optional
@@ -390,7 +394,7 @@ def _validate(a, errors, today, keep_transport=()) -> dict:
     given = a.get("transport")
     if "transport" in errors and any(m in ([given] if isinstance(given, str) else given if isinstance(given, list) else [])
                                      for m in TRANSPORT_RETIRED if m not in kept):
-        errors["transport"] = "Car is no longer one of the choices. Please choose from walk, tram, train, bus, or bike or scooter."
+        errors["transport"] = "The travel choices are now walk, bicycle and public transport. Please choose from those."
     out["max_travel"] = _choice(errors, a, "max_travel", MAX_TRAVEL)
     out["extras"], out["extras_top"] = feat.clean_wanted(a.get("extras"), top=a.get("extras_top"), errors=errors, key="extras", top_key="extras_top")
     notes = _s(a.get("apartment_notes"), MAX_NOTES)

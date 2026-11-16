@@ -6,11 +6,13 @@ rights must cover the complete persisted and AI-reviewed workflow, including
 derived results and its retention period. No response bodies/addresses are logged.
 
 A second, separate path at the end of this module (LiveEstimates) serves a staff
-member's on-screen travel check: journey times are requested, used for that one
-reply and dropped. It stores nothing and never feeds the AI review, so it does not
-use the stored-evidence rights above and never satisfies them. It is off by default;
-whether the provider's standard terms allow even this in-request calculation is an
-open question recorded in RELEASE_OPERATIONS.md, not something this code settles.
+member's on-screen travel check (H28(i), 16 Nov 2026): journey times for walking,
+bicycle and combined public transport are requested from Google Maps Experience
+Agent Tools, used for that one reply and dropped. It stores nothing and never feeds
+the saved AI review, so it does not use the stored-evidence rights above and never
+satisfies them. It is off by default; the account, key, AI-retention and privacy
+wording conditions for switching it on are recorded in RELEASE_OPERATIONS.md and
+are not something this code settles.
 """
 from __future__ import annotations
 
@@ -241,19 +243,33 @@ def stale_evidence(evidence, now=None):
 
 
 # ----------------------------------------------------------------------------------------------- live travel check
-# A staff member's on-screen travel check. Journey times are requested for the options on the page, used for that one
-# reply and then dropped: nothing from the provider is stored, cached, logged or passed to the AI review. This path is
-# separate from the stored-evidence path above (load_policy / Estimates), which stays off without documented rights.
-LIVE_ENV = "MMAI_ROUTING_LIVE"
+# A staff member's on-screen travel check (H28(i)). Journey times are requested for the options on the page, used for that
+# one reply and then dropped: nothing from the provider is stored, cached between requests or logged. This path is separate
+# from the stored-evidence path above (load_policy / Estimates), which stays off without documented rights and is not used.
+#
+# Provider: Google Maps Experience Agent Tools, computeRoutes over REST. What it returns for a route is a duration, a distance
+# and an attribution (title + link). It does NOT return legs, steps or the vehicles used, so a public transport journey
+# cannot be checked for tram, train or bus: "Public transport" is one combined choice and may include any vehicle the provider
+# routes by (ferry included). Earlier Tram / Train / Bus / Car answers are therefore never requested and never measured here.
+AGENT_TOOLS_ENV = "MMAI_TRAVEL_AGENT_TOOLS"
+AGENT_TOOLS_KEY_ENV = "GOOGLE_MAPS_AGENT_TOOLS_API_KEY"
+AGENT_TOOLS_ENDPOINT = "https://mapstools.googleapis.com/v1:computeRoutes"
+AGENT_TOOLS_MODES = {"Walk": "WALK", "Bicycle": "BICYCLE", "Bike or scooter": "BICYCLE", "Public transport": "TRANSIT"}
+# The only request fields this module ever sends. routingPreference (the traffic-aware option is the provider's dearer tier),
+# includePolyline, intermediateWaypoints, locationBias and arrivalTime are never sent; _agent_tools_post refuses them.
+AGENT_TOOLS_REQUEST_FIELDS = frozenset(("origin", "destination", "travelMode", "computeAlternativeRoutes", "departureTime"))
+LIVE_ENV = AGENT_TOOLS_ENV
 LIVE_BASIS = "Estimated weekday departure at 08:00 Melbourne; not a guaranteed journey time"
 LIVE_OFF = "Live travel checks are switched off."
-# Request limits: (default, lowest, highest). The provider bills each successful request under one price tier chosen by
-# the features asked for. What this module asks for (request_body + FIELD_MASK) uses none of the features the provider
-# lists for its middle tier (traffic-aware routing, waypoint optimisation, more than ten stops, location modifiers) or
-# its highest tier (two-wheeler mode, tolls, traffic on polylines, large-vehicle routing), which by its published list
-# leaves the lowest tier. That reading is from the provider's price pages as read on 16 November 2026; it has not been
-# checked against a bill. The monthly default is kept low for that reason: under the middle tier's monthly free
-# allowance (5,000 requests) as well as the lowest tier's (10,000).
+# The provider's own words, which it requires beside every walking route shown.
+WALK_WARNING = "WALK routes are in beta and might sometimes be missing clear sidewalks or pedestrian paths."
+SOURCE_TITLE_MAX = 200
+SOURCE_URL_MAX = 2000
+_SOURCE_HOST = re.compile(r"(?:[a-z0-9-]+\.)*google\.com(?:\.au)?|maps\.app\.goo\.gl|goo\.gl|g\.co")
+# Request limits: (default, lowest, highest). The provider's published price for this service, as read on 16 November 2026,
+# is one tier for every request this module makes (10,000 requests a month without charge, then US$7.00 per 1,000) unless a
+# dearer option is asked for, and this module asks for none. That reading has not been checked against a bill. The monthly
+# default is kept well under the no-charge allowance for that reason.
 LIVE_LIMITS = {"MMAI_ROUTING_LIVE_MAX_REQUESTS": (200, 1, 500),          # one check
                "MMAI_ROUTING_LIVE_DAILY_REQUESTS": (1000, 1, 20000),     # all checks in one UTC day
                "MMAI_ROUTING_LIVE_MONTHLY_REQUESTS": (4000, 1, 50000)}   # all checks in one UTC month
@@ -262,7 +278,9 @@ LIVE_WORKERS = 6
 
 
 def live_enabled() -> bool:
-    return os.environ.get(LIVE_ENV, "0") == "1" and bool((os.environ.get("GOOGLE_ROUTES_API_KEY") or "").strip())
+    """On only with the exact switch value and the service's own key. The earlier MMAI_ROUTING_LIVE switch and
+    GOOGLE_ROUTES_API_KEY no longer turn anything on."""
+    return os.environ.get(AGENT_TOOLS_ENV, "0") == "1" and bool((os.environ.get(AGENT_TOOLS_KEY_ENV) or "").strip())
 
 
 def live_auto() -> bool:
@@ -279,6 +297,63 @@ def live_limit(name: str) -> int:
     return value if low <= value <= high else default
 
 
+def agent_tools_request(origin, destination, mode, departure):
+    """The request for one journey. `mode` is the provider's own name (WALK, BICYCLE or TRANSIT); never a car journey."""
+    if mode not in AGENT_TOOLS_MODES.values():
+        raise ValueError("no journey is requested for this way of travelling")
+    return {"origin": {"address": origin}, "destination": {"address": destination}, "travelMode": mode,
+            "computeAlternativeRoutes": True,
+            "departureTime": departure.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")}
+
+
+def _agent_tools_post(body):
+    import httpx
+    key = (os.environ.get(AGENT_TOOLS_KEY_ENV) or "").strip()
+    if not key:
+        raise RuntimeError("journey service key missing")
+    if set(body) - AGENT_TOOLS_REQUEST_FIELDS or body.get("travelMode") not in AGENT_TOOLS_MODES.values():
+        raise ValueError("request field not allowed")
+    # httpx is a pinned runtime dependency and honours the credential proxy.
+    response = httpx.post(AGENT_TOOLS_ENDPOINT, json=body, headers={"X-Goog-Api-Key": key, "Content-Type": "application/json"},
+                          timeout=httpx.Timeout(20, connect=5))
+    response.raise_for_status()
+    if len(response.content) > 2_000_000:
+        raise ValueError("oversize routing response")
+    return response.json()
+
+
+def route_source(route):
+    """The attribution the provider sends with a route, as (title, link), or None when it sent none. Raises ValueError when
+    it sent one that cannot be shown safely as a link (not a plain https address on the provider's own sites)."""
+    a = route.get("attribution") if isinstance(route, dict) else None
+    if a is None:
+        return None
+    title, url = (a.get("title"), a.get("url")) if isinstance(a, dict) else (None, None)
+    if title is None and url is None:
+        return None
+    if not isinstance(title, str) or not isinstance(url, str) or not title.strip() or len(title) > SOURCE_TITLE_MAX \
+            or len(url) > SOURCE_URL_MAX or any(ord(ch) < 32 or ord(ch) == 127 for ch in title + url):
+        raise ValueError("unusable attribution")
+    m = re.fullmatch(r"https://([^/?#@:\s\\]+)(?:[/?#][^\s\\\"'<>]*)?", url)
+    if not m or not _SOURCE_HOST.fullmatch(m.group(1).lower()):
+        raise ValueError("unusable attribution")
+    return title.strip(), url
+
+
+def _fastest_route(body):
+    """(minutes, source) of the fastest usable route in a provider reply, or (UNMEASURED, None). A route whose duration cannot
+    be read, or whose attribution cannot be shown, is not used."""
+    best = None
+    for route in (body.get("routes") if isinstance(body, dict) else None) or []:
+        try:
+            minutes, source = duration_minutes(route.get("duration")), route_source(route)
+        except (ValueError, AttributeError):
+            continue
+        if best is None or minutes < best[0]:
+            best = (minutes, source)
+    return best or (tv.UNMEASURED, None)
+
+
 class LiveEstimates(Estimates):
     """In-memory journey estimates for one staff travel check. `prefetch` makes every provider request (bounded by the
     request allowance and a deadline, no retries); afterwards the object only answers from what was measured. `plan`
@@ -292,10 +367,11 @@ class LiveEstimates(Estimates):
         self.people = {p["position"]: p for p in req.people}
         self.now = now or datetime.now(timezone.utc)
         self.departure = departure_at(self.now)
-        self.post = post or _post
+        self.post = post or _agent_tools_post
         self.max_requests = int(max_requests)
         self.calls = self.measured = self.failures = self.skipped = 0
         self.cache = {}
+        self.sources = {}
         self._todo = []
 
     def _origin(self, apartment):
@@ -303,6 +379,11 @@ class LiveEstimates(Estimates):
         if not building:
             return None
         return ", ".join(x for x in (building, str(apartment.get("suburb") or "").strip()) if x) + ", Victoria, Australia"
+
+    def _modes(self):
+        """The provider modes to request for this party's accepted choices, each once. An earlier answer the provider cannot
+        measure as given (Tram, Train, Bus, Car) is not here: it is never requested and never read as public transport."""
+        return list(dict.fromkeys(AGENT_TOOLS_MODES[m] for m in self.req.transport if m in AGENT_TOOLS_MODES))
 
     def _keys(self, aid):
         apartment = self.inventory.get(int(aid))
@@ -313,18 +394,16 @@ class LiveEstimates(Estimates):
             for which in ("primary", "secondary"):
                 destination = _destination(person, which)
                 if destination:
-                    for mode in self.req.transport:
-                        if mode in ROUTED_MODES:   # never a car journey
-                            yield (origin, destination, mode)
+                    for mode in self._modes():
+                        yield (origin, destination, mode)
 
     def _measure(self, key):
         origin, destination, mode = key
         try:
-            body = self.post(request_body(origin, destination, mode, self.departure))
-            times = [duration_minutes(r.get("duration")) for r in body.get("routes", []) if _valid_route(r, mode)]
-            return min(times) if times else tv.UNMEASURED, False
+            minutes, source = _fastest_route(self.post(agent_tools_request(origin, destination, mode, self.departure)))
+            return minutes, source, False
         except Exception:   # noqa: BLE001 - counted only; never provider text or addresses
-            return tv.UNMEASURED, True
+            return tv.UNMEASURED, None, True
 
     def plan(self, apartment_ids) -> int:
         """Settle which journeys will be requested for these apartments, in the order given (the options staff see first
@@ -354,8 +433,10 @@ class LiveEstimates(Estimates):
             futures = {pool.submit(self._measure, key): key for key in todo}
             done, late = wait(futures, timeout=deadline_sec)
             for f in done:
-                value, failed = f.result()
+                value, source, failed = f.result()
                 self.cache[futures[f]] = value
+                if value is not tv.UNMEASURED and source:
+                    self.sources[futures[f]] = source
                 self.measured += value is not tv.UNMEASURED
                 self.failures += bool(failed)
             self.failures += len(late)   # still running at the deadline: treated as not measured
@@ -369,10 +450,23 @@ class LiveEstimates(Estimates):
         destination = _destination(person, which) if person else None
         if not origin or not destination:
             return {}
-        return {mode: self.cache.get((origin, destination, mode), tv.UNMEASURED) for mode in self.req.transport}
+        return {mode: self.cache.get((origin, destination, AGENT_TOOLS_MODES[mode]), tv.UNMEASURED) if mode in AGENT_TOOLS_MODES
+                else tv.UNMEASURED for mode in self.req.transport}
 
     def evidence(self):
         raise RuntimeError("live travel estimates are never stored")
+
+    def sources_for(self, aid) -> dict:
+        """What must be shown beside one apartment's journey figures: the provider's attribution for each measured journey
+        (title and link exactly as sent, each once) and whether any of them is a walking route."""
+        links, walking = {}, False
+        for key in self._keys(aid):
+            if self.cache.get(key, tv.UNMEASURED) is tv.UNMEASURED:
+                continue
+            walking = walking or key[2] == "WALK"
+            if key in self.sources:
+                links.setdefault(self.sources[key], None)
+        return {"links": [{"title": t, "url": u} for t, u in links], "walking_warning": WALK_WARNING if walking else None}
 
     def display(self):
         """What the page says about this check. Counts and our own clock only; no journey content."""

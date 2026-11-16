@@ -686,3 +686,7 @@ pre.small { white-space: pre-wrap; font-family: inherit; font-size: var(--text-x
 /* Google Maps attribution beside live journey estimates: the provider's own logo, unaltered, 18px high with clear space around it
    (10px left, right and top, 5px below). The text rules style its name, which is shown only if the image cannot load. */
 .gmaps-attr { display: inline-block; height: 18px; width: auto; max-width: none; margin: 10px 10px 5px; vertical-align: middle; font-family: Roboto, Arial, sans-serif; font-size: 14px; font-style: normal; font-weight: 400; letter-spacing: normal; white-space: nowrap; color: #1F1F1F; text-transform: none; }
+/* The provider's name as text beside its sources: its own wording, one line, regular weight, 14px, never translated or restyled. */
+.gmaps-text { font-family: Roboto, Arial, sans-serif; font-size: 14px; font-style: normal; font-weight: 400; letter-spacing: normal; white-space: nowrap; color: #5E5E5E; text-transform: none; text-decoration: none; }
+.hb-grounded { margin: 6px 0; }
+.hb-grounded p { margin: 2px 0; }

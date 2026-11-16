@@ -44,7 +44,9 @@ from typing import Optional, Union
 MAX_TRAVEL = ("5 minutes — walking distance only", "15 minutes", "30 minutes", "45 minutes", "60 minutes or more")
 STATED_LIMIT = {MAX_TRAVEL[0]: 5, MAX_TRAVEL[1]: 15, MAX_TRAVEL[2]: 30, MAX_TRAVEL[3]: 45, MAX_TRAVEL[4]: 60}
 WALK_ONLY_OPTION = MAX_TRAVEL[0]
-TRANSPORT = ("Walk", "Tram", "Train", "Bus", "Bike or scooter", "Car")
+# Walk, Bicycle and Public transport are the choices offered (H28(c), 16 Nov 2026). The rest are earlier answers kept exactly as
+# given on existing enquiries; the relative order of the earlier names is unchanged.
+TRANSPORT = ("Walk", "Bicycle", "Public transport", "Tram", "Train", "Bus", "Bike or scooter", "Car")
 WALK = "Walk"
 
 UNMEASURED = "UNMEASURED"          # route for an accepted mode not (yet) measured

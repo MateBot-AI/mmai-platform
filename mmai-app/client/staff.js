@@ -335,7 +335,7 @@
           <div class="field"><span class="small">Bathrooms</span>${checks('bathrooms', ch.bathrooms, e.bathrooms)}</div>
           <div class="field"><label>Area${sel('area', ch.areas, e.area)}</label></div>
           <div class="field"><span class="small">Transport</span>${checks('transport', (ch.transport || []).concat((e.transport || []).filter(o => !(ch.transport || []).includes(o))), e.transport)}${
-            (e.transport || []).includes('Car') ? '<p class="small muted">Car is no longer offered on the form and car journeys are not measured, so travel for this party reads “needs confirmation”. Leave Car ticked unless the applicant has told you how they will travel; then untick it and tick what they said.</p>' : ''}</div>
+            (e.transport || []).some(o => HB_TRANSPORT_EARLIER.includes(o)) ? '<p class="small muted">Tram, Train, Bus and Car are no longer offered on the form and those journeys are not measured, so travel for this party reads “needs confirmation”. They are not treated as “Public transport”, which is one combined choice and can include any tram, train, bus or ferry. Leave the earlier answer ticked unless the applicant has told you how they will travel; then untick it and tick what they said.</p>' : ''}</div>
           <div class="field"><label>Longest acceptable travel${sel('max_travel', ch.max_travel, e.max_travel)}</label></div>
           <div class="field"><label>Notes about the apartment<textarea name="apartment_notes" rows="2" maxlength="2000">${esc(e.apartment_notes || '')}</textarea></label></div></div>
       </div>
@@ -419,6 +419,10 @@
      The reply is shown on this page only and is not saved anywhere; this small in-page note only stops the page asking again
      every time it redraws, and is cleared after 30 minutes or when the page is closed. */
   const hbTravelShown = new Map();
+  // answers from earlier versions of the form that are kept as given and never measured (never read as "Public transport")
+  const HB_TRANSPORT_EARLIER = ['Tram', 'Train', 'Bus', 'Car'];
+  // the provider's name as plain text: never translated, wrapped or restyled (see .gmaps-text)
+  const GMAPS_TEXT = '<span class="gmaps-text" translate="no">Google Maps</span>';
   // the provider's own logo, unaltered, beside its journey figures (its name is the label, and is what shows if the image cannot load)
   const GMAPS_ATTR = '<img class="gmaps-attr" src="/img/google_maps_logo.svg" alt="Google Maps" translate="no" width="98" height="18">';
   const HB_TRAVEL_KEEP_MS = 30 * 60 * 1000;
@@ -445,8 +449,9 @@
         const mins = measured ? routeMinutes(person.fastest_minutes) : '';
         const detail = measured ? `${mins} minutes (rounded) by ${(person.fastest_modes || []).join(' / ')}` :
           ((f.no_destination || []).includes(person.index) ? 'destination not yet known' :
-            // car journeys are never measured, and a car answer is never swapped for another way of travelling
-            ((person.unknown_modes || []).includes('Car') ? 'travel time needs confirmation (car was accepted; car journeys are not measured)' :
+            // an earlier answer (tram, train, bus, car) is never measured and never swapped for another way of travelling
+            ((person.unknown_modes || []).some(o => HB_TRANSPORT_EARLIER.includes(o)) ?
+              `travel time needs confirmation (the earlier answer ${(person.unknown_modes || []).filter(o => HB_TRANSPORT_EARLIER.includes(o)).join(', ')} is not measured; confirm with the applicant how they will travel)` :
               'travel time needs confirmation'));
         const warning = person.warning ? (measured ? '; long journey, discuss with the applicant' :
           '; possible long journey, confirm before discussing') : '';
@@ -458,7 +463,25 @@
       if (f.majority) lines.unshift(`Closest ${f.majority.size} people: average ${f.majority.average_display} minutes (rounded display)`);
       // any measured journey time on this page comes from the journey provider, so its name sits beside the figures themselves
       const shown = !!f.majority || (f.people || []).some(person => person.fastest_minutes != null) || (f.secondary_display || []).some(person => person.status === 'MEASURED');
-      return `<details class="small"><summary>Journey estimates for each person</summary>${lines.map(esc).join('<br>')}${shown ? '<br>' + GMAPS_ATTR : ''}</details>`;
+      return `${grounded(x)}<details class="small"><summary>Journey estimates for each person</summary>${lines.map(esc).join('<br>')}${shown ? '<br>' + GMAPS_ATTR : ''}</details>`;
+    };
+    // Live travel view only. The AI's note about this option's journeys, then straight after it the Google Maps sources those
+    // journeys came from (the provider's own titles and links, unaltered) and the provider's walking notice where it applies.
+    const grounded = x => {
+      const src = x.travel_sources;
+      if (!src) return '';
+      const ai = x.ai_travel;
+      const links = (src.links || []).filter(s => /^https:\/\//.test(s.url || '')).map(s =>
+        `<a href="${esc(s.url)}" target="_blank" rel="noopener noreferrer">${esc(s.title)}</a>`);
+      const measured = x.travel && x.travel.facts && ((x.travel.facts.people || []).some(person => person.fastest_minutes != null) ||
+        (x.travel.facts.secondary_display || []).some(person => person.status === 'MEASURED'));
+      if (!ai && !links.length && !measured) return '';
+      return `<div class="small hb-grounded" data-role="hb-grounded">
+        ${ai ? `<p data-role="hb-travel-ai-note"><b>AI travel assessment.</b> ${esc(ai.note)}<br>
+          Each person's own limit (${ai.stated_limit_minutes} minutes): ${ai.within_own_limit} within, ${ai.over_own_limit} over, ${ai.not_known} not known${ai.no_destination ? `, ${ai.no_destination} with no destination yet` : ''}.
+          Group result (closest majority against the doubled limit of ${ai.doubled_limit_minutes} minutes): ${esc(ai.group_plain)}.</p>` : ''}
+        <p data-role="hb-travel-sources">Sources: ${GMAPS_TEXT}${links.length ? ' · ' + links.join(' · ') : ''}</p>
+        ${src.walking_warning ? `<p class="muted" data-role="hb-walk-warning">${esc(src.walking_warning)}</p>` : ''}</div>`;
     };
     const candRows = (list, label) => list && list.length ? `<h4 class="small">${label}</h4><div class="table-wrap"><table class="tbl"><thead><tr><th>Apartment</th><th>Type</th><th>Result</th><th>Offer (dates · whole-apartment rent)</th><th>To check / notes</th></tr></thead><tbody>
       ${list.map(x => `<tr><td>${esc(x.address)}<br><span class="small muted">${esc(x.suburb)}</span></td><td class="mono">${esc(x.type_code)}</td><td>${esc(x.class_plain)}${x.pareto_rank ? `<br><span class="small muted">beaten on every measured point by ${x.pareto_rank} listed option(s)</span>` : ''}</td>
@@ -479,8 +502,13 @@
       const k = r.check || {};
       const missed = (k.failures || 0) + (k.not_requested || 0);
       const counts = r.summary && r.summary.counts ? Object.entries(r.summary.counts).map(([n, v]) => `${v} ${n.replace(/_/g, ' ')}`).join(', ') : '';
+      // the AI's travel reply for this check (never saved): each option's note is shown in its own row, followed by its sources
+      const ai = r.ai_reply || {};
+      const notes = new Map((ai.state === 'ready' ? ai.options || [] : []).map(o => [o.apartment_id, o]));
+      [...(r.listed || []), ...(r.fourth_option ? [r.fourth_option] : []), ...(r.alternatives || []), ...(r.unresolved || [])].forEach(x => { x.ai_travel = notes.get(x.apartment_id) || null; });
       return `<div data-role="hb-travel-result"><h4>Options with live travel times</h4>
         <p class="small">${GMAPS_ATTR}<br>Journey estimates. ${esc(k.basis || '')}. Checked ${fmtDT(k.checked_at)}.</p>
+        ${ai.plain ? `<p class="small${ai.state === 'ready' ? '' : ' muted'}" data-role="hb-travel-ai" data-state="${esc(ai.state || '')}">${esc(ai.plain)}</p>` : ''}
         <p class="small muted">${esc(r.plain)}${counts ? ` With these journey times: ${esc(counts)}.` : ''}</p>
         ${missed ? `<p class="msg small">${missed} journey${missed === 1 ? '' : 's'} could not be checked this time; where a time is missing the option reads "Travel time needs confirmation".</p>` : ''}
         ${!k.requests ? '<p class="small muted">No journeys were needed: no one in the party has a place of work or study recorded yet.</p>' : ''}

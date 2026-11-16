@@ -1367,8 +1367,10 @@ def overview(c, eid: int) -> dict:
 
 # ------------------------------------------------------------------------------------------------- live travel check
 # Journey times for the options a staff member is looking at, worked out on request and shown once. The stored options, their
-# history, the AI review and the decline records are untouched: nothing from the journey provider is written to the database,
-# kept between requests, logged or passed to the AI. Only a count of provider requests is recorded, to hold the monthly allowance.
+# history, the saved AI review and the decline records are untouched: nothing from the journey provider is written to the
+# database, kept between requests or logged. Only a count of provider requests is recorded, to hold the monthly allowance.
+# When the separate AI travel reply is switched on (homebot_travel_reply), the journey results of this one check are also
+# given to Claude for a short assessment that is returned with this reply and dropped; it is never the saved AI review.
 TRAVEL_CHECK_ACTION = "homebot.travel_check"
 TRAVEL_NOT_SAVED = ("Journey times are checked live and are not saved: they are shown on this page only, are not part of the stored "
                     "options or the AI review, and are checked again each time.")
@@ -1389,8 +1391,10 @@ def _travel_requests_used(c, prefix: str) -> int:
 def live_travel_state(c=None) -> dict:
     """For the Options panel: whether live travel checks can be run, and whether the page should run one when it opens."""
     from . import routing
+    from . import homebot_travel_reply
     on = enabled() and routing.live_enabled()
-    return {"enabled": on, "auto": on and routing.live_auto(), "plain": TRAVEL_NOT_SAVED if on else routing.LIVE_OFF}
+    return {"enabled": on, "auto": on and routing.live_auto(), "plain": TRAVEL_NOT_SAVED if on else routing.LIVE_OFF,
+            "ai_reply": on and homebot_travel_reply.enabled()}
 
 
 def _travel_refusal(state: str, plain: str, **extra) -> dict:
@@ -1401,7 +1405,7 @@ def live_travel_check(c, eid: int, scenario: str, staff: str, *, now: Optional[s
     """Work out the current options again with live journey estimates and return them for display. The stored options must be
     current and not out of date; the same enquiry, apartment list, business date and booking authority are used, so the only
     difference from the stored options is the journey times. Nothing is stored except one count-only audit record."""
-    from . import exit_exceptions, routing
+    from . import exit_exceptions, homebot_travel_reply, routing
     _require_on()
     if scenario not in SCENARIOS:
         raise ValidationError({"scenario": "Unknown scenario."})
@@ -1467,12 +1471,20 @@ def live_travel_check(c, eid: int, scenario: str, staff: str, *, now: Optional[s
         _travel_lock.release()
     shown = {x["apartment_id"] for key in ("listed", "alternatives", "unresolved") for x in res.get(key, [])} | (
         {res["fourth_option"]["apartment_id"]} if res.get("fourth_option") else set())
+    # the options in the order the page shows them; the AI's transient travel reply covers these and nothing else
+    in_order = res.get("listed", []) + ([res["fourth_option"]] if res.get("fourth_option") else []) + res.get("alternatives", []) + res.get("unresolved", [])
+    reply = homebot_travel_reply.travel_reply(in_order)   # outside the lock and any database work; returned once, never stored
+
+    def with_sources(x):
+        # the provider's attribution for this option's journeys, to be shown straight after its figures and the AI's note
+        return {**_candidate_out(x), "travel_sources": est.sources_for(x["apartment_id"])}
     return {"ok": True, "state": "checked", "saved": False, "plain": TRAVEL_NOT_SAVED, "shortlist_id": sl["id"], "scenario": scenario,
             "scenario_label": SCENARIO_LABEL.get(scenario, scenario), "check": check, "summary": res.get("summary") or {},
-            "listed": [_candidate_out(x) for x in res.get("listed", [])],
-            "alternatives": [_candidate_out(x) for x in res.get("alternatives", [])],
-            "fourth_option": _candidate_out(res["fourth_option"]) if res.get("fourth_option") else None,
-            "unresolved": [_candidate_out(x) for x in res.get("unresolved", [])],
+            "ai_reply": reply,
+            "listed": [with_sources(x) for x in res.get("listed", [])],
+            "alternatives": [with_sources(x) for x in res.get("alternatives", [])],
+            "fourth_option": with_sources(res["fourth_option"]) if res.get("fourth_option") else None,
+            "unresolved": [with_sources(x) for x in res.get("unresolved", [])],
             "why_not": [_candidate_out(x, brief=True) for x in res.get("candidates", []) if x["apartment_id"] not in shown]}
 
 

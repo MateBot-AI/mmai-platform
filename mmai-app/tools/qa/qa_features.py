@@ -178,7 +178,7 @@ async def homebot_checks():
                    "people": [{"sleep": "Own bedroom", "weekly_max": 700, "doing": "Working", "place": "Collins St"}],
                    "move_in": "2027-03-01", "move_in_flex": "Exact date", "move_out": "2027-09-01", "move_out_flex": "Exact date",
                    "budget_total": 700, "budget_types": ["2B2B"], "price_guide": "rent_12m", "bedrooms": ["2 bedrooms"], "bathrooms": ["Prefer 2 bathrooms"], "area": "Either",
-                   "transport": ["Tram"], "max_travel": "30 minutes", "apartment_notes": "", "viewing": "Video call", "heard": "Google",
+                   "transport": ["Public transport"], "max_travel": "30 minutes", "apartment_notes": "", "viewing": "Video call", "heard": "Google",
                    "consent_contact": True, "consent_lease": True, "consent_adults": True})
         r = await pg.evaluate("async (body)=>{const r=await fetch('/api/public/homebot/enquiries',{method:'POST',headers:{'Content-Type':'application/json','X-Submission-Key':'qa-features-hb-'+Date.now()},body:JSON.stringify(body)}); return {s:r.status, t:await r.text()};}", pl)
         assert r['s'] in (201, 422), r

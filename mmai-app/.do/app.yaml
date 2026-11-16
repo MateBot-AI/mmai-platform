@@ -85,7 +85,13 @@ services:
       - key: MMAI_ROUTING
         scope: RUN_TIME
         value: "0"
-      - key: MMAI_ROUTING_LIVE
+      # Live travel check (Google Maps Experience Agent Tools) and the AI's travel reply: both off. The key for the
+      # service (GOOGLE_MAPS_AGENT_TOOLS_API_KEY) is entered as a secret in the host's settings only when the conditions
+      # in RELEASE_OPERATIONS.md are met; it is deliberately not declared here.
+      - key: MMAI_TRAVEL_AGENT_TOOLS
+        scope: RUN_TIME
+        value: "0"
+      - key: MMAI_TRAVEL_AI_REPLY
         scope: RUN_TIME
         value: "0"
       # --- AI (MateBot AI's own Anthropic account) ---

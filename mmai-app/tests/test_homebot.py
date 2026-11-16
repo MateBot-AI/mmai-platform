@@ -52,7 +52,7 @@ def body(**over):
         "move_out": _d(400), "move_out_flex": "Exact date",
         "budget_total": 1000, "budget_types": ["2B2B", "3B"], "price_guide": "rent_12m",
         "bedrooms": ["2 bedrooms", "3 bedrooms"], "bathrooms": ["Prefer 2 bathrooms"], "area": "Either",
-        "transport": ["Tram", "Walk"], "max_travel": "30 minutes", "extras": ["Balcony", "Dishwasher"],
+        "transport": ["Public transport", "Walk"], "max_travel": "30 minutes", "extras": ["Balcony", "Dishwasher"],
         "apartment_notes": "", "viewing": "Video call", "heard": "Google",
         "consent_contact": True, "consent_lease": True, "consent_adults": True,
     }

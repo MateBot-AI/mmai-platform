@@ -53,91 +53,135 @@ digest and expiry; changed or expired permission/estimates invalidate readiness.
 
 ## Live travel check (shown, not stored)
 
-`MMAI_ROUTING_LIVE=1` with `GOOGLE_ROUTES_API_KEY` set turns on a separate, narrower
-use of the same provider: when a staff member opens an enquiry's options (or presses
-"Check travel times now"), the server asks for journey times for the apartments still
-in the running, applies the travel rules in memory and returns the re-assessed options
-for that one page view. It needs `MMAI_HOMEBOT_MATCHING` on and current, in-date
-stored options. It is off by default and is not approved for use.
+`MMAI_TRAVEL_AGENT_TOOLS=1` with `GOOGLE_MAPS_AGENT_TOOLS_API_KEY` set turns on the
+live travel check, which uses Google Maps Experience Agent Tools (its `computeRoutes`
+call, Essentials pay-as-you-go). When a staff member opens an enquiry's options (or
+presses "Check travel times now"), the server asks for journey times for the
+apartments still in the running, applies the travel rules in memory and returns the
+re-assessed options for that one page view. It needs `MMAI_HOMEBOT_MATCHING` on and
+current, in-date stored options. It is off by default and has not been switched on or
+tested against the live service.
 
-- Nothing from the provider, and nothing worked out from it, is stored, cached between
-  requests, logged or passed to the AI review. The stored options, their history, the
-  review packet and the decline records are unchanged and keep reading "Travel time
-  needs confirmation". The only record is one audit row per check holding this
-  application's own request counts.
-- The page shows the provider's own Google Maps logo (the unaltered dark-grey file from
-  its [attribution assets](https://developers.google.com/maps/documentation/routes/policies),
-  18px high, labelled "Google Maps") at the head of the live options and beside each
-  apartment's journey figures, with the label "Estimated weekday departure at 08:00
+The earlier switch `MMAI_ROUTING_LIVE` and the key `GOOGLE_ROUTES_API_KEY` no longer
+turn anything on in this path. Remove `MMAI_ROUTING_LIVE` from the host's settings
+when the new switches are entered; a Routes API key must not be reused as the Agent
+Tools key.
+
+- Three ways of travelling are offered on the HomeBot form and requested from the
+  service: walking, bicycle and public transport. Public transport is one combined
+  choice (the service does not say which vehicles a journey uses). No car journey is
+  ever requested, and the sender refuses any request that names one.
+- Each request carries five fields only: origin address, destination address, travel
+  mode, alternative routes and the departure time. No traffic-aware option, route
+  line, toll, fuel or other dearer feature is asked for, and the sender refuses a
+  request carrying any other field.
+- Answers given on earlier versions of the form are kept exactly as given. Tram, Train,
+  Bus and Car are never requested and never read as "Public transport"; "Bike or
+  scooter" is measured as a bicycle journey, as it was before. A party holding Tram,
+  Train, Bus or Car reads "Travel time needs confirmation" on every option until a
+  staff member, having heard from the applicant, changes the answer in "Change the
+  party's requirements". Those answers cannot be added to any enquiry.
+- Nothing from the service, and nothing worked out from it, is stored, cached between
+  requests or logged. The stored options, their history, the saved AI review packet
+  and the decline records are unchanged and keep reading "Travel time needs
+  confirmation". The only record is one audit row per check holding this application's
+  own request counts.
+- Sources. Each journey answer carries a source title and link from the service. The
+  page shows, for each option, "Sources: Google Maps" followed by those links, straight
+  after the AI's travel reply for that option, without a further click. When there is
+  no AI reply the same sources line still shows with that option's journey figures. "Google Maps" is plain text, never
+  translated, wrapped or restyled. A link is shown only if it is an https address on a
+  Google host; a journey whose link is anything else is treated as not measured, and
+  a journey the service sends with no link at all is shown with "Sources: Google Maps"
+  alone. The
+  Google Maps logo (the unaltered file) remains at the head of the live options and
+  beside the per-person figures, labelled "Estimated weekday departure at 08:00
   Melbourne; not a guaranteed journey time". No map is shown.
+- Walking. Whenever a walking journey is shown, the page shows the service's own
+  notice: "WALK routes are in beta and might sometimes be missing clear sidewalks or
+  pedestrian paths."
 - Request limits (each has a safe default and falls back to it if unreadable):
   `MMAI_ROUTING_LIVE_MAX_REQUESTS` per check (200), `MMAI_ROUTING_LIVE_DAILY_REQUESTS`
-  per UTC day (1000), `MMAI_ROUTING_LIVE_MONTHLY_REQUESTS` per UTC month (4000). When
-  a limit is reached no request is made and travel reads as needing confirmation.
-  The count for a check is recorded before its first request is sent. The limits are
-  enforced by this application from its audit records; the provider account has a
-  budget alert only, so also set a daily quota for the Routes API in the provider
-  console as a second stop.
+  per UTC day (1000), `MMAI_ROUTING_LIVE_MONTHLY_REQUESTS` per UTC month (4000). The
+  names are unchanged from the earlier build. When a limit is reached no request is
+  made and travel reads as needing confirmation. The count for a check is recorded
+  before its first request is sent. The limits are enforced by this application from
+  its audit records; also set a daily quota for the service in the provider console as
+  a second stop.
 - The check runs by itself when the options are opened, once per list per page; a
   page reload runs it again. `MMAI_ROUTING_LIVE_AUTO=0` keeps the button but stops the
   check running by itself.
 - Cost basis, from the provider's published
-  [price tiers](https://developers.google.com/maps/billing-and-pricing/sku-details/routes)
-  and [price list](https://developers.google.com/maps/billing-and-pricing/pricing)
-  (read 16 November 2026): each successful request is billed under one tier. The
-  walking, bicycle, tram, train and bus requests sent here use none of the features the
-  provider lists for its middle or highest tier, which by that list leaves the lowest
-  tier (10,000 free requests a month). The monthly default of 4,000 is below that and
-  below the middle tier's free allowance (5,000), so at the published prices the
-  default should cost nothing, provided nothing else on the same billing account uses
-  these tiers. This reading has not been confirmed against a billing report; check the
-  first month's report before raising the limit.
-- Journeys are requested for five ways of travelling only: walking, bicycle, tram,
-  train and bus. No car journey is ever requested, by this check or by the stored
-  journey path. A party that accepted Car keeps that answer: it is not swapped for
-  another way of travelling, the car journey stays not measured, and every option for
-  that party reads "Travel time needs confirmation", whether Car was the only answer or
-  one of several.
-- The HomeBot form no longer offers Car, and a new enquiry naming it is refused with a
-  plain message. An enquiry sent while Car was offered keeps the answer as given: an
-  unrelated staff change leaves it in place, the "Change the party's requirements" box
-  still shows it, staff may untick it once the applicant has said how they will travel,
-  and it cannot be added to any enquiry. Assessing such a party on its other answers
-  alone, without asking, would need Bill's ruling.
+  [overview](https://developers.google.com/maps/ai/maps-experience-agent-tools) (read
+  16 November 2026): Essentials requests are free up to 10,000 a month and US$7.00 per
+  1,000 after that. The monthly default of 4,000 is below the free amount, provided
+  nothing else on the same billing account uses it. This reading has not been
+  confirmed against a billing report; check the first month's report before raising
+  the limit. The approved allowance for this service is A$200 a month.
 - A decline recorded for an apartment that was offered from the live view keeps the
   saved details for that apartment (travel time needing confirmation), never the live
   journey times.
 - Journey times held in the open page are dropped after 30 minutes, whether or not
   the page is opened again.
 - This switch is independent of `MMAI_ROUTING` and the rights file above, which stay
-  off: they govern stored journey evidence and its use by the AI review, and no
-  clearance for that exists.
+  off: they govern stored journey evidence and its use by the saved AI review, and no
+  clearance for that exists. That stored path was built for the earlier form choices
+  and does not request "Public transport" or "Bicycle" journeys at all.
+- Order of options: unchanged by this build. Which options are measured, and how the
+  listed options are ordered, is exactly as before.
 
-Contract position, stated as a risk and not as a permission. Storing or caching the
-provider's journey results is outside its standard terms, which is why this path keeps
-nothing. Whether working out an average, a pass or fail and an order from those
-results inside a single request is allowed is not settled by the wording: the terms
-say not to "create content based on Google Maps Content"
-([Google Maps Platform Terms 3.2.3(c)](https://cloud.google.com/maps-platform/terms)).
-An independent review on 16 November 2026 classed this as an unresolved, moderate
-contract risk: not a clear breach and not cleared. Switching this on therefore needs
-the business owner's decision to accept that risk, or a written answer from the
-provider, or a different provider.
+### The AI's travel reply
 
-The site's published terms must also tell users that it uses Google Maps features and
-content and that their use is subject to the Google Maps/Google Earth Additional Terms
-of Service and the Google Privacy Policy, and the site needs a publicly accessible
-Terms of Use and Privacy Policy
-([Google Maps Platform Terms 3.2.2](https://cloud.google.com/maps-platform/terms),
-[Routes API policies](https://developers.google.com/maps/documentation/routes/policies)).
-That wording is the business owner's to approve; it is not supplied by this package
-and no such pages exist in it.
+`MMAI_TRAVEL_AI_REPLY=1` (in addition to the switches above) lets the AI write a short
+travel assessment for each option in the check just made. It is off by default.
 
-## Controlled startup
+- It runs only when the call goes to ALM's own Anthropic account
+  (`ANTHROPIC_API_KEY`, no proxy) and uses `claude-sonnet-5-5`. On any other route no
+  call is made and the page says so.
+- The model is given positions and figures only: person 1, 2, 3; each person's fastest
+  accepted journey in minutes and by which way of travelling; whether that is within
+  that person's stated limit; and the group result. No names, addresses, places of
+  work or study, or apartment details.
+- Every figure is worked out in code first. The model reports, per option, how many
+  people are within their own limit, how many are over it and how many are not known,
+  the group result, and a note of at most two sentences. Code checks each count and the
+  group result against its own figures, every number in the note against that option's
+  figures, and the note's counting and group pass-or-fail phrases. Any mismatch
+  withholds the whole reply and the page says so. The rest of the note's wording is not
+  proven by this check; staff read it beside the code's figures.
+- A person whose journey is not fully measured is "not known": never counted as within
+  a limit and never as over it. If no journey in the check is fully measured the model
+  is not asked.
+- "Within their own limit" (each person against the stated limit) and the group result
+  (the closest majority's average against the doubled limit) are reported separately.
+- The reply is returned to the page once and is not stored, cached or logged. A failure
+  is logged as a category only. The saved AI review never receives journey content.
+
+### Conditions before either switch is set
+
+None of these is established by this package; each needs its own evidence.
+
+1. The Agent Tools key belongs to an eligible ALM billing account, is restricted to
+   this service, and has a daily quota set.
+2. For the AI reply: the Anthropic account used by `ANTHROPIC_API_KEY` is confirmed not
+   to cache, store or train on what it is sent. The service's terms require this of
+   the model that receives its journey content
+   ([Maps service terms, section 10](https://cloud.google.com/maps-platform/terms/maps-service-terms),
+   [overview](https://developers.google.com/maps/ai/maps-experience-agent-tools)).
+   This is a property of the account, not of this code.
+3. The public Privacy notice says that journey estimates are passed to the AI provider
+   for this assessment, and that wording is approved. The notices in this package have
+   not been changed for it.
+4. A first controlled live check has been made and read: a Melbourne weekday 08:00
+   public transport journey returns a time and a source link in the expected shape. A
+   source link that is not an https address on a Google host would show as "not
+   measured" and would need to be looked at before going further.
+
+## Controlled startup## Controlled startup
 
 Keep `MMAI_SCHEDULER=0`, `MMAI_AI_QUEUE=0`, `MMAI_HOMEBOT_MATCHING=0`,
 `MMAI_NOTIFICATIONS=0`, `MMAI_MAIL_MODE=off`, `MMAI_ALERT_MODE=off`,
-`MMAI_ROUTING=0` and `MMAI_ROUTING_LIVE=0` until the corresponding controlled acceptance is authorised.
+`MMAI_ROUTING=0`, `MMAI_TRAVEL_AGENT_TOOLS=0` and `MMAI_TRAVEL_AI_REPLY=0` until the corresponding controlled acceptance is authorised.
 Keep `MMAI_HOMEBOT_REVIEW_BUILD=1` during preparation. Self-hosted HomeBot links
 to the same origin's MateBot form and forces its review submissions to TEST.
 Set this flag to `0` only as part of the separately approved release; it does not
