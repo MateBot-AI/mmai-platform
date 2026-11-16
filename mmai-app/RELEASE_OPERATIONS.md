@@ -142,13 +142,16 @@ travel assessment for each option in the check just made. It is off by default.
   accepted journey in minutes and by which way of travelling; whether that is within
   that person's stated limit; and the group result. No names, addresses, places of
   work or study, or apartment details.
-- Every figure is worked out in code first. The model reports, per option, how many
-  people are within their own limit, how many are over it and how many are not known,
-  the group result, and a note of at most two sentences. Code checks each count and the
-  group result against its own figures, every number in the note against that option's
-  figures, and the note's counting and group pass-or-fail phrases. Any mismatch
-  withholds the whole reply and the page says so. The rest of the note's wording is not
-  proven by this check; staff read it beside the code's figures.
+- Every figure is worked out in code first. The model answers in fixed fields only, per
+  option: how many people are within their own limit, how many are over it and how
+  many are not known; which people are over it and which are not known; and the group
+  result. Code checks each of those against its own figures. Any mismatch, any missing
+  field and any extra field withholds the whole reply and the page says so.
+- No sentence written by the model is shown. The short sentence beside the counts
+  ("Over their own limit: person 6.") is written by this application from the fields
+  it has just checked. An independent review of an earlier draft, which let the model
+  add its own note, found wrong sentences that passed the checks; that note was
+  removed.
 - A person whose journey is not fully measured is "not known": never counted as within
   a limit and never as over it. If no journey in the check is fully measured the model
   is not asked.
@@ -163,12 +166,15 @@ None of these is established by this package; each needs its own evidence.
 
 1. The Agent Tools key belongs to an eligible ALM billing account, is restricted to
    this service, and has a daily quota set.
-2. For the AI reply: the Anthropic account used by `ANTHROPIC_API_KEY` is confirmed not
-   to cache, store or train on what it is sent. The service's terms require this of
-   the model that receives its journey content
+2. For the AI reply: the retention and training settings of the Anthropic account
+   used by `ANTHROPIC_API_KEY` have been checked by someone with access to that
+   account against the service's condition that the model receiving its journey
+   content does not cache, store or train on it
    ([Maps service terms, section 10](https://cloud.google.com/maps-platform/terms/maps-service-terms),
-   [overview](https://developers.google.com/maps/ai/maps-experience-agent-tools)).
-   This is a property of the account, not of this code.
+   [overview](https://developers.google.com/maps/ai/maps-experience-agent-tools)),
+   and any retention that remains under the account's terms (for example content a
+   provider keeps for safety review) has been put to Bill and accepted or resolved.
+   This is a property of the account, not of this code, and has not been checked.
 3. The public Privacy notice says that journey estimates are passed to the AI provider
    for this assessment, and that wording is approved. The notices in this package have
    not been changed for it.
@@ -177,7 +183,7 @@ None of these is established by this package; each needs its own evidence.
    source link that is not an https address on a Google host would show as "not
    measured" and would need to be looked at before going further.
 
-## Controlled startup## Controlled startup
+## Controlled startup
 
 Keep `MMAI_SCHEDULER=0`, `MMAI_AI_QUEUE=0`, `MMAI_HOMEBOT_MATCHING=0`,
 `MMAI_NOTIFICATIONS=0`, `MMAI_MAIL_MODE=off`, `MMAI_ALERT_MODE=off`,

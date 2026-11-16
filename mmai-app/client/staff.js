@@ -465,7 +465,8 @@
       const shown = !!f.majority || (f.people || []).some(person => person.fastest_minutes != null) || (f.secondary_display || []).some(person => person.status === 'MEASURED');
       return `${grounded(x)}<details class="small"><summary>Journey estimates for each person</summary>${lines.map(esc).join('<br>')}${shown ? '<br>' + GMAPS_ATTR : ''}</details>`;
     };
-    // Live travel view only. The AI's note about this option's journeys, then straight after it the Google Maps sources those
+    // Live travel view only. The AI's checked report on this option's journeys (the sentence is written by the server from the
+    // fields it verified, never the model's own words), then straight after it the Google Maps sources those
     // journeys came from (the provider's own titles and links, unaltered) and the provider's walking notice where it applies.
     const grounded = x => {
       const src = x.travel_sources;

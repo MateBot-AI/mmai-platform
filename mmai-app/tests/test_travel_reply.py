@@ -1,10 +1,11 @@
 """The AI's travel reply for a live travel check (H28(i), 16 Nov 2026).
 
 Synthetic journey replies and a stand-in for the model; no network. Covers: off by default and only on ALM's own AI account
-with the approved model; what the model is given (figures and positions only); every count and the group result is checked
-against the code's own figures, with "not known" neither within nor over a limit; a wrong, unverifiable or unsafe reply is
-withheld whole; the reply is returned once and nothing of it (or of the journeys) is stored or logged; the saved AI review
-is unchanged; and the page shows the reply with its Google Maps sources straight after it.
+with the approved model; what the model is given (figures and positions only); every count, every person the model names
+and the group result is checked against the code's own figures, with "not known" neither within nor over a limit; a wrong
+reply is withheld whole; no sentence written by the model is ever shown (the note is written by code from the checked
+fields); the reply is returned once and nothing of it (or of the journeys) is stored or logged; the saved AI review is
+unchanged; and the page shows the reply with its Google Maps sources straight after it.
 """
 import json
 import logging
@@ -31,14 +32,13 @@ def _packet_from(prompt):
     return json.loads(prompt.split("GOOGLE MAPS JOURNEY ESTIMATES (source: Google Maps;", 1)[1].split(")\n\n", 1)[1])
 
 
-def faithful(options, note=None):
+def faithful(options):
     out = []
     for o in options:
-        c = {"within_own_limit": sum(p.get("own_limit") == "within" for p in o["people"]),
-             "over_own_limit": sum(p.get("own_limit") == "over" for p in o["people"]),
-             "not_known": sum(p.get("own_limit") == "not_known" for p in o["people"])}
-        text = note or f"{c['within_own_limit']} people are within their own limit and {c['over_own_limit']} are over it."
-        out.append({"apartment_id": o["apartment_id"], **c, "group_result": o["group"]["result"], "note": text})
+        who = lambda kind: [p["person"] for p in o["people"] if p.get("own_limit") == kind]   # noqa: E731
+        out.append({"apartment_id": o["apartment_id"], "within_own_limit": len(who("within")), "over_own_limit": len(who("over")),
+                    "not_known": len(who("not_known")), "people_over_own_limit": who("over"), "people_not_known": who("not_known"),
+                    "group_result": o["group"]["result"]})
     return {"options": out}
 
 
@@ -128,7 +128,7 @@ def test_reply_is_returned_once_and_nothing_is_stored(grounded, caplog):
         assert (o["within_own_limit"], o["over_own_limit"], o["not_known"], o["no_destination"]) == (3, 0, 0, 0)
         assert o["group_result"] == tr.WITHIN and o["group_plain"] == "within the doubled limit"
         assert (o["stated_limit_minutes"], o["doubled_limit_minutes"]) == (30, 60)
-        assert o["note"] == "3 people are within their own limit and 0 are over it."
+        assert o["note"] == "No one is over their own limit and no journey is unknown."
     # each option still carries its sources, to sit straight after the note
     assert all(x["travel_sources"]["links"] == [SOURCE] for x in shown)
     # nothing was written anywhere but the one count-only audit record, and the saved AI review is as it was
@@ -137,7 +137,7 @@ def test_reply_is_returned_once_and_nothing_is_stored(grounded, caplog):
     (a,) = audits(c)
     assert json.loads(a["detail"]) == {"scenario": CUR, "shortlist_id": out["shortlist_id"], "requests": 16, "not_requested": 0}
     everywhere = re.sub(r"[0-9a-f]{16,}", "", json.dumps(c.db.execute("SELECT * FROM audit_log").fetchall(), default=str) + json.dumps(snapshot(c)))
-    for leaked in ("within their own limit", "10.0", "synthetic", "homebot-travel-reply"):
+    for leaked in ("over their own limit", "10.0", "synthetic", "homebot-travel-reply", "people_not_known"):
         assert leaked not in everywhere and leaked not in caplog.text, leaked
     assert c.db.execute("SELECT COUNT(*) AS n FROM homebot_reviews").fetchone()["n"] == json.loads(before["homebot_reviews"]).__len__()
 
@@ -221,6 +221,7 @@ def test_a_person_whose_journey_failed_is_counted_as_not_known(grounded, monkeyp
         assert o["not_known"] >= 1 and o["over_own_limit"] == 0 and o["within_own_limit"] + o["not_known"] == 3
         assert o["within_own_limit"] == len(by_id[o["apartment_id"]]["travel"]["facts"]["measured"])
         assert o["group_result"] == tr.GROUP_RESULT[by_id[o["apartment_id"]]["travel"]["status"]]
+        assert o["note"].startswith("Not known, so neither within nor over a limit: person ") and "Over their own limit" not in o["note"]
     given = _packet_from(model.prompts[0])
     unknown = [p for o in given["options"] for p in o["people"] if p["journey"] == "not_known"]
     assert unknown and all(set(p) == {"person", "journey", "own_limit"} and p["own_limit"] == "not_known" for p in unknown)
@@ -229,7 +230,7 @@ def test_a_person_whose_journey_failed_is_counted_as_not_known(grounded, monkeyp
     def optimistic(options):
         out = faithful(options)
         for o in out["options"]:
-            o["within_own_limit"], o["not_known"] = o["within_own_limit"] + o["not_known"], 0
+            o["within_own_limit"], o["not_known"], o["people_not_known"] = o["within_own_limit"] + o["not_known"], 0, []
         return out
     monkeypatch.setattr(ai, "_ask", Model(optimistic))
     assert hs.live_travel_check(c.db, eid, CUR, "Anna", now=NOW, post=Patchy())["ai_reply"]["state"] == "withheld"
@@ -237,7 +238,7 @@ def test_a_person_whose_journey_failed_is_counted_as_not_known(grounded, monkeyp
     def pessimistic(options):
         out = faithful(options)
         for o in out["options"]:
-            o["over_own_limit"], o["not_known"] = o["not_known"], 0
+            o["over_own_limit"], o["not_known"], o["people_over_own_limit"], o["people_not_known"] = o["not_known"], 0, o["people_not_known"], []
         return out
     monkeypatch.setattr(ai, "_ask", Model(pessimistic))
     assert hs.live_travel_check(c.db, eid, CUR, "Anna", now=NOW, post=Patchy())["ai_reply"]["state"] == "withheld"
@@ -274,44 +275,64 @@ def test_not_known_is_neither_within_nor_over():
 
 # ------------------------------------------------------------------------------------------------------------ validator
 def _reply(pk, **over):
-    row = {"apartment_id": 7, "within_own_limit": 5, "over_own_limit": 1, "not_known": 0, "group_result": tr.WITHIN,
-           "note": "5 people are within their own 30-minute limit and 1 person is over it."}
+    row = {"apartment_id": 7, "within_own_limit": 5, "over_own_limit": 1, "not_known": 0, "people_over_own_limit": [6],
+           "people_not_known": [], "group_result": tr.WITHIN}
     row.update(over)
-    return json.dumps({"options": [row]})
+    return json.dumps({"options": [{k: v for k, v in row.items() if v is not ...}]})
 
 
-def test_a_faithful_reply_is_accepted_with_the_codes_own_figures():
+def test_a_faithful_reply_is_accepted_and_the_sentence_is_written_by_code():
     pk = tr.packet([figures()])
     (o,) = tr.parse_reply(_reply(pk), pk)
     assert o == {"apartment_id": 7, "within_own_limit": 5, "over_own_limit": 1, "not_known": 0, "no_destination": 0,
                  "stated_limit_minutes": 30, "doubled_limit_minutes": 60, "group_result": tr.WITHIN,
-                 "group_plain": "within the doubled limit", "note": "5 people are within their own 30-minute limit and 1 person is over it."}
-    for note in ("5 of 6 people met their own limit; 1 did not.", "Person 6 is over the limit at 45.5 minutes.",
-                 "The closest 4 people average 21.8 minutes, within the doubled limit of 60 minutes.",
-                 "5 met their own limit and 1 didn't. The group result is within the doubled limit."):
-        assert tr.parse_reply(_reply(pk, note=note), pk)[0]["note"] == note
+                 "group_plain": "within the doubled limit", "note": "Over their own limit: person 6."}
+    # five within their own limit and one over it, while the group result is a separate question
+    extra = [{"index": 7, "status": tv.PARTIAL, "fastest_minutes": None, "unknown_modes": ["Tram"]},
+             {"index": 8, "status": tv.UNMEASURED_PERSON, "fastest_minutes": None}]
+    pk = tr.packet([figures(status=tv.NEEDS_CONFIRMATION, extra=extra)])
+    (o,) = tr.parse_reply(_reply(pk, not_known=2, people_not_known=[8, 7], group_result=tr.NEEDS), pk)   # any order, same people
+    assert o["note"] == "Over their own limit: person 6. Not known, so neither within nor over a limit: person 7, person 8."
+    assert (o["within_own_limit"], o["over_own_limit"], o["not_known"], o["group_plain"]) == (5, 1, 2, "needs confirmation")
 
 
 @pytest.mark.parametrize("over", [
     {"within_own_limit": 6}, {"within_own_limit": 4, "over_own_limit": 2}, {"over_own_limit": 0}, {"not_known": 1},
     {"within_own_limit": True}, {"within_own_limit": "5"}, {"within_own_limit": 5.0},
-    {"group_result": tr.OVER}, {"group_result": tr.NEEDS}, {"group_result": "pass"}, {"apartment_id": 8}, {"apartment_id": "7"},
-    {"note": ""}, {"note": "x" * 401}, {"note": None},
-    {"note": "4 people met their own limit and 2 did not."},                 # wrong counts in the words
-    {"note": "5 met their own limit and 2 did not."},                        # one right, one wrong
-    {"note": "6 people are within the limit."},
-    {"note": "2 people are not known."},
-    {"note": "Five met the requirement, one did not."},                      # number words cannot be checked
-    {"note": "All of them are within the limit."}, {"note": "Everyone is fine."}, {"note": "Most are within the limit."},
-    {"note": "Person 6 takes 46 minutes."},                                  # a figure that is not in the data
-    {"note": "Person 6 takes 45,5 minutes and person 1 takes 13 minutes."},
-    {"note": "The group fails the doubled limit."}, {"note": "The option is ruled out on travel."},
-    {"note": "See https://example.com for the route."}, {"note": "5 are <b>within</b> the limit."},
+    {"group_result": tr.OVER}, {"group_result": tr.NEEDS}, {"group_result": "pass"}, {"group_result": None},
+    {"apartment_id": 8}, {"apartment_id": "7"},
+    {"people_over_own_limit": []}, {"people_over_own_limit": [5]}, {"people_over_own_limit": [5, 6]},   # the wrong people
+    {"people_over_own_limit": [6, 6]}, {"people_over_own_limit": ["6"]}, {"people_over_own_limit": [6.0]},
+    {"people_over_own_limit": [True]}, {"people_over_own_limit": 6}, {"people_over_own_limit": None},
+    {"people_not_known": [4]}, {"people_not_known": [6]}, {"people_not_known": None},
+    {"people_over_own_limit": ...}, {"people_not_known": ...}, {"group_result": ...},                    # a field left out
+    # no sentence from the model is accepted at all, however reasonable it reads
+    {"note": "5 people are within their own 30-minute limit and 1 person is over it."},
+    {"note": "Person 4 is within their limit."}, {"note": "The group is OK on travel."}, {"note": ""},
+    {"comment": "Travel is acceptable."}, {"summary": "Within: 3 people"}, {"verdict": "pass"},
 ])
 def test_a_reply_that_does_not_match_the_figures_is_refused_whole(over):
     pk = tr.packet([figures()])
     with pytest.raises(tr.ReplyMismatch):
         tr.parse_reply(_reply(pk, **over), pk)
+
+
+def test_an_unknown_person_cannot_be_reported_as_within_or_over():
+    extra = [{"index": 7, "status": tv.UNMEASURED_PERSON, "fastest_minutes": None}]
+    pk = tr.packet([figures(status=tv.NEEDS_CONFIRMATION, extra=extra)])
+    good = {"not_known": 1, "people_not_known": [7], "group_result": tr.NEEDS}
+    assert tr.parse_reply(_reply(pk, **good), pk)
+    for wrong in ({**good, "within_own_limit": 6, "not_known": 0, "people_not_known": []},        # counted as within
+                  {**good, "over_own_limit": 2, "not_known": 0, "people_over_own_limit": [6, 7], "people_not_known": []},   # counted as over
+                  {**good, "people_over_own_limit": [6, 7]},                                       # named as over while still counted unknown
+                  {**good, "people_not_known": []}, {**good, "people_not_known": [6]},
+                  {**good, "group_result": tr.WITHIN}, {**good, "group_result": tr.OVER}):         # the group result talked up or down
+        with pytest.raises(tr.ReplyMismatch):
+            tr.parse_reply(_reply(pk, **wrong), pk)
+    pk = tr.packet([figures(status=tv.EXCEEDS_CEILING)])
+    assert tr.parse_reply(_reply(pk, group_result=tr.OVER), pk)[0]["group_plain"] == "over the doubled limit"
+    with pytest.raises(tr.ReplyMismatch):
+        tr.parse_reply(_reply(pk), pk)
 
 
 def test_reply_shape_is_exact():
@@ -322,36 +343,23 @@ def test_reply_shape_is_exact():
     for bad in ("not json at all", "[]", json.dumps({"options": [one]}), json.dumps({"options": [one, one]}),
                 json.dumps({"options": [{**one, "apartment_id": 9}, one]}), json.dumps({"options": good["options"], "extra": 1}),
                 json.dumps({"options": [one, {**one, "apartment_id": 9, "verdict": "pass"}]}),
-                json.dumps({"options": [one, {k: v for k, v in one.items() if k != "note"}]})):
+                json.dumps({"options": [one, {k: v for k, v in one.items() if k != "people_not_known"}]}),
+                json.dumps({"options": [one, "9"]}), json.dumps({"options": None})):
         with pytest.raises(tr.ReplyMismatch):
             tr.parse_reply(bad, pk)
 
 
-def test_a_group_result_cannot_be_talked_up_or_down():
-    pk = tr.packet([figures(status=tv.NEEDS_CONFIRMATION, extra=[{"index": 7, "status": tv.UNMEASURED_PERSON, "fastest_minutes": None}])])
-    base = {"not_known": 1, "group_result": tr.NEEDS}
-    for note in ("The group meets the doubled limit.", "Overall the option passes on travel.", "The party is within the doubled limit."):
-        with pytest.raises(tr.ReplyMismatch):
-            tr.parse_reply(_reply(pk, note=note, **base), pk)
-    for note in ("The group does not meet the doubled limit.", "The group average is too long.", "The option is ruled out.",   # talked down
-                 "Person 7 is not known, but the group passes.", "Person 7 is not known and the group is within the doubled limit.",
-                 "The group passes although person 7 is not known."):         # a hedge elsewhere in the sentence does not soften the claim
-        with pytest.raises(tr.ReplyMismatch):
-            tr.parse_reply(_reply(pk, note=note, **base), pk)
-    for note in ("The group result needs confirmation because 1 person is not known.", "Whether the group meets the doubled limit is not known.",
-                 "It is not yet known whether the group is within the doubled limit.", "The group result cannot be said to meet the doubled limit yet."):
-        assert tr.parse_reply(_reply(pk, note=note, **base), pk)
-    pk = tr.packet([figures(status=tv.EXCEEDS_CEILING)])
-    for note in ("The group passes the doubled limit.", "The group is not over the doubled limit.", "The group average of 21.8 minutes is fine."):
-        with pytest.raises(tr.ReplyMismatch):
-            tr.parse_reply(_reply(pk, group_result=tr.OVER, note=note), pk)
-    for note in ("The group result is over the doubled limit.", "The group does not meet the doubled limit."):
-        assert tr.parse_reply(_reply(pk, group_result=tr.OVER, note=note), pk)
+def test_the_model_is_not_asked_for_a_sentence_and_none_of_its_words_can_reach_the_page():
     pk = tr.packet([figures()])
-    for note in ("The group does not meet the doubled limit.", "The group average of 21.8 minutes exceeds the doubled limit."):
-        with pytest.raises(tr.ReplyMismatch):
-            tr.parse_reply(_reply(pk, note=note), pk)
-    assert tr.parse_reply(_reply(pk, note="The group is not over the doubled limit: the closest 4 average 21.8 minutes."), pk)
+    prompt = tr.build_prompt(pk)
+    assert '"note"' not in prompt and "no other fields" in prompt
+    assert set(tr.REPLY_KEYS) == {"apartment_id", "within_own_limit", "over_own_limit", "not_known", "people_over_own_limit", "people_not_known", "group_result"}
+    # every value shown for an option comes from the code's figures: change every model-supplied field's type and nothing passes
+    (o,) = tr.parse_reply(_reply(pk), pk)
+    f = pk["options"][0]
+    assert o["note"] == tr._note(f) and all(o[k] == f["counts"][k] for k in f["counts"]) and o["group_result"] == f["group"]["result"]
+    for text in (tr._note(f), tr._note(tr.packet([figures(minutes=("10", "12"))])["options"][0])):
+        assert not re.search(r"\d+(?:\.\d+)? minutes", text)             # the sentence carries no journey time
 
 
 # ------------------------------------------------------------------------------------------------------------- the page
