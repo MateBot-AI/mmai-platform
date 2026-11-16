@@ -3058,8 +3058,31 @@ if os.path.isdir(HOMEBOT_DIR):
         return RedirectResponse("/homebot/" + ("?" + request.url.query if request.url.query else ""), status_code=307)
 
     app.mount("/homebot", _HomeBotStatic(directory=HOMEBOT_DIR, html=True), name="homebot")
+class _ClientStatic(StaticFiles):
+    """The MateBot page (public form and staff workspace) served from this origin at /. Its index.html carries a
+    placeholder for the API address, which the hosted preview's publisher replaced at publish time. Served from here
+    nothing else replaces it, and client/api.js stops on an unreplaced placeholder on any host that is not local, which
+    leaves the whole page without a server connection. So the placeholder is rewritten to "" (same origin), as it already
+    is for the HomeBot page above. Only the index is touched; every other file is served as before, and the pilot gate
+    still decides who reaches any of them (it runs before this mount)."""
+
+    async def get_response(self, path: str, scope):
+        if path in ("", ".", "index.html") and scope["method"] in ("GET", "HEAD"):
+            return self._index()
+        return await super().get_response(path, scope)
+
+    @staticmethod
+    def _index():
+        try:
+            with open(os.path.join(CLIENT_DIR, "index.html"), encoding="utf-8") as f:
+                html = re.sub(r'(<meta name="mmai-api-base" content=")__PORT_\d+__(")', r"\1\2", f.read())
+        except OSError:
+            raise HTTPException(404, "Not found")
+        return Response(html, media_type="text/html", headers={"Cache-Control": "no-store"})
+
+
 if os.path.isdir(CLIENT_DIR):
-    app.mount("/", StaticFiles(directory=CLIENT_DIR, html=True), name="client")
+    app.mount("/", _ClientStatic(directory=CLIENT_DIR, html=True), name="client")
 
 
 def bootstrap():
