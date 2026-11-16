@@ -40,6 +40,7 @@ were measured is never worded as the whole group's.
 """
 from __future__ import annotations
 
+import hashlib
 import re
 from datetime import datetime, timezone
 from types import SimpleNamespace
@@ -374,11 +375,21 @@ def _is_test(c, gid: int) -> bool:
     return bool(row(c.execute("SELECT 1 AS t FROM group_members gm JOIN enquiries e ON e.id=gm.enquiry_id WHERE gm.group_id=? AND e.is_test=1 LIMIT 1", (gid,))))
 
 
+_APARTMENT_AS_CHECKED = ("address", "address_raw", "suburb", "available_from", "leased_at", "leased_group_id", "lease_generation")
+
+
 def _signature(c, gid: int) -> tuple:
+    """The group as a travel check reads it: its status, current offer, stored apartments in order and members, and each of
+    those apartments as it stands (where it is, and whether it is available or leased). A journey measured from an address,
+    or for an apartment, that has since changed must never stand for the apartment as it is now."""
     g = row(c.execute("SELECT status, apartment_id FROM groups WHERE id=?", (gid,))) or {}
     apts = rows(c.execute("SELECT apartment_id, rank FROM group_apartments WHERE group_id=? ORDER BY rank, apartment_id", (gid,)))
     members = rows(c.execute("SELECT enquiry_id FROM group_members WHERE group_id=? ORDER BY enquiry_id", (gid,)))
-    return (g.get("status"), g.get("apartment_id"), tuple((a["apartment_id"], a["rank"]) for a in apts), tuple(m["enquiry_id"] for m in members))
+    ids = sorted({int(a["apartment_id"]) for a in apts} | ({int(g["apartment_id"])} if g.get("apartment_id") is not None else set()))
+    found = {int(a["id"]): a for a in rows(c.execute(
+        f"SELECT id, {', '.join(_APARTMENT_AS_CHECKED)} FROM apartments WHERE id IN ({','.join('?' * len(ids))})", ids))} if ids else {}
+    stock = tuple((i,) + (tuple(found[i].get(k) for k in _APARTMENT_AS_CHECKED) if i in found else ("gone",)) for i in ids)
+    return (g.get("status"), g.get("apartment_id"), tuple((a["apartment_id"], a["rank"]) for a in apts), tuple(m["enquiry_id"] for m in members), stock)
 
 
 def _person_out(p: dict) -> dict:
@@ -391,6 +402,18 @@ def _person_out(p: dict) -> dict:
 
 def _people_key(people: list) -> tuple:
     return tuple((p["enquiry_id"], p["position"], p["stated_time"], tuple(p["modes"]), p["destination_kind"], p["destination"]) for p in people)
+
+
+def _key(token) -> str:
+    """A short name for one state of a group as a travel check reads it. It lets the staff page tell that a result it is
+    showing was worked out for the group, the apartments and the travel answers it is showing now. One-way; it carries no
+    journey figure and nothing that can be read back, and it is not stored."""
+    return hashlib.sha256(repr(tuple(token)).encode("utf-8")).hexdigest()[:24]
+
+
+def view_key(c, gid: int) -> str:
+    """The key of the group as it stands now (for the group page; see _key)."""
+    return _key((_signature(c, int(gid)), _people_key(group_people(c, int(gid)))))
 
 
 def _checked(c, gid: int, ids: list, people: list, staff: str, now, post, work):
@@ -423,7 +446,7 @@ def _checked(c, gid: int, ids: list, people: list, staff: str, now, post, work):
         out = work(est)
         check = est.display()
         if _signature(c, gid) != before or _people_key(group_people(c, gid)) != _people_key(people):
-            return _refusal("replaced", "The group changed while travel was being checked. Reload the group and check travel again.")
+            return _refusal("replaced", "The group or one of its apartments changed while travel was being checked. Reload the group and check travel again.")
         return out, est, check, (before, _people_key(people))
     finally:
         hs._travel_lock.release()
@@ -464,7 +487,7 @@ def travel_check(c, group: dict, staff: str, *, now: Optional[datetime] = None, 
     got = _checked(c, gid, ids, people, staff, now, post, work)
     if isinstance(got, dict):
         return got
-    res, est, check, _token = got
+    res, est, check, token = got
 
     def option(aid, r, role):
         a, travel = by_id[aid], r.as_dict()
@@ -497,7 +520,7 @@ def travel_check(c, group: dict, staff: str, *, now: Optional[datetime] = None, 
             "ai_reply": reply, "ai_gate": ai_gate, "shortlist": shortlist, "failed": failed,
             "current_offer": _current_offer(group.get("apartment_id"), shortlist, failed, ai_gate),
             "not_checked": [{"apartment_id": aid, "address": by_id[aid].get("address")} for aid in res["not_checked"]],
-            "limit_note": limit_note}
+            "limit_note": limit_note, "key": _key(token)}   # which state of the group this result is for (see _key)
 
 
 # ------------------------------------------------------------------------------- the check a staff action relies on
@@ -545,7 +568,7 @@ def action_check(c, gid: int, apartment_id: int, action: str, staff: str, *, now
     got = _checked(c, gid, [aid], people, staff, now, post, lambda est: _assessor(est, people)(aid))
     if isinstance(got, dict):
         if got["state"] == "replaced":
-            return _action_out(CHANGED, _CHANGED_LEAD[action] + " The group changed while travel was being checked. Reload the group and try again.",
+            return _action_out(CHANGED, _CHANGED_LEAD[action] + " The group or one of its apartments changed while travel was being checked. Reload the group and try again.",
                                refuse=True, state_="replaced")
         return not_checked(got)
     result, _est, _check, token = got
@@ -563,8 +586,9 @@ def action_check(c, gid: int, apartment_id: int, action: str, staff: str, *, now
 
 
 def still_current(c, gid: int, token) -> bool:
-    """Inside the action's own guarded step: is the group (status, current offer, stored apartments, members) and are its
-    people's travel answers exactly what the check at this action read? No token (nothing was measured) is always current."""
+    """Inside the action's own guarded step: is the group (status, current offer, stored apartments, members), is each of
+    those apartments (address, availability, lease) and are its people's travel answers exactly what the check at this action
+    read? No token (nothing was measured) is always current."""
     if token is None:
         return True
     return (_signature(c, int(gid)), _people_key(group_people(c, int(gid)))) == tuple(token)

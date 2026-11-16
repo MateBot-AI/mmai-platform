@@ -160,7 +160,7 @@ def test_a_group_that_changes_during_or_after_the_check_is_caught(group):
         db.commit()
     r = _act(db, gid, ids[1], Provider(during=rerank), ml.ACTION_INTRODUCE)
     assert (r["outcome"], r["refuse"], r["state"], r["token"]) == (ml.CHANGED, True, "replaced", None)
-    assert r["plain"] == "Not marked introduced. The group changed while travel was being checked. Reload the group and try again."
+    assert r["plain"] == "Not marked introduced. The group or one of its apartments changed while travel was being checked. Reload the group and try again."
     # after the check and before the action's own step: the token no longer matches
     r = _act(db, gid, ids[1], Provider())
     assert ml.still_current(db, gid, r["token"]) is True
@@ -174,6 +174,76 @@ def test_a_group_that_changes_during_or_after_the_check_is_caught(group):
     db.execute("UPDATE enquiries SET school='A school that is not on file' WHERE id=?", (a,))   # a destination changed
     db.commit()
     assert ml.still_current(db, gid, r["token"]) is False
+
+
+APARTMENT_CHANGES = (("address", "UPDATE apartments SET address='9 / 1 Somewhere Else Street, Carlton VIC 3053' WHERE id=?"),
+                     ("address as listed", "UPDATE apartments SET address_raw='9/1 Somewhere Else St' WHERE id=?"),
+                     ("suburb", "UPDATE apartments SET suburb='Carlton' WHERE id=?"),
+                     ("availability", "UPDATE apartments SET available_from='2031-01-01' WHERE id=?"),
+                     ("leased", "UPDATE apartments SET leased_at='2026-11-16T00:00:00+00:00', leased_group_id=NULL WHERE id=?"),
+                     ("lease generation", "UPDATE apartments SET lease_generation=lease_generation+1 WHERE id=?"))
+
+
+@pytest.mark.parametrize("what,sql", APARTMENT_CHANGES, ids=[x[0] for x in APARTMENT_CHANGES])
+def test_a_result_for_an_apartment_as_it_was_never_stands_for_the_apartment_as_it_is(group, what, sql):
+    """The journey is measured from the apartment's address, for an apartment that can be offered. If where it is, or whether
+    it is available or leased, changes after the check and before the action's own step, the check is not current."""
+    db, gid, ids = group
+    _answer(db, gid)
+    r = _act(db, gid, ids[1], Provider(minutes=4))
+    assert r["outcome"] != ml.CHANGED and ml.still_current(db, gid, r["token"]) is True
+    key = ml.view_key(db, gid)
+    db.execute(sql, (ids[1],))
+    db.commit()
+    assert ml.still_current(db, gid, r["token"]) is False, what
+    assert ml.view_key(db, gid) != key, what                                             # and the page is told it is another state
+    # the same change while the provider is being asked: refused as changed, not measured against the old apartment
+    r = _act(db, gid, ids[2], Provider(minutes=4))
+    assert ml.still_current(db, gid, r["token"]) is True
+
+    def change():
+        db.execute(sql.replace("lease_generation+1", "lease_generation+2").replace("2031-01-01", "2032-01-01").replace("Somewhere Else", "Another"), (ids[2],))
+        db.commit()
+    again = _act(db, gid, ids[2], Provider(minutes=4, during=change))
+    assert (again["outcome"], again["refuse"], again["token"]) == (ml.CHANGED, True, None), what
+
+
+def test_a_change_that_is_not_about_where_or_whether_the_apartment_is_does_not_refuse_the_action(group):
+    db, gid, ids = group
+    _answer(db, gid)
+    r = _act(db, gid, ids[1], Provider(minutes=4))
+    db.execute("UPDATE apartments SET parking_charge='$50 per week' WHERE id=?", (ids[1],))       # not part of a journey or of availability
+    db.execute("UPDATE apartments SET address='1 Unrelated Street, Melbourne VIC 3000' WHERE id NOT IN (SELECT apartment_id FROM group_apartments WHERE group_id=?) "
+               "AND id NOT IN (SELECT apartment_id FROM groups WHERE id=? AND apartment_id IS NOT NULL)", (gid, gid))   # another group's apartment
+    db.commit()
+    assert ml.still_current(db, gid, r["token"]) is True
+
+
+def test_the_page_key_names_one_state_of_the_group_and_gives_nothing_away(group):
+    db, gid, ids = group
+    a, b = _members(db, gid)
+    _answer(db, gid)
+    key = ml.view_key(db, gid)
+    assert key == ml.view_key(db, gid) and len(key) == 24 and all(ch in "0123456789abcdef" for ch in key)   # stable, short, one-way
+    out = ml.travel_check(db, _view(db, gid), "anna", now=WHEN, post=Provider(minutes=4))
+    assert out["ok"] and out["key"] == key                                              # the result says which state it is for
+    assert ml.view_key(db, gid) == key                                                  # checking changes nothing
+    seen = {key}
+    _answer(db, gid, travel="5 minutes", only=[b])                                       # a stated travel time was edited
+    seen.add(ml.view_key(db, gid)); assert len(seen) == 2
+    _answer(db, gid, travel="5 minutes", modes=["Walk"], only=[b])                       # a travel choice was edited
+    seen.add(ml.view_key(db, gid)); assert len(seen) == 3
+    db.execute("UPDATE enquiries SET school='A school that is not on file' WHERE id=?", (a,))   # a destination was edited
+    db.commit()
+    seen.add(ml.view_key(db, gid)); assert len(seen) == 4
+    db.execute("UPDATE groups SET apartment_id=? WHERE id=?", (ids[2], gid))            # the current offer moved
+    db.commit()
+    seen.add(ml.view_key(db, gid)); assert len(seen) == 5
+    db.execute("UPDATE apartments SET address='9 / 1 Somewhere Else Street, Carlton VIC 3053' WHERE id=?", (ids[3],))   # a listed apartment moved
+    db.commit()
+    seen.add(ml.view_key(db, gid)); assert len(seen) == 6
+    # nothing about travel is stored by any of this
+    assert all(set(json.loads(x["detail"])) == {"requests", "not_requested"} for x in _audits(db))
 
 
 # ------------------------------------------------------------------------------------------------- through the API
@@ -295,7 +365,7 @@ def test_a_group_that_changes_while_travel_is_checked_is_not_offered(client, mon
     before = _group(db, gid)
     r = client.patch(f"/api/groups/{gid}", json={"apartment_id": other})
     assert r.status_code == 409 and r.json()["travel_refused"] is True and r.json()["travel_at_action"]["outcome"] == "changed"
-    assert r.json()["detail"].startswith("Not offered. The group changed while travel was being checked.") and _group(db, gid) == before
+    assert r.json()["detail"].startswith("Not offered. The group or one of its apartments changed while travel was being checked.") and _group(db, gid) == before
 
 
 def test_a_change_between_the_check_and_the_actions_own_step_is_refused_there(client, monkeypatch):
@@ -317,6 +387,43 @@ def test_a_change_between_the_check_and_the_actions_own_step_is_refused_there(cl
     assert _group(db, gid) == before and _offers(db) == offers
     r = client.post(f"/api/groups/{gid}/introduction")
     assert r.status_code == 409 and _group(db, gid) == before                            # no draft is kept for a group that moved on
+
+
+def test_an_apartment_whose_address_changes_after_the_check_is_not_offered_on_that_check(client, monkeypatch):
+    from server import app as application
+    db, a, lead, solo, g, other = _ready_party_with_two_offers(client, monkeypatch)
+    gid = g["id"]
+    _on(monkeypatch, db, gid, Provider(minutes=20))
+    real = ml.action_check
+
+    def then_the_apartment_moves(*args, **kw):
+        out = real(*args, **kw)
+        db.execute("UPDATE apartments SET address='9 / 1 Somewhere Else Street, Carlton VIC 3053' WHERE id=?", (other,))
+        db.commit()
+        return out
+    monkeypatch.setattr(ml, "action_check", then_the_apartment_moves)
+    before, offers = _group(db, gid), _offers(db)
+    r = client.patch(f"/api/groups/{gid}", json={"apartment_id": other})
+    assert r.status_code == 409 and r.json()["detail"] == application.TRAVEL_CHANGED
+    assert "one of its apartments changed" in application.TRAVEL_CHANGED
+    assert _group(db, gid) == before and _offers(db) == offers                           # the offer did not move
+
+
+def test_the_group_page_is_given_the_key_only_while_live_checks_can_run(client, monkeypatch):
+    db, a, lead, solo, g, other = _ready_party_with_two_offers(client, monkeypatch)
+    gid = g["id"]
+    off = client.get(f"/api/groups/{gid}").json()
+    assert off["travel_live"]["enabled"] is False and "key" not in off["travel_live"]
+    assert all("key" not in (x.get("travel_live") or {}) for x in client.get("/api/groups?dataset=test").json()["items"])
+    _on(monkeypatch, db, gid, Provider(minutes=20))
+    on = client.get(f"/api/groups/{gid}").json()
+    assert on["travel_live"]["enabled"] is True and on["travel_live"]["key"] == ml.view_key(db, gid)
+    checked = client.post(f"/api/groups/{gid}/travel-check").json()
+    assert checked["ok"] and checked["key"] == on["travel_live"]["key"]                  # the result is for the state the page shows
+    db.execute("UPDATE apartments SET address='9 / 1 Somewhere Else Street, Carlton VIC 3053' WHERE id=?", (other,))
+    db.commit()
+    assert client.get(f"/api/groups/{gid}").json()["travel_live"]["key"] != on["travel_live"]["key"]
+    assert all("key" not in (x.get("travel_live") or {}) for x in client.get("/api/groups?dataset=test").json()["items"])   # lists never work it out
 
 
 def test_a_changed_offer_that_fails_travel_cannot_be_acknowledged(client, monkeypatch):
@@ -382,6 +489,13 @@ def test_the_page_never_shows_ready_in_green_without_a_confirmed_travel_check():
         assert control in apply_, control
     assert "if (el.dataset.travelOff === 'set' && !offAnyway()) el.disabled = false;" in apply_   # never switches on what something else switched off
     assert "&& !travelFailed();" in STAFF_JS                                             # the email link follows the same check
+    assert ".length} ready for reservations (travel not confirmed)$" in STAFF_JS and ".length} ready for reservations$" not in STAFF_JS   # the list's own count
+    panel = STAFF_JS.split("function groupTravelPanel(box, g, onChange) {", 1)[1].split("\n  }\n", 1)[0]
+    assert "const key = `${g.id}:${live.key || ''}:" in panel                            # what the page holds is held for one state of the group
+    assert "if (reply && reply.ok && live.key && reply.key !== live.key) {" in panel     # a result for another state is not used
+    assert "if (kept.fail && kept.fail.offer) onChange({ state: 'failed'," in panel       # a known failure outlasts a re-check and the cleared figures
+    assert panel.count("kept.fail = ") == 2 and "kept.fail = cur.state === 'failed' || ids.length ?" in panel and "kept.reply = null; kept.fail = null;" in panel
+    assert "state: 'confirmed'" not in panel and "'confirmed'" not in panel               # a pass is never remembered or made up here
     assert STAFF_JS.count("ex.data.travel_refused") >= 3 and STAFF_JS.count("r.travel_at_action.plain") >= 4
     for code in ("H28", "GP6", "T6", "M4", "T4"):                                        # staff screens never quote register codes
         assert code not in ready and code not in apply_, code

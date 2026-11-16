@@ -1598,6 +1598,10 @@ def group_detail(gid: int, staff=Depends(current_staff)):
     if not g:
         raise HTTPException(404, "Not found")
     out = _group_out(g)
+    if out["travel_live"]["enabled"] and out["status"] not in ("Leased", "Dissolved"):
+        # which state of the group this page shows, as a travel check reads it: the page drops a travel result it is holding
+        # as soon as the group, one of its apartments or anyone's travel answers is no longer what that result was for
+        out["travel_live"] = {**out["travel_live"], "key": matebot_live.view_key(db, gid)}
     # alternative groupings that share a member with this group (shown to staff as alternatives only)
     ids = [m["enquiry_id"] for m in out["members"]]
     if ids:
@@ -1732,7 +1736,7 @@ def _claim_apartment(aid: int, gid: int | None, staff_name: str, *, missing: int
 # result carried back to the page once, worded as what it is. Inside the action's own guarded step the group and its people's
 # travel answers must still be what that check read. Recording a lease or a confirmation of the people is not gated: those
 # record what has happened. Nothing here moves a member, splits a group or sends anything.
-TRAVEL_CHANGED = "The group changed while travel was being checked. Nothing was changed; reload the group and try again."
+TRAVEL_CHANGED = "The group or one of its apartments changed while travel was being checked. Nothing was changed; reload the group and try again."
 
 
 def _travel_public(check: dict | None) -> dict | None:

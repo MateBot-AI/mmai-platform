@@ -228,9 +228,12 @@ def _assess(members) -> ht.TravelAssessment:
     if uniform:
         limit, ceiling = limits[0], 2 * limits[0]
         comparison = f"exact total {ht._fmt(total)} vs {k} × ceiling {ceiling} = {k * ceiling} and {k} × limit {limit} = {k * limit}"
-    elif one_figure:
+    elif one_figure and one_set:
         comparison = (f"exact total {ht._fmt(total)} vs that member's stated time {least}, doubled {2 * least}" if k == 1 else
                       f"exact total {ht._fmt(total)} vs the same {k} members' stated times totalling {least}, doubled {2 * least}")
+    elif one_figure:
+        comparison = (f"exact total {ht._fmt(total)} vs the counted members' stated times totalling {least}, doubled {2 * least}, "
+                      "whichever tied members are counted")
     else:
         comparison = (f"exact total {ht._fmt(total)} vs the counted members' stated times totalling between {least} and {most}, "
                       f"doubled {2 * least} to {2 * most}, depending on which tied members are counted; the result is the same for all")

@@ -438,9 +438,9 @@ Not done, and not to be reported as done:
   instead:
   - The groups list and the overview count come from the saved review. Their
     badge now reads "Ready for reservations · travel not confirmed" and is no
-    longer green. The overview count and the list filter count the same groups
-    as before and are labelled "Ready for reservations (travel not
-    confirmed)".
+    longer green. The overview count, the list filter and the count above the
+    list count the same groups as before and are labelled "ready for
+    reservations (travel not confirmed)".
   - On the group page the green "Ready to circulate." line appears only when
     the page's check has confirmed the current offer on travel. A known
     failure reads "Not ready to circulate" and switches off drafting, copying,
@@ -453,13 +453,31 @@ Not done, and not to be reported as done:
     it, Mark Introduced, introducing a revised group, and acknowledging a
     changed offer. A known failure refuses the action and changes nothing. A
     group that changed while the provider was being asked, or between that
-    check and the action's own step, is refused and must be reloaded. Every
+    check and the action's own step, is refused and must be reloaded. "Changed"
+    covers the group's status, current offer, stored apartments and members,
+    each person's travel time, travel choices and destination, and each of
+    those apartments' address, available-from date and lease state. A journey
+    measured from an earlier address, or for an apartment since leased, never
+    stands for the apartment as it is now. Every
     other outcome lets the action go on and is reported once, in words, as
     what it is: passed for everyone, passed for part of the group, needs
     confirmation, no destinations, or not checked (switched off, a test
     record, the allowance used, another check running). None of those is a
     failure and only the first is a pass. Each of these checks uses the same
     shared allowance and is recorded only as a count of requests.
+  - What the group page holds, it holds for one state of the group. The
+    server gives the page a short one-way key for that state (the same things
+    as "changed" above); it is not stored. A result is shown only for the
+    state on the page, and a result for another state asks for a reload
+    instead. After any change the page checks again by itself when it is next
+    opened or redrawn. A page left open while someone else edits the group
+    does not know until it is reloaded; the server's check at each action does
+    not depend on the page.
+  - A failure the page knows about stays in force on that page while travel is
+    being checked again, when a re-check could not run, and after the journey
+    times have been cleared from view at 30 minutes. Only a completed check for
+    the same state lifts it. A pass is never remembered that way: once its
+    figures are cleared the page is back to provisional.
   - Not gated: Group confirmed, recording a lease, introducing the remaining
     members after someone leaves, and the automatic moves after a stock
     change. Those record what has happened or are not a staff presentation of

@@ -1188,7 +1188,7 @@
         <select data-role="status"><option value="">All statuses</option>${['Proposed', 'Introduced', 'Group confirmed', 'Awaiting replacement', 'Leased'].map(s => `<option ${f.status === s ? 'selected' : ''}>${s}</option>`).join('')}</select>
         <select data-role="ai"><option value="">Ready or pending</option><option value="ready" ${f.ai === 'ready' ? 'selected' : ''}>Ready for reservations (travel not confirmed)</option><option value="pending" ${f.ai === 'pending' ? 'selected' : ''}>AI assessment pending</option><option value="failed" ${f.ai === 'failed' ? 'selected' : ''}>AI assessment failed or held for retry</option></select>
         <label class="small"><input type="checkbox" data-role="alts" ${f.alts ? 'checked' : ''}> Show alternative groupings</label>
-        <span class="small muted">${grp.items.filter(g => g.is_primary !== false).length} group(s) · ${grp.items.filter(g => g.is_primary && g.ready_for_reservations).length} ready for reservations${grp.items.filter(g => g.is_primary && g.status === 'Proposed' && !g.ready_for_reservations).length ? ` · ${grp.items.filter(g => g.is_primary && g.status === 'Proposed' && !g.ready_for_reservations).length} waiting for the AI` : ''}</span>
+        <span class="small muted">${grp.items.filter(g => g.is_primary !== false).length} group(s) · ${grp.items.filter(g => g.is_primary && g.ready_for_reservations).length} ready for reservations (travel not confirmed)${grp.items.filter(g => g.is_primary && g.status === 'Proposed' && !g.ready_for_reservations).length ? ` · ${grp.items.filter(g => g.is_primary && g.status === 'Proposed' && !g.ready_for_reservations).length} waiting for the AI` : ''}</span>
       </div>
       <div class="groups" data-role="groups">${grp.items.map(g => groupCard(g, { compact: true })).join('') || '<p class="muted">No groups yet. Click “Run matching now”.</p>'}</div>`;
     p.querySelector('[data-action="toggle-details"]').addEventListener('click', e => { e.preventDefault(); const d = p.querySelector('[data-role="details"]'); d.hidden = !d.hidden; state.cache.showDetails = !d.hidden; e.currentTarget.setAttribute('aria-expanded', String(!d.hidden)); });
@@ -1326,8 +1326,11 @@
     const live = g.travel_live || {};
     if (!box || !live.enabled || ['Leased', 'Dissolved'].includes(g.status) || !(g.apartments || []).length) { if (box) box.innerHTML = ''; return; }
     mbTravelShown.forEach(kept => { if (kept.reply && Date.now() - kept.at > HB_TRAVEL_KEEP_MS) kept.reply = null; });
-    const key = `${g.id}:${g.apartment_id}:${(g.apartments || []).map(a => a.apartment_id + '.' + a.shortlist_role).join(',')}:${(g.members || []).map(m => m.enquiry_id).join(',')}`;
-    const kept = mbTravelShown.get(key) || { at: 0, reply: null, busy: false, tried: false, note: '', noteErr: false, show: null };
+    // What this page holds for a group is held for ONE state of it: `live.key` is the server's name for the group, its
+    // apartments (address, availability) and every member's travel answers as they stand. Anything changes, the key changes,
+    // and nothing held for the earlier state (a result, a known failure) is shown or acted on again.
+    const key = `${g.id}:${live.key || ''}:${g.apartment_id}:${(g.apartments || []).map(a => a.apartment_id + '.' + a.shortlist_role).join(',')}:${(g.members || []).map(m => m.enquiry_id).join(',')}`;
+    const kept = mbTravelShown.get(key) || { at: 0, reply: null, busy: false, tried: false, note: '', noteErr: false, show: null, fail: null };
     mbTravelShown.set(key, kept);
     box.innerHTML = `<div class="card card--tight mt" data-role="mb-travel"><h3>Travel check · live</h3>
       <div class="actions"><button class="btn btn--sm" type="button" data-action="mb-travel">${kept.reply ? 'Check travel times again' : 'Check travel times now'}</button></div>
@@ -1344,15 +1347,37 @@
         : kept.reply ? groupTravelView(kept.reply)
         : kept.note ? `<p class="${kept.noteErr ? 'msg err small' : 'small muted'}">${esc(kept.note)}</p>` : '';
       // the rest of the group page (readiness, the offer and introduction buttons) follows what this check shows now
-      if (onChange) onChange(kept.busy ? { state: 'checking' } : kept.reply && kept.reply.ok ? { ...(kept.reply.current_offer || {}), failed: (kept.reply.failed || []).map(x => x.apartment_id) }
-        : kept.reply ? { state: 'provisional', why: 'not_checked', plain: `Travel was not checked for the apartment currently offered. ${kept.reply.plain || ''} This is provisional: not a confirmed pass and not a failure.` } : null);
+      if (!onChange) return;
+      if (!kept.busy && kept.reply && kept.reply.ok) {
+        // a completed check is the only thing that sets, or lifts, a known failure
+        const ids = (kept.reply.failed || []).map(x => x.apartment_id), cur = kept.reply.current_offer || {};
+        kept.fail = cur.state === 'failed' || ids.length ? { offer: cur.state === 'failed', plain: cur.plain || '', ids } : null;
+        onChange({ ...cur, failed: ids });
+        return;
+      }
+      // No completed check to show: one is running, it could not run, or its journey times were cleared. A failure this page
+      // already knows for the group as it stands is still a failure until a completed check says otherwise, so what it
+      // switched off stays off. Nothing else is carried over: a pass is never remembered.
+      const why = kept.busy ? 'Travel is being checked again.'
+        : kept.reply ? `Travel was not checked again. ${kept.reply.plain || ''}` : 'Its journey times are no longer shown. Check travel times again to see current ones.';
+      if (kept.fail && kept.fail.offer) onChange({ state: 'failed', plain: `${kept.fail.plain} ${why}`.trim(), failed: kept.fail.ids, held: true });
+      else if (kept.busy) onChange({ state: 'checking', failed: kept.fail ? kept.fail.ids : [] });
+      else if (kept.reply) onChange({ state: 'provisional', why: 'not_checked', failed: kept.fail ? kept.fail.ids : [], plain: `Travel was not checked for the apartment currently offered. ${kept.reply.plain || ''} This is provisional: not a confirmed pass and not a failure.` });
+      else onChange(kept.fail ? { ...(g.travel_offer || { state: 'provisional', plain: '' }), failed: kept.fail.ids } : null);
     };
     const run = async asked => {
       if (kept.busy) return;   // one request at a time for this group: a second click or redraw while one is running asks nothing
       kept.busy = true; kept.tried = true; kept.note = '';
       kept.show();
       try {
-        kept.reply = await api.post(`/api/groups/${g.id}/travel-check`, {});
+        const reply = await api.post(`/api/groups/${g.id}/travel-check`, {});
+        if (reply && reply.ok && live.key && reply.key !== live.key) {
+          // the check was made for the group as it is now, which is not the group this page is showing
+          kept.reply = null; kept.fail = null; kept.noteErr = true;
+          kept.note = 'The group, one of its apartments or a travel answer changed after this page was opened. Reload the group to check travel for it as it stands.';
+          return;
+        }
+        kept.reply = reply;
         kept.at = Date.now();
         const shownAt = kept.at;
         setTimeout(() => {
