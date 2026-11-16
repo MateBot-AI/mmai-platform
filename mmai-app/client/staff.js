@@ -414,9 +414,23 @@
 
   /* ---------- HomeBot apartment options (integrated matching, slice H2): a rules check prepared in the background, shown in plain words for staff review.
      Nothing here contacts the applicant; "Options sent" is still recorded by staff by hand after they have chosen what to offer. ---------- */
+  /* Live travel check: journey times for the options on the page, asked for when staff open the options or press the button.
+     The reply is shown on this page only and is not saved anywhere; this small in-page note only stops the page asking again
+     every time it redraws, and is cleared after 30 minutes or when the page is closed. */
+  const hbTravelShown = new Map();
+  // the provider's name, exactly as it asks to be shown beside its journey figures: plain text, never translated or reworded
+  const GMAPS_ATTR = '<span class="gmaps-attr" translate="no">Google Maps</span>';
+  const HB_TRAVEL_KEEP_MS = 30 * 60 * 1000;
   async function homebotOptions(box, id, e) {
     const ov = await api.get(`/api/homebot/enquiries/${id}/options`);
     if (!ov.enabled) { box.innerHTML = `<p class="small muted">${esc(ov.plain)}</p>`; return; }
+    const liveTravel = ov.live_travel || {};
+    const travelKey = (key, cur) => `${id}:${key}:${cur.id}`;
+    const travelKept = (key, cur) => {
+      const kept = hbTravelShown.get(travelKey(key, cur));
+      if (kept && kept.reply && Date.now() - kept.at > HB_TRAVEL_KEEP_MS) kept.reply = null;   // old journey times are dropped, not shown as current
+      return kept;
+    };
     const offer = o => o ? `${o.start} → ${o.end} · ${money(o.total_weekly_rent)}/week${o.months ? ` · ${o.months} months` : ''}` : '—';
     const routeMinutes = value => {
       if (value == null) return '';
@@ -440,7 +454,9 @@
         person.status === 'MEASURED' ? routeMinutes(person.best_known_minutes) + ' minutes (rounded) by ' + (person.best_known_modes || []).join(' / ') :
           'travel time needs confirmation'} (not counted twice)`));
       if (f.majority) lines.unshift(`Closest ${f.majority.size} people: average ${f.majority.average_display} minutes (rounded display)`);
-      return `<details class="small"><summary>Journey estimates for each person</summary>${lines.map(esc).join('<br>')}</details>`;
+      // any measured journey time on this page comes from the journey provider, so its name sits beside the figures themselves
+      const shown = !!f.majority || (f.people || []).some(person => person.fastest_minutes != null) || (f.secondary_display || []).some(person => person.status === 'MEASURED');
+      return `<details class="small"><summary>Journey estimates for each person</summary>${lines.map(esc).join('<br>')}${shown ? '<br>' + GMAPS_ATTR : ''}</details>`;
     };
     const candRows = (list, label) => list && list.length ? `<h4 class="small">${label}</h4><div class="table-wrap"><table class="tbl"><thead><tr><th>Apartment</th><th>Type</th><th>Result</th><th>Offer (dates · whole-apartment rent)</th><th>To check / notes</th></tr></thead><tbody>
       ${list.map(x => `<tr><td>${esc(x.address)}<br><span class="small muted">${esc(x.suburb)}</span></td><td class="mono">${esc(x.type_code)}</td><td>${esc(x.class_plain)}${x.pareto_rank ? `<br><span class="small muted">beaten on every measured point by ${x.pareto_rank} listed option(s)</span>` : ''}</td>
@@ -455,6 +471,32 @@
       if (r.state === 'retrying') return `<p class="small muted">${esc(r.plain)}</p>`;
       return `<p class="small muted">${esc(r.plain || 'The AI review has not run yet; the options are held until it completes.')}</p>`;
     };
+    const travelView = r => {
+      if (!r) return '';
+      if (!r.ok) return `<p class="msg small">${esc(r.plain)}</p>`;
+      const k = r.check || {};
+      const missed = (k.failures || 0) + (k.not_requested || 0);
+      const counts = r.summary && r.summary.counts ? Object.entries(r.summary.counts).map(([n, v]) => `${v} ${n.replace(/_/g, ' ')}`).join(', ') : '';
+      return `<div data-role="hb-travel-result"><h4>Options with live travel times</h4>
+        <p class="small">Journey estimates: ${GMAPS_ATTR}. ${esc(k.basis || '')}. Checked ${fmtDT(k.checked_at)}.</p>
+        <p class="small muted">${esc(r.plain)}${counts ? ` With these journey times: ${esc(counts)}.` : ''}</p>
+        ${missed ? `<p class="msg small">${missed} journey${missed === 1 ? '' : 's'} could not be checked this time; where a time is missing the option reads "Travel time needs confirmation".</p>` : ''}
+        ${!k.requests ? '<p class="small muted">No journeys were needed: no one in the party has a place of work or study recorded yet.</p>' : ''}
+        ${candRows(r.listed, 'Options to review (up to three)')}
+        ${r.fourth_option ? candRows([r.fourth_option], 'Possible fourth option (provisional — only if staff judge it comparably suitable)') : ''}
+        ${candRows(r.alternatives, 'Alternatives the party did not ask for (different area or one bathroom)')}
+        ${candRows(r.unresolved, 'Could not be checked automatically — check by hand')}
+        ${!(r.listed || []).length && !(r.alternatives || []).length && !(r.unresolved || []).length ? '<p class="small">With these journey times, no apartment is within the party\'s travel limit.</p>' : ''}
+        ${r.why_not && r.why_not.length ? `<details class="small"><summary>Why the other ${r.why_not.length} apartment(s) are not listed with these journey times</summary><ul>${r.why_not.map(x => `<li>${esc(x.address)} (${esc(x.type_code)}): ${esc(x.class_plain)}${x.reasons.length ? ' — ' + x.reasons.map(esc).join('; ') : ''}</li>`).join('')}</ul></details>` : ''}</div>`;
+    };
+    const travelBlock = (key, cur) => {
+      if (!liveTravel.enabled || !cur || cur.stale) return '';
+      const kept = travelKept(key, cur);
+      return `<div class="card card--tight" data-role="hb-travel" data-scenario="${key}" data-shortlist="${cur.id}">
+        <div class="actions"><button class="btn btn--sm" type="button" data-action="hb-travel" data-scenario="${key}">${kept && kept.reply ? 'Check travel times again' : 'Check travel times now'}</button></div>
+        <p class="small muted">${esc(liveTravel.plain || '')}</p>
+        <div data-role="hb-travel-out" aria-live="polite">${kept && kept.reply ? travelView(kept.reply) : ''}</div></div>`;
+    };
     const scenario = (key, sc) => {
       const cur = sc.current;
       return `<div class="card card--tight" data-scenario="${key}"><h3>${esc(sc.label)}</h3>
@@ -462,22 +504,26 @@
         ${cur ? reviewLine(key, cur) : ''}
         ${cur && cur.route_evidence ? `<p class="small">Journey estimates: <a href="https://maps.google.com/" target="_blank" rel="noopener noreferrer">Google Maps</a>. ${esc(cur.route_evidence.basis)}. Measured ${fmtDT(cur.route_evidence.measured_at)}; valid until ${fmtDT(cur.route_evidence.expires_at)}.</p>` : ''}
         ${cur && cur.stale ? `<p class="msg small"><b>Out of date.</b> ${esc(cur.stale.replace(/^Out of date: /, ''))} The options below are kept for reference only until the fresh run replaces them.</p>` : ''}
+        ${travelBlock(key, cur)}
         ${cur ? `<p class="small muted">Prepared ${fmtDT(cur.created_at)} for business date ${cur.today}${cur.summary && cur.summary.counts ? ` · ${Object.entries(cur.summary.counts).map(([k, v]) => `${v} ${k.replace(/_/g, ' ')}`).join(', ')}` : ''}</p>
           ${candRows(cur.listed, 'Options to review (up to three)')}
           ${cur.fourth_option ? candRows([cur.fourth_option], 'Possible fourth option (provisional — only if staff judge it comparably suitable)') : ''}
           ${candRows(cur.alternatives, 'Alternatives the party did not ask for (different area or one bathroom)')}
           ${candRows(cur.unresolved, 'Could not be checked automatically — check by hand')}
           ${cur.why_not && cur.why_not.length ? `<details class="small"><summary>Why the other ${cur.why_not.length} apartment(s) are not listed</summary><ul>${cur.why_not.map(x => `<li>${esc(x.address)} (${esc(x.type_code)}): ${esc(x.class_plain)}${x.reasons.length ? ' — ' + x.reasons.map(esc).join('; ') : ''}</li>`).join('')}</ul></details>` : ''}` : ''}
-        ${cur && !cur.stale && declineOptions(cur) ? `<details class="small mt"><summary>Record that the applicant declined one of these options</summary>
+        ${cur && !cur.stale && declineOptions(cur, key) ? `<details class="small mt"><summary>Record that the applicant declined one of these options</summary>
           <p class="small muted">Recorded against this list exactly as shown here (${esc(sc.label.toLowerCase())}, prepared ${fmtDT(cur.created_at)}). If the list has been replaced since this page loaded, nothing is recorded and the page refreshes.</p>
-          <div class="field"><label>Apartment<select name="hb-rej-apt-${key}"><option value="">Choose the apartment…</option>${declineOptions(cur)}</select></label></div>
+          <div class="field"><label>Apartment<select name="hb-rej-apt-${key}"><option value="">Choose the apartment…</option>${declineOptions(cur, key)}</select></label></div>
           <div class="field"><label>Scope<select name="hb-rej-scope-${key}"><option value="apartment">This apartment only</option><option value="building">The whole building</option></select></label></div>
           <div class="field"><label>Applicant's reason (optional)<input name="hb-rej-reason-${key}" maxlength="1000"></label></div>
           <div class="actions"><button class="btn btn--sm" type="button" data-action="hb-reject" data-scenario="${key}" data-shortlist="${cur.id}">Record decline from this list</button></div></details>` : ''}
         <div class="actions"><button class="btn btn--ghost btn--sm" type="button" data-action="hb-rerun" data-scenario="${key}">Run again</button></div></div>`;
     };
-    const declineOptions = cur => {
+    const declineOptions = (cur, key) => {
       const all = [...cur.listed, ...(cur.fourth_option ? [cur.fourth_option] : []), ...cur.alternatives, ...cur.unresolved];
+      // an apartment offered from the live travel view can be declined too; the decline is still recorded against the stored list
+      const live = key && liveTravel.enabled ? travelKept(key, cur) : null;
+      if (live && live.reply && live.reply.ok) all.push(...live.reply.listed, ...(live.reply.fourth_option ? [live.reply.fourth_option] : []), ...live.reply.alternatives, ...live.reply.unresolved);
       const seen = new Set();
       return all.filter(x => !seen.has(x.apartment_id) && seen.add(x.apartment_id)).map(x => `<option value="${x.apartment_id}">${esc(x.address)}</option>`).join('');
     };
@@ -499,11 +545,40 @@
         <p class="small muted">To record a decline, use "Record that the applicant declined one of these options" under the list the apartment was offered from, so the record says exactly which options the applicant saw. A decline removes the apartment (or building) from the options. It can be reopened if the applicant asks, or — for one apartment only — if its rent, dates or bedding have changed since; every step stays on record.</p></div>
       ${ov.versions && ov.versions.length ? `<details class="small"><summary>Requirement versions (${ov.versions.length})</summary><ul>${ov.versions.map(v => `<li>${fmtDT(v.created_at)} · ${esc(v.scenario_label)} · v${v.version} · ${esc(v.created_by)} — ${esc(v.change_note || '')}</li>`).join('')}</ul></details>` : ''}`;
     const m = box.querySelector('[data-role="hb-msg"]');
+    const runTravel = async (key, asked) => {
+      const holder = box.querySelector(`[data-role="hb-travel"][data-scenario="${key}"]`);
+      const cur = ov.scenarios[key] && ov.scenarios[key].current;
+      if (!holder || !cur) return;
+      const out = holder.querySelector('[data-role="hb-travel-out"]'), btn = holder.querySelector('button[data-action="hb-travel"]');
+      const kept = hbTravelShown.get(travelKey(key, cur)) || { at: 0, reply: null, busy: false };
+      if (kept.busy) return;
+      kept.busy = true; hbTravelShown.set(travelKey(key, cur), kept);
+      btn.disabled = true; out.innerHTML = '<p class="small muted">Checking travel times… this can take up to a minute.</p>';
+      try {
+        kept.reply = await api.post(`/api/homebot/enquiries/${id}/options/travel-check`, { scenario: key });
+        kept.at = Date.now();
+        if (kept.reply.state === 'replaced' || kept.reply.state === 'out_of_date') { kept.reply = null; msg(m, 'The options changed, so travel was not checked. The page is refreshing.', false); setTimeout(render, 1200); return; }
+        if (!box.isConnected) return;
+        out.innerHTML = travelView(kept.reply);
+        btn.textContent = 'Check travel times again';
+        // the decline list also offers the apartments shown with travel times (only that list is touched; nothing typed elsewhere is lost)
+        const pick = box.querySelector(`[name="hb-rej-apt-${key}"]`);
+        if (pick && kept.reply.ok) { const chosen = pick.value; pick.innerHTML = '<option value="">Choose the apartment…</option>' + declineOptions(cur, key); pick.value = chosen; }
+      } catch (ex) {
+        kept.reply = null;
+        if (box.isConnected) out.innerHTML = `<p class="msg err small">${esc(asked ? ex.message : 'Travel times could not be checked just now. Use the button to try again.')}</p>`;
+      } finally { kept.busy = false; if (btn.isConnected) btn.disabled = false; }
+    };
+    // when the options open, check travel once for each list (not again on every redraw; the button checks again on request)
+    if (liveTravel.auto) Object.entries(ov.scenarios).forEach(([key, sc]) => {
+      if (sc.current && !sc.current.stale && !hbTravelShown.has(travelKey(key, sc.current))) runTravel(key, false);
+    });
     box.addEventListener('click', async ev => {
       const b = ev.target.closest('button[data-action]'); if (!b) return;
       const a = b.dataset.action;
       try {
         if (a === 'hb-review-retry') { const r = await api.post(`/api/homebot/enquiries/${id}/options/review-retry`, { scenario: b.dataset.scenario }); msg(m, r.outcome === 'enqueued' || r.outcome === 'already_queued' ? 'The AI review has been asked for again; the options stay held until it completes.' : 'The AI review could not be queued just now; the options stay held. Try again shortly.', r.outcome === 'enqueued' || r.outcome === 'already_queued'); setTimeout(render, 1500); }
+        if (a === 'hb-travel') { await runTravel(b.dataset.scenario, true); return; }
         if (a === 'hb-rerun') { await api.post(`/api/homebot/enquiries/${id}/options/rerun`, { scenario: b.dataset.scenario }); msg(m, 'A fresh run has been queued; this page updates when it is ready.'); setTimeout(render, 1500); }
         if (a === 'hb-planning') { await api.post(`/api/homebot/enquiries/${id}/planning`, { budget_total: box.querySelector('[name="hb-planning"]').value }); msg(m, 'Planning budget confirmed; provisional options for the final size are being prepared.'); setTimeout(render, 1500); }
         if (a === 'hb-reject') {

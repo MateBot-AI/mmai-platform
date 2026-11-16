@@ -85,6 +85,9 @@ services:
       - key: MMAI_ROUTING
         scope: RUN_TIME
         value: "0"
+      - key: MMAI_ROUTING_LIVE
+        scope: RUN_TIME
+        value: "0"
       # --- AI (MateBot AI's own Anthropic account) ---
       - key: ANTHROPIC_API_KEY
         scope: RUN_TIME

@@ -1360,8 +1360,118 @@ def overview(c, eid: int) -> dict:
         scen[sc] = {"label": SCENARIO_LABEL[sc], "job": job_state(c, eid, sc), "current": current_shortlist(c, eid, sc)}
     return {"enabled": True, "enquiry_id": eid, "scenarios": scen, "planning": planning_state(c, e), "versions": versions(c, eid),
             "rejections": [rejection(c, r["id"]) for r in rows(c.execute("SELECT id FROM homebot_rejections WHERE enquiry_id=? ORDER BY id", (eid,)))],
-            "history": history(c, eid), "algorithm_version": ALGORITHM_VERSION,
+            "history": history(c, eid), "algorithm_version": ALGORITHM_VERSION, "live_travel": live_travel_state(),
             "travel_note": "Journey times are estimates, not guarantees. Check each person's journey and the evidence date. Missing or expired journeys need confirmation; an AI review cannot confirm them."}
+
+
+# ------------------------------------------------------------------------------------------------- live travel check
+# Journey times for the options a staff member is looking at, worked out on request and shown once. The stored options, their
+# history, the AI review and the decline records are untouched: nothing from the journey provider is written to the database,
+# kept between requests, logged or passed to the AI. Only a count of provider requests is recorded, to hold the monthly allowance.
+TRAVEL_CHECK_ACTION = "homebot.travel_check"
+TRAVEL_NOT_SAVED = ("Journey times are checked live and are not saved: they are shown on this page only, are not part of the stored "
+                    "options or the AI review, and are checked again each time.")
+_travel_lock = threading.Lock()   # one travel check at a time in this process, so the request allowance cannot be overrun
+
+
+def _travel_requests_used(c, prefix: str) -> int:
+    """Provider requests already made by travel checks recorded at a time starting with `prefix` (a UTC day or month)."""
+    from . import routing
+    used = 0
+    for r in rows(c.execute("SELECT detail FROM audit_log WHERE action=? AND at LIKE ?", (TRAVEL_CHECK_ACTION, prefix + "%"))):
+        n = (pj(r["detail"]) or {}).get("requests")
+        # a record that cannot be read counts as a full check, so a damaged record can only tighten the allowance
+        used += n if type(n) is int and n >= 0 else routing.LIVE_LIMITS["MMAI_ROUTING_LIVE_MAX_REQUESTS"][2]
+    return used
+
+
+def live_travel_state(c=None) -> dict:
+    """For the Options panel: whether live travel checks can be run, and whether the page should run one when it opens."""
+    from . import routing
+    on = enabled() and routing.live_enabled()
+    return {"enabled": on, "auto": on and routing.live_auto(), "plain": TRAVEL_NOT_SAVED if on else routing.LIVE_OFF}
+
+
+def _travel_refusal(state: str, plain: str, **extra) -> dict:
+    return {"ok": False, "state": state, "saved": False, "plain": plain, **extra}
+
+
+def live_travel_check(c, eid: int, scenario: str, staff: str, *, now: Optional[str] = None, post=None) -> dict:
+    """Work out the current options again with live journey estimates and return them for display. The stored options must be
+    current and not out of date; the same enquiry, apartment list, business date and booking authority are used, so the only
+    difference from the stored options is the journey times. Nothing is stored except one count-only audit record."""
+    from . import exit_exceptions, routing
+    _require_on()
+    if scenario not in SCENARIOS:
+        raise ValidationError({"scenario": "Unknown scenario."})
+    homebot.get(c, eid)   # 404 before anything else
+    if not routing.live_enabled():
+        return _travel_refusal("off", routing.LIVE_OFF)
+    when = _now_dt(now)
+    if when.tzinfo is None:
+        when = when.replace(tzinfo=timezone.utc)
+    when = when.astimezone(timezone.utc)
+    if not _travel_lock.acquire(timeout=10):
+        return _travel_refusal("busy", "Another travel check is running. Please try again in a moment.")
+    try:
+        # ONE guarded read: the stored options, the enquiry, the apartment list and the requirements all from the same instant
+        with retention_guard(c, "homebot travel check read"):
+            sl = row(c.execute("SELECT * FROM homebot_shortlists WHERE enquiry_id=? AND scenario=? AND is_current=1", (eid, scenario)))
+            if not sl or sl["status"] not in (COMPLETE, UNRESOLVED_PARTIAL):
+                return _travel_refusal("no_options", "There are no prepared options to check travel for yet.")
+            stale = _stale(c, sl)
+            if stale:
+                return _travel_refusal("out_of_date", "Travel was not checked because these options are out of date. " + stale.replace("Out of date: ", "", 1),
+                                       shortlist_id=sl["id"])
+            e = _capture(c, eid)
+            if e["status"] not in OPEN_STATUSES:
+                return _travel_refusal("closed", "This enquiry is closed, so travel was not checked.", shortlist_id=sl["id"])
+            inv = inventory_rows(c)
+            req = _requirements(c, e, scenario)
+            ver = _current_version(c, eid, scenario)
+            exception_capture = exit_exceptions.capture_for_homebot(c, eid, scenario)
+            used_day = _travel_requests_used(c, when.strftime("%Y-%m-%d"))
+            used_month = _travel_requests_used(c, when.strftime("%Y-%m"))
+        if _hash(req.as_dict()) != (ver or {}).get("basis_hash") or inventory_hash(inv) != sl["inventory_hash"]:
+            return _travel_refusal("out_of_date", "Travel was not checked because these options are out of date.", shortlist_id=sl["id"])
+        allowance = min(routing.live_limit("MMAI_ROUTING_LIVE_MAX_REQUESTS"),
+                        routing.live_limit("MMAI_ROUTING_LIVE_DAILY_REQUESTS") - used_day,
+                        routing.live_limit("MMAI_ROUTING_LIVE_MONTHLY_REQUESTS") - used_month)
+        if allowance <= 0:
+            return _travel_refusal("limit", "The travel-check allowance for " + ("today" if routing.live_limit("MMAI_ROUTING_LIVE_MONTHLY_REQUESTS") > used_month else "this month")
+                                   + " has been used, so travel was not checked. Travel time needs confirmation.", shortlist_id=sl["id"])
+        stored = pj(sl["result_json"]) or {}
+        # the options staff see first are measured first; apartments already ruled out for another reason are not measured at all
+        first = [x["apartment_id"] for key in ("listed", "alternatives", "unresolved") for x in stored.get(key, [])]
+        if stored.get("fourth_option"):
+            first.insert(len(stored.get("listed", [])), stored["fourth_option"]["apartment_id"])
+        order = list(dict.fromkeys(first + [x["apartment_id"] for x in stored.get("candidates", []) if x.get("class") != hm.EXCLUDED]))
+        est = routing.LiveEstimates(req, inv, max_requests=allowance, now=when, post=post)
+        est.prefetch(order)   # outside any database lock
+        check = est.display()
+        if est.calls:
+            # recorded before the options are worked out, so the allowance is held even if a later step fails. Our own
+            # request counts only: nothing that depends on what the provider answered (not even how many journeys it found).
+            audit(c, str(staff or "").strip()[:homebot.MAX_NAME] or "staff", TRAVEL_CHECK_ACTION, "homebot_enquiry", eid,
+                  j({"scenario": scenario, "shortlist_id": sl["id"], "requests": est.calls, "not_requested": est.skipped}))
+        exact = {int(a["id"]): exit_exceptions.offers_from_capture(exception_capture, int(a["id"])) for a in inv} if exception_capture else None
+        res = hm.build_shortlist(req, inv, date.fromisoformat(sl["today"]), est,
+                                 **({"exception_offers_by_apartment": exact} if exact else {})).as_dict()
+        now_current = row(c.execute("SELECT id FROM homebot_shortlists WHERE enquiry_id=? AND scenario=? AND is_current=1", (eid, scenario)))
+        if not now_current or now_current["id"] != sl["id"]:
+            return _travel_refusal("replaced", "The options were replaced while travel was being checked. Open the new options and check travel again.",
+                                   shortlist_id=sl["id"])
+    finally:
+        _travel_lock.release()
+    shown = {x["apartment_id"] for key in ("listed", "alternatives", "unresolved") for x in res.get(key, [])} | (
+        {res["fourth_option"]["apartment_id"]} if res.get("fourth_option") else set())
+    return {"ok": True, "state": "checked", "saved": False, "plain": TRAVEL_NOT_SAVED, "shortlist_id": sl["id"], "scenario": scenario,
+            "scenario_label": SCENARIO_LABEL.get(scenario, scenario), "check": check, "summary": res.get("summary") or {},
+            "listed": [_candidate_out(x) for x in res.get("listed", [])],
+            "alternatives": [_candidate_out(x) for x in res.get("alternatives", [])],
+            "fourth_option": _candidate_out(res["fourth_option"]) if res.get("fourth_option") else None,
+            "unresolved": [_candidate_out(x) for x in res.get("unresolved", [])],
+            "why_not": [_candidate_out(x, brief=True) for x in res.get("candidates", []) if x["apartment_id"] not in shown]}
 
 
 def matching_note(c, eid: int) -> dict:

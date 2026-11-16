@@ -25,7 +25,11 @@ def on(client, monkeypatch):
     return client
 
 
-def _apt(c, i, type_code="2B2B", rent12=900, rent6=1200, avail="2026-12-01", building="10 Test Street", suburb="Melbourne CBD", **kw):
+def _apt(c, i, type_code="2B2B", rent12=900, rent6=1200, avail=None, building="10 Test Street", suburb="Melbourne CBD", **kw):
+    # Free from 33 days ahead: the shared form body's party moves in 40 days from today, give or take a week, so the apartment
+    # is free on the party's earliest date whatever day the tests run. (A fixed date here made every option fail the 5%
+    # empty-days rule once the calendar moved past mid-November 2026.)
+    avail = avail or (date.today() + timedelta(days=33)).isoformat()
     from server import rules
     n = rules.APT_TYPES[type_code]["bedrooms"]
     r = {"id": i, "city": "Melbourne", "address": f"Unit {i} / {building}", "address_raw": f"Unit {i} / {building}", "suburb": suburb,
@@ -573,7 +577,7 @@ def test_apartment_change_re_evaluates_the_whole_inventory_for_every_open_enquir
     r = on.patch("/api/apartments/4", json={"rent_12m": 800})
     assert r.status_code == 200
     r = on.post("/api/apartments", json={"address": "Unit 5 / 40 New Street", "suburb": "Melbourne CBD", "type_code": "2B2B", "rent_12m": 700, "rent_6m": 900,
-                                         "available_from": "2026-12-01", "bedroom1": KING, "bedroom2": KING})
+                                         "available_from": (date.today() + timedelta(days=33)).isoformat(), "bedroom1": KING, "bedroom2": KING})
     assert r.status_code == 201, r.text
     aid5 = r.json()["id"]
     assert job(on, e1)["status"] == hs.QUEUED and job(on, e2)["status"] == hs.QUEUED and job(on, closed)["status"] == hs.CANCELLED
@@ -695,7 +699,7 @@ def test_apartment_scope_material_change_route(on):
     assert r.status_code == 200 and r.json() == {"changes": []}
     r = on.post(f"/api/homebot/rejections/{rj['id']}/reoffer", json={"apartment_id": 3, "note": "x"})
     assert r.status_code == 422 and "Nothing material" in r.json()["errors"]["apartment_id"]
-    on.patch("/api/apartments/3", json={"available_from": "2026-12-20"})
+    on.patch("/api/apartments/3", json={"available_from": (date.today() + timedelta(days=34)).isoformat()})   # one day later than the stock date
     r = on.get(f"/api/homebot/rejections/{rj['id']}/material-change", params={"apartment_id": 3})
     assert [d["field"] for d in r.json()["changes"]] == ["available_from"]
     r = on.post(f"/api/homebot/rejections/{rj['id']}/reoffer", json={"apartment_id": 3, "note": "Later date now fits"})

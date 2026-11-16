@@ -4,6 +4,13 @@ Google development access alone is NOT permission for persistent duration/mode
 evidence or onward AI use. No default Google policy is supplied. Operator-supplied
 rights must cover the complete persisted and AI-reviewed workflow, including
 derived results and its retention period. No response bodies/addresses are logged.
+
+A second, separate path at the end of this module (LiveEstimates) serves a staff
+member's on-screen travel check: journey times are requested, used for that one
+reply and dropped. It stores nothing and never feeds the AI review, so it does not
+use the stored-evidence rights above and never satisfies them. It is off by default;
+whether the provider's standard terms allow even this in-request calculation is an
+open question recorded in RELEASE_OPERATIONS.md, not something this code settles.
 """
 from __future__ import annotations
 
@@ -169,8 +176,8 @@ class Estimates:
         if not apartment or not person:
             return {}
         destination = _destination(person, which)
-        origin = ", ".join(str(apartment.get(k) or "").strip() for k in ("address", "suburb")) + ", Victoria, Australia"
-        if not destination or not apartment.get("address"):
+        origin = self._origin(apartment)
+        if not destination or not origin:
             return {}
         result = {}
         for mode in self.req.transport:
@@ -190,6 +197,11 @@ class Estimates:
                     self.failures += 1  # category/count only, never provider text or addresses
             result[mode] = self.cache[key]
         return result
+
+    def _origin(self, apartment):
+        if not apartment.get("address"):
+            return None
+        return ", ".join(str(apartment.get(k) or "").strip() for k in ("address", "suburb")) + ", Victoria, Australia"
 
     def evidence(self):
         return {"provider": "google-routes", "policy_digest": self.policy["digest"],
@@ -219,3 +231,124 @@ def stale_evidence(evidence, now=None):
     except (KeyError, TypeError, ValueError):
         return "Travel estimate evidence is incomplete; fresh confirmation is required."
     return None
+
+
+# ----------------------------------------------------------------------------------------------- live travel check
+# A staff member's on-screen travel check. Journey times are requested for the options on the page, used for that one
+# reply and then dropped: nothing from the provider is stored, cached, logged or passed to the AI review. This path is
+# separate from the stored-evidence path above (load_policy / Estimates), which stays off without documented rights.
+LIVE_ENV = "MMAI_ROUTING_LIVE"
+LIVE_BASIS = "Estimated weekday departure at 08:00 Melbourne; not a guaranteed journey time"
+LIVE_OFF = "Live travel checks are switched off."
+LIVE_LIMITS = {"MMAI_ROUTING_LIVE_MAX_REQUESTS": (200, 1, 500),          # one check
+               "MMAI_ROUTING_LIVE_DAILY_REQUESTS": (2000, 1, 20000),     # all checks in one UTC day
+               "MMAI_ROUTING_LIVE_MONTHLY_REQUESTS": (10000, 1, 50000)}  # all checks in one UTC month (H28 allowance)
+LIVE_DEADLINE_SEC = 45
+LIVE_WORKERS = 6
+
+
+def live_enabled() -> bool:
+    return os.environ.get(LIVE_ENV, "0") == "1" and bool((os.environ.get("GOOGLE_ROUTES_API_KEY") or "").strip())
+
+
+def live_auto() -> bool:
+    return live_enabled() and os.environ.get("MMAI_ROUTING_LIVE_AUTO", "1") != "0"
+
+
+def live_limit(name: str) -> int:
+    """A configured request limit, clamped to its allowed range; anything unreadable falls back to the default."""
+    default, low, high = LIVE_LIMITS[name]
+    try:
+        value = int((os.environ.get(name) or "").strip() or default)
+    except ValueError:
+        return default
+    return value if low <= value <= high else default
+
+
+class LiveEstimates(Estimates):
+    """In-memory journey estimates for one staff travel check. `prefetch` makes every provider request (bounded by the
+    request allowance and a deadline, no retries); afterwards the object only answers from what was measured, so the
+    number of requests is known before the options are worked out. Anything not measured stays UNMEASURED and the
+    option reads 'Travel time needs confirmation'. Origins are the building, so apartments in one building share a journey."""
+
+    def __init__(self, req, inventory, *, max_requests, now=None, post=None):
+        self.req = req
+        self.inventory = {int(a["id"]): a for a in inventory}
+        self.people = {p["position"]: p for p in req.people}
+        self.now = now or datetime.now(timezone.utc)
+        self.departure = departure_at(self.now)
+        self.post = post or _post
+        self.max_requests = int(max_requests)
+        self.calls = self.measured = self.failures = self.skipped = 0
+        self.cache = {}
+
+    def _origin(self, apartment):
+        building = hm.building_key(apartment.get("address") or "")
+        if not building:
+            return None
+        return ", ".join(x for x in (building, str(apartment.get("suburb") or "").strip()) if x) + ", Victoria, Australia"
+
+    def _keys(self, aid):
+        apartment = self.inventory.get(int(aid))
+        origin = self._origin(apartment) if apartment else None
+        if not origin:
+            return
+        for person in self.req.people:
+            for which in ("primary", "secondary"):
+                destination = _destination(person, which)
+                if destination:
+                    for mode in self.req.transport:
+                        yield (origin, destination, mode)
+
+    def _measure(self, key):
+        origin, destination, mode = key
+        try:
+            body = self.post(request_body(origin, destination, mode, self.departure))
+            times = [duration_minutes(r.get("duration")) for r in body.get("routes", []) if _valid_route(r, mode)]
+            return min(times) if times else tv.UNMEASURED, False
+        except Exception:   # noqa: BLE001 - counted only; never provider text or addresses
+            return tv.UNMEASURED, True
+
+    def prefetch(self, apartment_ids, *, deadline_sec=LIVE_DEADLINE_SEC):
+        """Request journeys for these apartments in the order given (the options staff see first come first)."""
+        from concurrent.futures import ThreadPoolExecutor, wait
+        wanted = []
+        for aid in apartment_ids:
+            for key in self._keys(aid):
+                if key not in self.cache:
+                    self.cache[key] = tv.UNMEASURED
+                    wanted.append(key)
+        todo, self.skipped = wanted[:self.max_requests], max(0, len(wanted) - self.max_requests)
+        if not todo:
+            return
+        self.calls = len(todo)   # attempted requests, including failures; no retry
+        pool = ThreadPoolExecutor(max_workers=LIVE_WORKERS, thread_name_prefix="mmai-travel")
+        try:
+            futures = {pool.submit(self._measure, key): key for key in todo}
+            done, late = wait(futures, timeout=deadline_sec)
+            for f in done:
+                value, failed = f.result()
+                self.cache[futures[f]] = value
+                self.measured += value is not tv.UNMEASURED
+                self.failures += bool(failed)
+            self.failures += len(late)   # still running at the deadline: treated as not measured
+        finally:
+            pool.shutdown(wait=False, cancel_futures=True)
+
+    def __call__(self, aid, position, which):
+        apartment = self.inventory.get(int(aid))
+        person = self.people.get(position)
+        origin = self._origin(apartment) if apartment else None
+        destination = _destination(person, which) if person else None
+        if not origin or not destination:
+            return {}
+        return {mode: self.cache.get((origin, destination, mode), tv.UNMEASURED) for mode in self.req.transport}
+
+    def evidence(self):
+        raise RuntimeError("live travel estimates are never stored")
+
+    def display(self):
+        """What the page says about this check. Counts and our own clock only; no journey content."""
+        return {"attribution": "Google Maps", "basis": LIVE_BASIS, "checked_at": self.now.isoformat(),
+                "departure": self.departure.isoformat(), "timezone": "Australia/Melbourne",
+                "requests": self.calls, "measured": self.measured, "failures": self.failures, "not_requested": self.skipped}

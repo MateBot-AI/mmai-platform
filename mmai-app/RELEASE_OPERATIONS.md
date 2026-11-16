@@ -51,11 +51,63 @@ alerts and verify their behaviour against the separate A$200 allowance. Evidence
 records Google Maps attribution, the Melbourne weekday 08:00 departure, policy
 digest and expiry; changed or expired permission/estimates invalidate readiness.
 
+## Live travel check (shown, not stored)
+
+`MMAI_ROUTING_LIVE=1` with `GOOGLE_ROUTES_API_KEY` set turns on a separate, narrower
+use of the same provider: when a staff member opens an enquiry's options (or presses
+"Check travel times now"), the server asks for journey times for the apartments still
+in the running, applies the travel rules in memory and returns the re-assessed options
+for that one page view. It needs `MMAI_HOMEBOT_MATCHING` on and current, in-date
+stored options. It is off by default and is not approved for use.
+
+- Nothing from the provider, and nothing worked out from it, is stored, cached between
+  requests, logged or passed to the AI review. The stored options, their history, the
+  review packet and the decline records are unchanged and keep reading "Travel time
+  needs confirmation". The only record is one audit row per check holding this
+  application's own request counts.
+- The page shows the provider's name, "Google Maps", untranslated, at the head of the
+  live options and beside each apartment's journey figures, with the label "Estimated
+  weekday departure at 08:00 Melbourne; not a guaranteed journey time". No map is shown.
+- Request limits (each has a safe default and falls back to it if unreadable):
+  `MMAI_ROUTING_LIVE_MAX_REQUESTS` per check (200), `MMAI_ROUTING_LIVE_DAILY_REQUESTS`
+  per UTC day (2000), `MMAI_ROUTING_LIVE_MONTHLY_REQUESTS` per UTC month (10000). When
+  a limit is reached no request is made and travel reads as needing confirmation.
+  The limits are enforced by this application from its audit records; the provider
+  account has a budget alert only, so also set a daily quota for the Routes API in the
+  provider console as a second stop.
+- `MMAI_ROUTING_LIVE_AUTO=0` keeps the button but stops the check running by itself
+  when the options are opened.
+- Car journeys use traffic-aware routing, which the provider bills at a higher rate
+  than the other modes ([pricing](https://developers.google.com/maps/billing-and-pricing/pricing)).
+- This switch is independent of `MMAI_ROUTING` and the rights file above, which stay
+  off: they govern stored journey evidence and its use by the AI review, and no
+  clearance for that exists.
+
+Contract position, stated as a risk and not as a permission. Storing or caching the
+provider's journey results is outside its standard terms, which is why this path keeps
+nothing. Whether working out an average, a pass or fail and an order from those
+results inside a single request is allowed is not settled by the wording: the terms
+say not to "create content based on Google Maps Content"
+([Google Maps Platform Terms 3.2.3(c)](https://cloud.google.com/maps-platform/terms)).
+An independent review on 16 November 2026 classed this as an unresolved, moderate
+contract risk: not a clear breach and not cleared. Switching this on therefore needs
+the business owner's decision to accept that risk, or a written answer from the
+provider, or a different provider.
+
+The site's published terms must also tell users that it uses Google Maps features and
+content and that their use is subject to the Google Maps/Google Earth Additional Terms
+of Service and the Google Privacy Policy, and the site needs a publicly accessible
+Terms of Use and Privacy Policy
+([Google Maps Platform Terms 3.2.2](https://cloud.google.com/maps-platform/terms),
+[Routes API policies](https://developers.google.com/maps/documentation/routes/policies)).
+That wording is the business owner's to approve; it is not supplied by this package
+and no such pages exist in it.
+
 ## Controlled startup
 
 Keep `MMAI_SCHEDULER=0`, `MMAI_AI_QUEUE=0`, `MMAI_HOMEBOT_MATCHING=0`,
-`MMAI_NOTIFICATIONS=0`, `MMAI_MAIL_MODE=off`, `MMAI_ALERT_MODE=off` and
-`MMAI_ROUTING=0` until the corresponding controlled acceptance is authorised.
+`MMAI_NOTIFICATIONS=0`, `MMAI_MAIL_MODE=off`, `MMAI_ALERT_MODE=off`,
+`MMAI_ROUTING=0` and `MMAI_ROUTING_LIVE=0` until the corresponding controlled acceptance is authorised.
 Keep `MMAI_HOMEBOT_REVIEW_BUILD=1` during preparation. Self-hosted HomeBot links
 to the same origin's MateBot form and forces its review submissions to TEST.
 Set this flag to `0` only as part of the separately approved release; it does not

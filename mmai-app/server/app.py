@@ -2576,6 +2576,15 @@ async def homebot_options_rerun(eid: int, req: Request, staff=Depends(current_st
     return _homebot_options_call(homebot_shortlist.request_rerun, db, eid, staff["display_name"], str(body.get("scenario") or homebot_shortlist.hm.SCENARIO_CURRENT))
 
 
+@app.post("/api/homebot/enquiries/{eid}/options/travel-check")
+async def homebot_options_travel_check(eid: int, req: Request, staff=Depends(current_staff)):
+    """Live journey estimates for the options on the page (staff only). Shown once and not saved; see homebot_shortlist.
+    The check waits on the journey provider, so it runs in the worker pool and never holds up other requests."""
+    body = await sec.json_object(req, empty_ok=True)
+    scenario = str(body.get("scenario") or homebot_shortlist.hm.SCENARIO_CURRENT)
+    return await run_in_threadpool(_homebot_options_call, homebot_shortlist.live_travel_check, db, eid, scenario, staff["display_name"])
+
+
 @app.post("/api/homebot/enquiries/{eid}/options/review-retry")
 async def homebot_options_review_retry(eid: int, req: Request, staff=Depends(current_staff)):
     """Explicit staff retry of the AI review hand-over for the current options (held until the review completes)."""
