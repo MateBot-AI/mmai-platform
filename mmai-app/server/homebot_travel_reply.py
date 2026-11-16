@@ -289,7 +289,7 @@ def build_prompt(pk: dict, compact: bool = False) -> str:
     ]
     if compact:
         rulesx.append("Be brief: the JSON object only.")
-    return (SYSTEM + "\n\nRules:\n- " + "\n- ".join(rulesx) + "\n\nGOOGLE MAPS JOURNEY ESTIMATES (source: Google Maps; " + pk["basis"] + ")\n\n"
+    return ("Rules:\n- " + "\n- ".join(rulesx) + "\n\nGOOGLE MAPS JOURNEY ESTIMATES (source: Google Maps; " + pk["basis"] + ")\n\n"
             + json.dumps({"options": shown}, ensure_ascii=False))
 
 
@@ -396,7 +396,7 @@ def travel_reply(candidates: list, meter: dict | None = None) -> dict:
     if not any(p["journey"] == "measured" for o in pk["options"] for p in o["people"]):
         return {"state": "nothing", "saved": False, "plain": NOTHING_TEXT, "options": []}
     try:
-        text = ai._ask_bounded(lambda compact: build_prompt(pk, compact), OUTPUT_TOKENS, "homebot travel reply", meter)
+        text = ai._ask_bounded(lambda compact: build_prompt(pk, compact), OUTPUT_TOKENS, "homebot travel reply", meter, system=SYSTEM)
         options = parse_reply(text, pk)
     except ReplyMismatch:
         log.warning("travel reply withheld: validation")   # category only: the model's words may quote journey figures
@@ -411,6 +411,15 @@ def travel_reply(candidates: list, meter: dict | None = None) -> dict:
 
 
 # ------------------------------------------------------------------------------------------------------------ T6 gate
+def after_reserve_review(ai_gate: dict, outcome: str) -> dict:
+    """The gate result once the shortlist module has tried to send the next reserves for review (only ever for a result held
+    as 'replacement'): still held, with what happens next. Any other outcome leaves the gate result as it was."""
+    why = {"queued": "replacement_queued", "limit": "replacement_limit"}.get(outcome)
+    if ai_gate.get("reason") != "replacement" or why is None:
+        return ai_gate
+    return {"state": "held", "held": True, "reason": why, "plain": HELD_PREFIX + HELD_REASON[why]}
+
+
 ASSESSED_TEXT = ("AI-assessed: the saved AI review covered and agreed with every apartment shown here, and the AI has assessed "
                  "each of them with the journey results of this check. Reservations still reviews it before contacting the customer.")
 HELD_PREFIX = "Held, not a ready shortlist: "
@@ -424,6 +433,12 @@ HELD_REASON = {"off": "the AI travel assessment is switched off, so the journey 
                "disagreed": "the saved AI review did not agree with an apartment shown here.",
                "replacement": "an apartment shown here took the place of one that failed the travel check and was not among "
                               "the apartments the saved AI review covered, so it has not been reviewed.",
+               "replacement_queued": "an apartment shown here took the place of one that failed the travel check and has not "
+                                     "been reviewed yet. The next apartments in order have now been sent for AI review; check "
+                                     "travel again when that review is complete.",
+               "replacement_limit": "an apartment shown here took the place of one that failed the travel check, and more "
+                                    "apartments have failed it than the AI review covers for one enquiry. It has not been "
+                                    "reviewed; staff decide how to proceed.",
                "empty": "no apartment is left to assess."}
 
 
@@ -438,8 +453,10 @@ def saved_review(state: dict) -> tuple:
     if not isinstance(detail, dict):
         return None, set(), set()
     notes = [n for n in detail.get("option_notes") or [] if isinstance(n, dict) and n.get("apartment_id") is not None]
-    agreed = {int(n["apartment_id"]) for n in notes if n.get("agrees") is True}
-    return ("reviewed" if detail.get("verdict") == "approve" else "review_hold"), agreed, {int(n["apartment_id"]) for n in notes} - agreed
+    # an apartment with any note that does not agree is not agreed, whatever another note about it says
+    disagreed = {int(n["apartment_id"]) for n in notes if n.get("agrees") is not True}
+    agreed = {int(n["apartment_id"]) for n in notes} - disagreed
+    return ("reviewed" if detail.get("verdict") == "approve" else "review_hold"), agreed, disagreed
 
 
 def gate(reply: dict, saved_review_state: str, shortlisted: list, reviewed_ids, disagreed_ids=()) -> dict:

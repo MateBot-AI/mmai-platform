@@ -552,7 +552,7 @@ CONFIGURATION_KINDS = frozenset(("credentials", "setup"))   # explicit operator 
 def review_shortlist(pk: dict, meter: dict | None = None) -> dict:
     """One bounded model call (normal + at most one compact retry, ai._ask_bounded) and the validator. Raises ai exceptions /
     UnusableReview; returns the clean review."""
-    text = ai._ask_bounded(lambda compact: build_prompt(pk, compact), OUTPUT_TOKENS, "homebot review", meter)
+    text = ai._ask_bounded(lambda compact: build_prompt(pk, compact), OUTPUT_TOKENS, "homebot review", meter, system=SYSTEM)
     try:
         return parse_review(text, pk)
     except UnusableReview as e:

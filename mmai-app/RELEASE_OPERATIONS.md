@@ -82,7 +82,8 @@ Tools key.
   staff member, having heard from the applicant, changes the answer in "Change the
   party's requirements". Those answers cannot be added to any enquiry.
 - Nothing from the service, and nothing worked out from it, is stored, cached between
-  requests or logged. The stored options, their history, the saved AI review packet
+  requests or logged, with the one exception set out under "What that step writes"
+  below. The stored options, their history, the saved AI review packet
   and the decline records hold no journey content and keep reading "Travel time needs
   confirmation". The only record is an audit row holding this application's own
   request counts, written before each stage of a check is sent: one row normally, a
@@ -208,11 +209,33 @@ made. It is off by default.
   the journeys measured in that check, which are not stored. The saved review covers
   the listed options, the alternatives, the unresolved candidates and the reserves;
   an alternative it reviewed as an alternative counts as reviewed if it steps in.
-- What is still held. A replacement from beyond the reserves (more than three
-  replacements in one check) was not reviewed and holds the result; there is no
-  path in this package that reviews it. Options saved before this package hold no
-  reserves; they are out of date under the new matching version and are rebuilt
-  and reviewed again before use.
+- A replacement from beyond the reviewed reserves. When a check needs a replacement
+  the saved review has not covered, and that is the only thing in the way, the
+  result of that check is held and the next three candidates in the same order are
+  added to the saved options' reserves and handed to the same review queue. The
+  review is bound to the reserves, so it is made again for the options with the
+  longer list (one model call by the review worker, none inside the check). While
+  it is outstanding the page says the review has not completed; once it is
+  complete, a check of the same options can read "AI-assessed". One batch per
+  check, never while a review is outstanding, and at most four batches (twelve
+  reserves) for one set of options; after that the result stays held and the page
+  says staff decide. If the hand-over fails, nothing is written and the next check
+  asks again.
+- What that step writes. The longer reserve list (candidates chosen and ordered
+  before travel was looked at, with the same stored facts as every other candidate)
+  and one audit row (action "homebot.reserve_review") holding the scenario, the
+  options' number, how many reserves were added and how many there now are. It
+  writes no journey, time, result or failed apartment. It does show that a check
+  needed more candidates than had been reviewed; that is the one thing saved as a
+  consequence of a travel check, and it should be weighed against the service's
+  no-storage terms before the switch is set.
+- What is still held. More than twelve replacements for one set of options. Options
+  saved before this package hold no reserves; they are out of date under the new
+  matching version and are rebuilt and reviewed again before use.
+- System text. The saved review and the travel assessment are each sent under
+  HomeBot's own system text. Before this package both went out under the MateBot
+  system line, because the HomeBot text was defined and never passed on. MateBot's
+  calls, their system line and the model are unchanged.
 - A person whose journey is not fully measured is "not known": never counted as within
   a limit and never as over it. If no journey in the check is fully measured the model
   is not asked.

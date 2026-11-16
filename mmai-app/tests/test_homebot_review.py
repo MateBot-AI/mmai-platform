@@ -146,6 +146,41 @@ def test_the_review_covers_the_reserves_that_would_replace_a_failed_travel_check
         hr.parse_review(_good_reply(pk, note_for={"O4": "The journey is confirmed within the stated limit."}), pk)
 
 
+def test_the_review_is_sent_under_homebots_own_system_text_and_matebot_calls_keep_theirs(on, monkeypatch):
+    """Before 16 Nov 2026 the HomeBot review went out under the MateBot system line (its own SYSTEM text was defined and
+    never sent). Now: HomeBot's text on the first call and on the compact retry; a caller that gives none reaches ai._ask
+    exactly as before, and ai._ask then sends the MateBot line; the model is the same for both."""
+    eid, sl = _prepared(on)
+    seen, real_ask = [], ai._ask
+
+    def ask(prompt, model=None, max_tokens=1500, system=""):
+        seen.append(system)
+        if len(seen) == 1:
+            raise ai.AIOutputTruncated("cut off", max_tokens=max_tokens)
+        return _ask_double(lambda pk: _good_reply(pk))(prompt)
+    monkeypatch.setattr(ai, "_ask", ask)
+    assert hr.process_pending(on.db)["reviewed"] == 1
+    assert seen == [hr.SYSTEM, hr.SYSTEM] and hr.SYSTEM.startswith("You are HomeBot AI,") and "MateBot" not in hr.SYSTEM
+    # a caller with no system text of its own: ai._ask is called without one, as before
+    calls = []
+    monkeypatch.setattr(ai, "_ask", lambda *a, **k: (calls.append((a, k)), "ok")[1])
+    assert ai._ask_bounded(lambda compact: "prompt", 100, "anything") == "ok"
+    assert calls == [(("prompt",), {"max_tokens": 100})]
+    monkeypatch.setattr(ai, "_ask", real_ask)
+    # what the provider is actually sent: the given text, or the MateBot default; the same approved model either way
+    sent = []
+
+    class _Messages:
+        def create(self, **kw):
+            sent.append(kw)
+            return type("Reply", (), {"stop_reason": "end_turn", "content": [type("Block", (), {"text": "{}"})()]})()
+    monkeypatch.setattr(ai, "_client", lambda: type("Client", (), {"messages": _Messages()})())
+    ai._ask("p", system=hr.SYSTEM)
+    ai._ask("p")
+    assert [k["system"] for k in sent] == [hr.SYSTEM, "You are MateBot AI, Apartment Living Melbourne's matchmaking assistant."]
+    assert sent[0]["model"] == sent[1]["model"] == ai.model_name()
+
+
 def test_valid_reply_is_stored_bound_to_the_version_and_read_back_without_ready(on, monkeypatch):
     eid, sl = _prepared(on)
     monkeypatch.setattr(ai, "_ask", _ask_double(lambda pk: _good_reply(pk)))

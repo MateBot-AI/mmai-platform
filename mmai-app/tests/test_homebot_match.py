@@ -545,6 +545,7 @@ def test_the_next_in_order_are_named_as_reserves_and_are_not_options():
     sl = hm.build_shortlist(r, many, TODAY)                                   # the stored options: no journeys measured
     assert [c.apartment_id for c in sl.listed] == [1, 2, 3] and [c.apartment_id for c in sl.reserves] == [4, 5, 6]
     assert hm.MAX_RESERVES == 3 and len(sl.listed) + len(sl.alternatives) == 3
+    assert sl.reserve_queue == [7, 8] and sl.as_dict()["reserve_queue"] == [7, 8]      # the ones behind them, same order: ids only
     d = sl.as_dict()
     assert [x["apartment_id"] for x in d["reserves"]] == [4, 5, 6] and sl.summary()["reserves"] == [4, 5, 6]
     assert all(hm.TRAVEL_NOT_CHECKED in c.flags and c.travel["status"] == travel.NEEDS_CONFIRMATION for c in sl.reserves)
@@ -564,9 +565,10 @@ def test_the_next_in_order_are_named_as_reserves_and_are_not_options():
     # three full matches with alternatives behind them: an alternative is the reserve when no further full match exists
     three = full + [apt(3, suburb="South Yarra", building="30 SY Street")]
     sl = hm.build_shortlist(r2, three + alts, TODAY)
-    assert sl.alternatives == [] and [c.apartment_id for c in sl.reserves] == [7, 8, 9]
+    assert sl.alternatives == [] and [c.apartment_id for c in sl.reserves] == [7, 8, 9] and sl.reserve_queue == []
     # nothing behind the three: no reserves
-    assert hm.build_shortlist(r, many[:3], TODAY).reserves == []
+    none = hm.build_shortlist(r, many[:3], TODAY)
+    assert none.reserves == [] and none.reserve_queue == []
 
 
 def test_no_candidate_means_no_shortlist():

@@ -377,23 +377,26 @@ def _terminal_if_compact(meter: dict, what: str, e: AIUnavailable) -> AIUnavaila
     return AINoRetry(f"{what} compact reply after a cut-off reply was unusable; no further automatic retry - staff decide", code="size_limit_compact_unusable")
 
 
-def _ask_bounded(build_prompt, max_tokens: int, what: str, meter: dict | None = None, schema: dict | None = None) -> str:
+def _ask_bounded(build_prompt, max_tokens: int, what: str, meter: dict | None = None, schema: dict | None = None, system: str = "") -> str:
     """_bounded_attempts with `schema` (optional) as the native JSON-schema output format for the duration of its attempts (the
-    normal call and the one compact retry alike). AISchemaUnsupported passes straight through: no compact retry, no retry at all."""
+    normal call and the one compact retry alike). AISchemaUnsupported passes straight through: no compact retry, no retry at all.
+    `system` (optional) is the caller's own system text, sent with both attempts; left empty, _ask is called exactly as before
+    and sends its MateBot default (the HomeBot calls pass theirs: before 16 Nov 2026 they went out under the MateBot line)."""
     with _output_schema(schema):
-        return _bounded_attempts(build_prompt, max_tokens, what, meter)
+        return _bounded_attempts(build_prompt, max_tokens, what, meter, system)
 
 
-def _bounded_attempts(build_prompt, max_tokens: int, what: str, meter: dict | None = None) -> str:
+def _bounded_attempts(build_prompt, max_tokens: int, what: str, meter: dict | None = None, system: str = "") -> str:
     """Bounded output handling shared by the review, staff brief and introduction calls: one call at `max_tokens` (capped at
     OUTPUT_TOKEN_CEILING); if the reply is cut off, exactly ONE compact retry (`build_prompt(True)` asks for the compact
     variant) at 1.5x the budget, still capped; a second cut-off raises AIOutputTruncated, and ANY other failure of the compact
     attempt raises AINoRetry. Total calls are therefore at most two, and the exception tells the queue not to try again. `meter` (dict) also gets compact=True once the
     retry was used, so callers can make an unusable compact reply terminal as well (_terminal_if_compact)."""
     budget = min(int(max_tokens), OUTPUT_TOKEN_CEILING)
+    own = {"system": system} if system else {}   # nothing extra is passed when the caller gave no system text
     _count(meter)
     try:
-        return _ask(build_prompt(False), max_tokens=budget)
+        return _ask(build_prompt(False), max_tokens=budget, **own)
     except AIOutputTruncated:
         log.warning("%s cut off at %s output tokens; one compact retry", what, budget)
     retry = min(int(budget * 1.5), OUTPUT_TOKEN_CEILING)
@@ -401,7 +404,7 @@ def _bounded_attempts(build_prompt, max_tokens: int, what: str, meter: dict | No
     if meter is not None:
         meter["compact"] = True   # tells the caller that whatever comes back is the last attempt
     try:
-        return _ask(build_prompt(True), max_tokens=retry)
+        return _ask(build_prompt(True), max_tokens=retry, **own)
     except AIOutputTruncated:
         raise AIOutputTruncated(f"{what} exceeded the response size limit after a compact retry ({retry} output tokens); no further automatic retry - staff decide",
                                 max_tokens=retry, attempts=2)

@@ -1385,6 +1385,7 @@ def overview(c, eid: int) -> dict:
 # When the separate AI travel reply is switched on (homebot_travel_reply), the journey results of this one check are also
 # given to Claude for a short assessment that is returned with this reply and dropped; it is never the saved AI review.
 TRAVEL_CHECK_ACTION = "homebot.travel_check"
+RESERVE_REVIEW_ACTION = "homebot.reserve_review"
 TRAVEL_NOT_SAVED = ("Journey times are checked live and are not saved: they are shown on this page only, are not part of the stored "
                     "options or the AI review, and are checked again each time.")
 _travel_lock = threading.Lock()   # one travel check at a time in this process, so the request allowance cannot be overrun
@@ -1414,13 +1415,58 @@ def _travel_refusal(state: str, plain: str, **extra) -> dict:
     return {"ok": False, "state": state, "saved": False, "plain": plain, **extra}
 
 
+def review_next_reserves(c, sl: dict, who: str, ts: str) -> str:
+    """GP6(d) with T6: a travel check needed a replacement from beyond the reserves the saved AI review covered. Add the
+    next batch (hm.MAX_RESERVES apartments, in the order fixed before travel was looked at) to the saved options' reserves
+    and hand the options to the same review queue again: the reserves are part of what a review is bound to, so the review
+    is made afresh for the options with the longer list. ONE guarded step: the longer list, the hand-over and its mark are
+    written together or not at all. Bounded: one batch per call, never while a review is outstanding (the caller asks only
+    when the current review is complete), and no more than hm.MAX_RESERVE_BATCHES batches for one set of options.
+    What is written is which candidates are to be reviewed next and a count-only audit record: no journey, time, result
+    or failed apartment. Returns 'queued', 'limit', 'none_left', 'changed', 'unavailable' or 'failed'. Never raises."""
+    hook = _review_hook()
+    if hook is None:
+        return "unavailable"
+    try:
+        with retention_guard(c, "homebot reserve review"):
+            cur = row(c.execute("SELECT id, enquiry_id, scenario, is_current, result_json, summary_json FROM homebot_shortlists WHERE id=?", (sl["id"],)))
+            if not cur or not cur["is_current"] or cur["result_json"] != sl["result_json"]:
+                return "changed"   # replaced, or another check has already asked for the next batch
+            res = pj(cur["result_json"]) or {}
+            reserves, queue = list(res.get("reserves") or []), list(res.get("reserve_queue") or [])
+            if len(reserves) >= hm.MAX_RESERVES * hm.MAX_RESERVE_BATCHES:
+                return "limit"
+            by_id = {x.get("apartment_id"): x for x in res.get("candidates") or []}
+            room = min(hm.MAX_RESERVES, hm.MAX_RESERVES * hm.MAX_RESERVE_BATCHES - len(reserves))
+            take = [i for i in queue[:room] if i in by_id]
+            if not take:
+                return "none_left"
+            res["reserves"], res["reserve_queue"] = reserves + [by_id[i] for i in take], queue[room:]
+            ids = [x.get("apartment_id") for x in res["reserves"]]
+            if isinstance(res.get("summary"), dict):
+                res["summary"]["reserves"] = ids
+            summary = pj(cur["summary_json"]) or {}
+            summary["reserves"] = ids
+            c.execute("UPDATE homebot_shortlists SET result_json=?, summary_json=?, review_enqueued_at=NULL, review_enqueue_attempts=1 WHERE id=?",
+                      (j(res), j(summary), cur["id"]))
+            hook(c, cur["id"], commit=False)   # a failure here undoes the whole step: the reviewed options stay as they were
+            c.execute("UPDATE homebot_shortlists SET review_enqueued_at=? WHERE id=?", (ts, cur["id"]))
+            audit(c, who, RESERVE_REVIEW_ACTION, "homebot_enquiry", cur["enquiry_id"],
+                  j({"scenario": cur["scenario"], "shortlist_id": cur["id"], "added": len(take), "reserves": len(ids)}))
+            return "queued"
+    except Exception as ex:   # noqa: BLE001
+        log.warning("homebot reserve review step failed shortlist=%s kind=%s", sl.get("id"), _error_kind(ex))
+        return "failed"
+
+
 def live_travel_check(c, eid: int, scenario: str, staff: str, *, now: Optional[str] = None, post=None) -> dict:
     """Work out the current options again with live journey estimates and return them for display. The stored options must be
     current and not out of date; the same enquiry, apartment list, business date and booking authority are used. The result
     differs from the stored options in the journey times and, when a shortlisted apartment fails the travel check, in the
     apartment that takes its place (GP6(d)). The saved AI review covers the saved options and the reserves next in order;
-    a replacement from among those reserves has been reviewed, one from beyond them has not and holds the result.
-    Nothing is stored except count-only audit records (one per stage of requests)."""
+    a replacement from among those reserves has been reviewed, one from beyond them has not and holds the result, and
+    the next reserves are then sent for review (review_next_reserves). No journey content is stored: the only records
+    are count-only audit rows (one per stage of requests) and, in that last case, which candidates are reviewed next."""
     from . import exit_exceptions, homebot_travel_reply, routing
     _require_on()
     if scenario not in SCENARIOS:
@@ -1493,6 +1539,10 @@ def live_travel_check(c, eid: int, scenario: str, staff: str, *, now: Optional[s
     # order; a replacement from beyond them has not been reviewed and holds the result.
     review_state, agreed_ids, disagreed_ids = homebot_travel_reply.saved_review(_review_state(c, sl))
     ai_gate = homebot_travel_reply.gate(reply, review_state, in_order, agreed_ids, disagreed_ids)
+    if ai_gate.get("reason") == "replacement":
+        # the only thing in the way is a replacement the saved review has not seen: send the next reserves for review now,
+        # so that a later check of the same options can pass. The result of THIS check stays held.
+        ai_gate = homebot_travel_reply.after_reserve_review(ai_gate, review_next_reserves(c, sl, who, now_iso()))
 
     def with_sources(x):
         # the provider's attribution for this option's journeys, to be shown straight after its figures and the AI's note
