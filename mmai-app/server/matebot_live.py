@@ -28,6 +28,15 @@ Nothing is searched for beyond the stored candidates, and never more than three 
 Nothing from the journey provider is written to the database, kept between requests or logged. The only record is a count
 of provider requests, made before they leave, so the shared daily and monthly allowance (one key, both bots) holds. The
 group's stored apartments, order, current offer, saved AI review and decline history are not changed by a check.
+
+Because nothing is saved, no stored view can say that travel passed. Two things follow (GP6(d), T6, H28(d)):
+  * the page's check says where the apartment CURRENTLY OFFERED stands (current_offer): failed, confirmed, or provisional
+    with the reason. Confirmed needs a pass that covers every person in the group and the AI's accepted assessment.
+  * a staff action that presents an apartment to the group (offering it, drafting the introduction for it, marking the
+    group introduced, acknowledging a changed offer) checks that one apartment again at that moment (action_check). A known failure refuses the action. An
+    unknown result does not: it is carried back to the page, once, as provisional, never as a pass.
+Every result states who it covers (_coverage): a person with no destination was not tested, and a pass over the people who
+were measured is never worded as the whole group's.
 """
 from __future__ import annotations
 
@@ -118,11 +127,12 @@ OPEN_POINT_PRACTICAL = "an essential practical need recorded for a member is not
 
 
 REASON_PLAIN = {mt.TRAVEL_LIMIT_MISSING: "a member has not stated a maximum travel time",
-                mt.TRAVEL_LIMITS_DIFFER: "the members' maximum travel times differ",
+                mt.TRAVEL_MAJORITY_TIED: ("members with the same journey time are tied for a place among the closest and have "
+                                          "different maximum travel times, and the result depends on which of them is counted"),
                 mt.TRAVEL_MODE_NOT_ANSWERED: "a member has not said how they would travel, so no journey is selected for them",
                 ht.TRAVEL_NEEDS_CONFIRMATION_INCOMPLETE_ESTIMATES: "a journey could not be measured",
                 ht.FASTEST_MODE_UNCONFIRMED: "a member's fastest accepted way of travelling is not confirmed",
-                ht.LONG_JOURNEY_WARNING: "a member has a long journey, over double the stated time"}
+                ht.LONG_JOURNEY_WARNING: "a member has a long journey, over double their own stated time or over the group's doubled limit"}
 OWN_PLAIN = {mt.WITHIN_OWN_LIMIT: "within their own stated time ({t})", mt.OVER_OWN_LIMIT: "over their own stated time ({t})",
              mt.NOT_MEASURED: "not known against their own stated time ({t})", mt.NO_STATED_LIMIT: "no maximum travel time stated"}
 
@@ -130,12 +140,20 @@ OWN_PLAIN = {mt.WITHIN_OWN_LIMIT: "within their own stated time ({t})", mt.OVER_
 def _result_plain(travel: dict) -> str:
     f = travel["facts"]
     m = f.get("majority") or {}
-    if travel["status"] == mt.PASS:
-        return (f"Within the doubled limit: the closest {m.get('size')} of the people with a known destination average "
-                f"{m.get('average_display')} minutes (rounded) against {f['ceiling_minutes']} minutes, twice the stated {f['stated_limit_minutes']}.")
-    if travel["status"] == mt.EXCEEDS_CEILING:
-        return (f"Over the doubled limit: the closest {m.get('size')} of the people with a known destination average "
-                f"{m.get('average_display')} minutes (rounded) against {f['ceiling_minutes']} minutes, twice the stated {f['stated_limit_minutes']}.")
+    if travel["status"] in (mt.PASS, mt.EXCEEDS_CEILING):
+        side = "Within" if travel["status"] == mt.PASS else "Over"
+        lead = f"the closest {m.get('size')} of the people with a known destination average {m.get('average_display')} minutes (rounded) against "
+        tied = ("" if m.get("membership_determined") else
+                " People with the same journey time are tied for a place among the closest; the result is the same whichever of them is counted.")
+        if f.get("same_stated_limit"):
+            return f"{side} the doubled limit: {lead}{f['ceiling_minutes']} minutes, twice the stated {f['stated_limit_minutes']}.{tied}"
+        if m.get("figure_determined"):
+            times = (" (" + ", ".join(str(x) for x in m["stated_limits_minutes"]) + " minutes)") if m.get("stated_limits_minutes") else ""
+            return (f"{side} the doubled limit: {lead}{m['ceiling_display']} minutes, twice the average of those same people's "
+                    f"stated maximum travel times{times}.{tied}")
+        lo, hi = m["ceiling_range_display"]
+        return (f"{side} the doubled limit: {lead}a figure between {lo} and {hi} minutes, twice the average of the counted people's "
+                f"stated maximum travel times.{tied}")
     if travel["status"] == mt.NO_DESTINATIONS:
         return "No travel result: no member has a place of study or work recorded."
     return "Travel time needs confirmation. This is not a pass and not a failure."
@@ -167,8 +185,91 @@ def _journey_lines(travel: dict, people: list) -> list:
             text += "; long journey, discuss with the group"
         if f.get("in_majority"):
             text += " (one of the closest majority)"
+        elif f.get("tied_for_majority"):
+            text += " (tied for a place in the closest majority)"
         lines.append(f"{who}: {text}")
     return lines
+
+
+def _who(people_by_pos: dict, positions) -> str:
+    names = [f"Person {i} ({people_by_pos[i]['name']})" if people_by_pos[i].get("name") else f"Person {i}" for i in positions]
+    return names[0] if len(names) == 1 else ", ".join(names[:-1]) + " and " + names[-1]
+
+
+def _coverage(travel: dict, people: list) -> dict:
+    """Who a travel result covers, in numbers and one plain sentence. A result is worked out over the people with a
+    destination. Anyone without one was not tested, so a result that leaves someone out is never the whole group's:
+    `complete` is true only when every person in the group had a journey fully measured."""
+    f = travel["facts"]
+    by_pos = {p["position"]: p for p in people}
+    total, measured = len(people), len(f["measured"])
+    in_part = len(f["partial"])
+    not_measured = len(f["unmeasured"]) + len(f["no_mode_answer"])
+    never_asked = [i for i in f["no_destination"] if by_pos[i]["no_destination_why"] == "party_member"]
+    none_given = [i for i in f["no_destination"] if i not in never_asked]
+    complete = total > 0 and measured == total
+    if total == 1:
+        parts = ["The journey was measured for the one person in this group." if complete else "No journey was fully measured for the one person in this group."]
+    else:
+        parts = [f"Journeys were measured for all {total} people in this group." if complete
+                 else f"Journeys were measured for {measured} of the {total} people in this group."]
+    if in_part:
+        parts.append(f"{in_part} more could be measured only in part.")
+    if not_measured:
+        parts.append(f"{not_measured} {'has' if not_measured == 1 else 'have'} a destination that could not be measured to.")
+    if never_asked:
+        parts.append(f"{_who(by_pos, never_asked)} joined with another member and {'was' if len(never_asked) == 1 else 'were'} "
+                     f"never asked for a place of study or work, so their travel is unverified.")
+    if none_given:
+        parts.append(f"{_who(by_pos, none_given)} gave no place of study or work, so their travel is unverified.")
+    if not complete and travel["status"] in (mt.PASS, mt.EXCEEDS_CEILING):
+        parts.append("The result is for the people measured, not for the whole group.")
+    return {"people": total, "measured": measured, "measured_in_part": in_part, "not_measured": not_measured,
+            "destination_never_asked": never_asked, "no_destination_given": none_given, "complete": complete,
+            "plain": " ".join(parts)}
+
+
+OFFER_FAILED, OFFER_CONFIRMED, OFFER_PROVISIONAL, OFFER_NONE = "failed", "confirmed", "provisional", "none"
+PROVISIONAL_TAIL = " This is provisional: not a confirmed pass and not a failure."
+
+
+def _current_offer(apartment_id, shortlist: list, failed: list, ai_gate: dict) -> dict:
+    """Where the apartment currently offered stands after this check. Confirmed only for a pass that covers every person
+    AND carries the AI's accepted assessment; a failure is a failure; everything else is provisional and says why."""
+    if apartment_id is None:
+        return {"apartment_id": None, "state": OFFER_NONE, "plain": "This group has no apartment currently offered."}
+    aid = int(apartment_id)
+    hit = next((x for x in failed if x["apartment_id"] == aid), None)
+    if hit:
+        return {"apartment_id": aid, "state": OFFER_FAILED, "why": "failed",
+                "plain": "The apartment currently offered failed the travel check. " + hit["result_plain"] + " " + hit["coverage"]["plain"]
+                         + " Offer another apartment from the group's list before introducing the group or sharing the introduction."}
+    hit = next((x for x in shortlist if x["apartment_id"] == aid), None)
+    if not hit:
+        return {"apartment_id": aid, "state": OFFER_PROVISIONAL, "why": "not_checked",
+                "plain": "Travel was not checked for the apartment currently offered: it is not one this group can be offered now." + PROVISIONAL_TAIL}
+    if hit["result"] != mt.PASS:
+        why = "no_destinations" if hit["result"] == mt.NO_DESTINATIONS else "needs_confirmation"
+        return {"apartment_id": aid, "state": OFFER_PROVISIONAL, "why": why,
+                "plain": "For the apartment currently offered: " + hit["result_plain"] + " " + hit["coverage"]["plain"] + PROVISIONAL_TAIL}
+    if not hit["coverage"]["complete"]:
+        return {"apartment_id": aid, "state": OFFER_PROVISIONAL, "why": "part_of_group",
+                "plain": "For the apartment currently offered: " + hit["result_plain"] + " " + hit["coverage"]["plain"] + PROVISIONAL_TAIL}
+    if ai_gate.get("held") is not False:
+        return {"apartment_id": aid, "state": OFFER_PROVISIONAL, "why": "ai_assessment",
+                "plain": "For the apartment currently offered: " + hit["result_plain"] + " " + hit["coverage"]["plain"]
+                         + " The AI's assessment of this result is not in place, so it is not confirmed." + PROVISIONAL_TAIL}
+    return {"apartment_id": aid, "state": OFFER_CONFIRMED, "why": None,
+            "plain": "The apartment currently offered passed the travel check for every person in the group, and the AI has assessed the result. "
+                     + hit["result_plain"]}
+
+
+def unchecked_offer(live: dict) -> dict:
+    """What a stored view can say about travel for the apartment currently offered: nothing. Travel is never saved, so until
+    the page has run a check the offer is provisional, whatever the saved review says."""
+    why = ("Travel to campus or work has not been checked for the apartment currently offered." if live.get("enabled")
+           else (live.get("plain") or routing.LIVE_OFF) + " Travel to campus or work has not been checked for the apartment currently offered.")
+    return {"apartment_id": None, "state": OFFER_PROVISIONAL, "why": "not_checked", "plain": why + PROVISIONAL_TAIL}
 
 
 def state(is_test: bool = False) -> dict:
@@ -288,27 +389,15 @@ def _person_out(p: dict) -> dict:
             "no_destination": NO_DESTINATION_WHY.get(p["no_destination_why"])}
 
 
-def travel_check(c, group: dict, staff: str, *, now: Optional[datetime] = None, post=None) -> dict:
-    """One live travel check for a group. `group` is the staff view of the group (app._group_out): its stored apartments in
-    order, with the role, current-offer, leased, declined and practical-need facts the page already shows."""
-    gid = int(group["id"])
-    if not routing.live_enabled():
-        return _refusal("off", routing.LIVE_OFF)
-    if not routing.live_allowed_for(_is_test(c, gid)):
-        return _refusal("test_data", routing.LIVE_TEST_OFF)   # before the lock, the allowance and any request
-    if group.get("status") in ("Leased", "Dissolved"):
-        return _refusal("closed", "This group is closed, so travel was not checked.")
-    apts = [a for a in group.get("apartments") or [] if a.get("shortlist_role") != mt.ROLE_UNAVAILABLE]
-    if not apts:
-        return _refusal("no_options", "There are no apartments to check travel for yet.")
-    # the stored, non-travel order, with the apartment currently offered first (it always holds a place)
-    order = [a for a in apts if a.get("is_current")] + [a for a in apts if not a.get("is_current")]
-    by_id = {int(a["apartment_id"]): a for a in order}
-    ids = list(by_id)
-    first_three = set(ids[:mt.MAX_SHORTLIST])
-    people = group_people(c, gid)
-    if not (ht.MIN_PEOPLE <= len(people) <= ht.MAX_PEOPLE):
-        return _refusal("size", "Travel was not checked: the group does not have between one and seven people.")
+def _people_key(people: list) -> tuple:
+    return tuple((p["enquiry_id"], p["position"], p["stated_time"], tuple(p["modes"]), p["destination_kind"], p["destination"]) for p in people)
+
+
+def _checked(c, gid: int, ids: list, people: list, staff: str, now, post, work):
+    """The part every live check shares, under the one travel lock: the shared allowance, the provider adapter, the count
+    of requests recorded before they leave, and the refusal when the group changed while the provider was being asked.
+    `work(est)` does the measuring and the arithmetic. Returns (what work returned, est, check, token) or a refusal dict.
+    The token names the group and its people exactly as they were read for this check (see still_current)."""
     when = (now or datetime.now(timezone.utc))
     when = (when.replace(tzinfo=timezone.utc) if when.tzinfo is None else when).astimezone(timezone.utc)
     if not hs._travel_lock.acquire(timeout=10):
@@ -331,17 +420,51 @@ def travel_check(c, group: dict, staff: str, *, now: Optional[datetime] = None, 
             # BEFORE the first request of each stage leaves. A count of our own requests and nothing else.
             audit(c, who, TRAVEL_CHECK_ACTION, "group", gid, j({"requests": requests, "not_requested": est.skipped}))
         est.before_send = record
-
-        def assess(aid):
-            est.prepare([aid])   # a replacement is measured only when it is reached; the first three were measured together
-            return mt.assess_group([mt.Member(p["position"], p["stated_time"], p["modes"], est.journeys(aid, p)) for p in people])
-        est.prepare(ids[:mt.MAX_SHORTLIST])
-        res = mt.travel_last(ids, assess)
+        out = work(est)
         check = est.display()
-        if _signature(c, gid) != before:
+        if _signature(c, gid) != before or _people_key(group_people(c, gid)) != _people_key(people):
             return _refusal("replaced", "The group changed while travel was being checked. Reload the group and check travel again.")
+        return out, est, check, (before, _people_key(people))
     finally:
         hs._travel_lock.release()
+
+
+def _assessor(est, people: list):
+    def assess(aid):
+        est.prepare([aid])   # a replacement is measured only when it is reached; the first three were measured together
+        return mt.assess_group([mt.Member(p["position"], p["stated_time"], p["modes"], est.journeys(aid, p)) for p in people])
+    return assess
+
+
+def travel_check(c, group: dict, staff: str, *, now: Optional[datetime] = None, post=None) -> dict:
+    """One live travel check for a group. `group` is the staff view of the group (app._group_out): its stored apartments in
+    order, with the role, current-offer, leased, declined and practical-need facts the page already shows."""
+    gid = int(group["id"])
+    if not routing.live_enabled():
+        return _refusal("off", routing.LIVE_OFF)
+    if not routing.live_allowed_for(_is_test(c, gid)):
+        return _refusal("test_data", routing.LIVE_TEST_OFF)   # before the lock, the allowance and any request
+    if group.get("status") in ("Leased", "Dissolved"):
+        return _refusal("closed", "This group is closed, so travel was not checked.")
+    apts = [a for a in group.get("apartments") or [] if a.get("shortlist_role") != mt.ROLE_UNAVAILABLE]
+    if not apts:
+        return _refusal("no_options", "There are no apartments to check travel for yet.")
+    # the stored, non-travel order, with the apartment currently offered first (it always holds a place)
+    order = [a for a in apts if a.get("is_current")] + [a for a in apts if not a.get("is_current")]
+    by_id = {int(a["apartment_id"]): a for a in order}
+    ids = list(by_id)
+    first_three = set(ids[:mt.MAX_SHORTLIST])
+    people = group_people(c, gid)
+    if not (ht.MIN_PEOPLE <= len(people) <= ht.MAX_PEOPLE):
+        return _refusal("size", "Travel was not checked: the group does not have between one and seven people.")
+
+    def work(est):
+        est.prepare(ids[:mt.MAX_SHORTLIST])
+        return mt.travel_last(ids, _assessor(est, people))
+    got = _checked(c, gid, ids, people, staff, now, post, work)
+    if isinstance(got, dict):
+        return got
+    res, est, check, _token = got
 
     def option(aid, r, role):
         a, travel = by_id[aid], r.as_dict()
@@ -353,6 +476,7 @@ def travel_check(c, group: dict, staff: str, *, now: Optional[datetime] = None, 
                 "reasons_plain": [REASON_PLAIN[x] for x in travel["reasons"] if x in REASON_PLAIN],
                 "journey_lines": _journey_lines(travel, people),
                 "measured": any(x["status"] in (mt.MEASURED, mt.PARTIAL) for x in travel["facts"]["people"]),
+                "coverage": _coverage(travel, people),
                 "travel_sources": est.sources_for(aid)}
     shortlist = [option(aid, r, "shortlist") for aid, r in res["shortlist"]]
     failed = [option(aid, r, "failed") for aid, r in res["failed"]]
@@ -366,9 +490,81 @@ def travel_check(c, group: dict, staff: str, *, now: Optional[datetime] = None, 
     notes = {o["apartment_id"]: o for o in reply.get("options") or []} if reply.get("state") == "ready" else {}
     for x in shortlist:
         x["ai_travel"] = notes.get(x["apartment_id"])
-    unruled = any(x["travel"]["facts"].get("unruled") for x in shortlist + failed)
+    limit_note = next((x["travel"]["facts"].get(key) for key in ("limit_note", "tie_note") for x in shortlist + failed
+                       if x["travel"]["facts"].get(key)), None)
     return {"ok": True, "state": "checked", "saved": False, "plain": TRAVEL_NOT_SAVED, "group_id": gid, "check": check,
             "people": [_person_out(p) for p in people], "shortlist_max": mt.MAX_SHORTLIST,
             "ai_reply": reply, "ai_gate": ai_gate, "shortlist": shortlist, "failed": failed,
+            "current_offer": _current_offer(group.get("apartment_id"), shortlist, failed, ai_gate),
             "not_checked": [{"apartment_id": aid, "address": by_id[aid].get("address")} for aid in res["not_checked"]],
-            "unruled_note": mt.UNRULED_NOTE if unruled else None}
+            "limit_note": limit_note}
+
+
+# ------------------------------------------------------------------------------- the check a staff action relies on
+ACTION_OFFER, ACTION_DRAFT, ACTION_INTRODUCE, ACTION_ACKNOWLEDGE = "offer", "draft", "introduce", "acknowledge"
+PASSED, PASSED_PART, FAILED, NEEDS_CONFIRMATION, NO_DESTINATIONS, NOT_CHECKED, CHANGED = (
+    "passed", "passed_for_part_of_group", "failed", "needs_confirmation", "no_destinations", "not_checked", "changed")
+_REFUSED_LEAD = {ACTION_OFFER: "Not offered. This apartment failed the travel check just now, so it cannot be offered to this group.",
+                 ACTION_DRAFT: "No introduction was drafted. The apartment currently offered failed the travel check just now.",
+                 ACTION_INTRODUCE: "Not marked introduced. The apartment currently offered failed the travel check just now.",
+                 ACTION_ACKNOWLEDGE: "Not acknowledged. The apartment currently offered failed the travel check just now."}
+_REFUSED_TAIL = {ACTION_OFFER: "Choose another apartment from the group's list.",
+                 ACTION_DRAFT: "Offer another apartment from the group's list, then draft the introduction for it.",
+                 ACTION_INTRODUCE: ("Offer another apartment from the group's list, then draft the introduction for it. If the introduction "
+                                    "has already gone out, tell the group the apartment is being changed."),
+                 ACTION_ACKNOWLEDGE: "Offer another apartment from the group's list."}
+_CHANGED_LEAD = {ACTION_OFFER: "Not offered.", ACTION_DRAFT: "No introduction was drafted.", ACTION_INTRODUCE: "Not marked introduced.", ACTION_ACKNOWLEDGE: "Not acknowledged."}
+ACTION_NOT_SAVED = "The journey times are not saved; this was the journey calculation only, and the AI's assessment is shown with the travel check on the group page."
+
+
+def _action_out(outcome: str, plain: str, *, refuse: bool = False, state_: str = "checked", coverage=None, token=None) -> dict:
+    return {"outcome": outcome, "refuse": refuse, "state": state_, "saved": False, "plain": plain, "coverage": coverage, "token": token}
+
+
+def action_check(c, gid: int, apartment_id: int, action: str, staff: str, *, now: Optional[datetime] = None, post=None) -> dict:
+    """The travel result for ONE apartment at the moment a staff action is about to present it to the group. The same
+    people, destinations, travel choices, arithmetic, lock, allowance and request count as the page's check; one apartment,
+    no replacement walk and no AI call. Nothing is saved.
+
+    `refuse` is true for a known failure, and when the group changed while the provider was being asked. Every other
+    outcome lets the action go on and is worded as what it is: a pass only when every person was measured, a pass for part
+    of the group, needs confirmation, no destinations, or not checked (switched off, a test record, the allowance used,
+    another check running). None of those is ever reported as a failure, and only the first as a pass.
+    `token` is handed to still_current inside the action's own guarded step."""
+    if action not in _REFUSED_LEAD:
+        raise ValueError("unknown staff action")
+    gid, aid = int(gid), int(apartment_id)
+    not_checked = lambda r: _action_out(NOT_CHECKED, "Travel was not checked for this action. " + r["plain"] + PROVISIONAL_TAIL, state_=r["state"])
+    if not routing.live_enabled():
+        return not_checked(_refusal("off", routing.LIVE_OFF))
+    if not routing.live_allowed_for(_is_test(c, gid)):
+        return not_checked(_refusal("test_data", routing.LIVE_TEST_OFF))
+    people = group_people(c, gid)
+    if not (ht.MIN_PEOPLE <= len(people) <= ht.MAX_PEOPLE):
+        return not_checked(_refusal("size", "The group does not have between one and seven people."))
+    got = _checked(c, gid, [aid], people, staff, now, post, lambda est: _assessor(est, people)(aid))
+    if isinstance(got, dict):
+        if got["state"] == "replaced":
+            return _action_out(CHANGED, _CHANGED_LEAD[action] + " The group changed while travel was being checked. Reload the group and try again.",
+                               refuse=True, state_="replaced")
+        return not_checked(got)
+    result, _est, _check, token = got
+    travel = result.as_dict()
+    coverage = _coverage(travel, people)
+    said = _result_plain(travel) + " " + coverage["plain"]
+    if result.status == mt.EXCEEDS_CEILING:
+        return _action_out(FAILED, f"{_REFUSED_LEAD[action]} {said} {_REFUSED_TAIL[action]} Nothing was changed.",
+                           refuse=True, coverage=coverage, token=token)
+    lead = "Travel was checked for this action. "
+    if result.status == mt.PASS and coverage["complete"]:
+        return _action_out(PASSED, lead + said + " " + ACTION_NOT_SAVED, coverage=coverage, token=token)
+    outcome = (PASSED_PART if result.status == mt.PASS else NO_DESTINATIONS if result.status == mt.NO_DESTINATIONS else NEEDS_CONFIRMATION)
+    return _action_out(outcome, lead + said + PROVISIONAL_TAIL + " " + ACTION_NOT_SAVED, coverage=coverage, token=token)
+
+
+def still_current(c, gid: int, token) -> bool:
+    """Inside the action's own guarded step: is the group (status, current offer, stored apartments, members) and are its
+    people's travel answers exactly what the check at this action read? No token (nothing was measured) is always current."""
+    if token is None:
+        return True
+    return (_signature(c, int(gid)), _people_key(group_people(c, int(gid)))) == tuple(token)

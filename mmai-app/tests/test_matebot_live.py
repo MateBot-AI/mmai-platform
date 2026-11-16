@@ -2,8 +2,9 @@
 
 Synthetic journey replies and a stand-in for the model; no network. Covers: off by default; PEOPLE are counted, not
 enquiries, each once, with only the destination that was actually supplied (a verified place of study) and only the travel
-choices given; travel last for at most three, a failure replaced by the next stored candidate; differing or missing stated
-times are never combined; the request allowance is shared with HomeBot and recorded as a count before anything leaves;
+choices given; travel last for at most three, a failure replaced by the next stored candidate; differing stated times
+use the closest majority's own average and a missing one is "needs confirmation"; every result says who it covers and the
+apartment currently offered is confirmed only by a pass for everyone with the AI's accepted assessment; the request allowance is shared with HomeBot and recorded as a count before anything leaves;
 nothing from the journey provider or the model is stored; and a shortlist is "AI-assessed" only when the saved review is
 current, covered every apartment shown and this check's assessment was accepted.
 """
@@ -328,8 +329,16 @@ def test_the_first_three_are_checked_together_and_nothing_is_stored(group):
         assert x["journey_lines"][0].endswith("20 minutes (rounded) by Public transport; within their own stated time (30 minutes) (one of the closest majority)")
         assert x["travel_sources"] == {"links": [{"title": SOURCE["title"], "url": SOURCE["url"]}], "walking_warning": None}
         assert x["ai_travel"] is None
-    assert r["shortlist"][0]["is_current"] is True and r["unruled_note"] is None
+    assert r["shortlist"][0]["is_current"] is True and r["limit_note"] is None
     assert r["ai_reply"]["state"] == "off" and r["ai_gate"]["held"] is True and r["ai_gate"]["reason"] == "off"
+    # who the result covers, and where the apartment currently offered stands: a pass for both people, but the AI's
+    # assessment is not in place, so it is provisional and never "confirmed"
+    assert all(x["coverage"] == {"people": 2, "measured": 2, "measured_in_part": 0, "not_measured": 0, "destination_never_asked": [],
+                                 "no_destination_given": [], "complete": True, "plain": "Journeys were measured for all 2 people in this group."}
+               for x in r["shortlist"])
+    offer = r["current_offer"]
+    assert (offer["apartment_id"], offer["state"], offer["why"]) == (ids[0], ml.OFFER_PROVISIONAL, "ai_assessment")
+    assert offer["plain"].endswith("The AI's assessment of this result is not in place, so it is not confirmed." + ml.PROVISIONAL_TAIL)
     # one count-only record, written before the request left; no other table changed
     (rec,) = _audits(db)
     assert json.loads(rec["detail"]) == {"requests": 3, "not_requested": 0} and rec["entity"] == "group" and rec["entity_id"] == str(gid)
@@ -366,21 +375,123 @@ def test_a_failed_request_is_neither_a_pass_nor_a_failure(group):
     assert "Secret Street" not in json.dumps(r) and r["ai_reply"]["state"] == "off"
 
 
-# ---------------------------------------------------------------------------------------- the part that is not ruled
-@pytest.mark.parametrize("second,why", [("45 minutes", "the members' maximum travel times differ"), (None, "a member has not stated a maximum travel time")])
-def test_differing_or_missing_times_are_never_combined_and_never_fail_an_apartment(group, second, why):
+# ------------------------------------------------------------------------ differing and missing stated times (H28(j))
+@pytest.mark.parametrize("minutes,passes", [(50, True), (60, True), (61, False)])
+def test_differing_times_use_the_closest_majoritys_own_average_and_the_boundary_passes(group, minutes, passes):
     db, gid, ids = group
     a, b = _members(db, gid)
     _answer(db, gid, travel="15 minutes", only=[a])
-    _answer(db, gid, travel=second, only=[b])
+    _answer(db, gid, travel="45 minutes", only=[b])                                     # average 30, doubled 60
+    r = _check(db, gid, Provider(minutes=minutes))
+    assert r["limit_note"] is None
+    x = (r["shortlist"] if passes else r["failed"])[0]
+    assert len(r["shortlist"]) == (3 if passes else 0) and len(r["failed"]) == (0 if passes else 6)
+    assert x["result"] == (mt.PASS if passes else mt.EXCEEDS_CEILING)
+    assert x["result_plain"] == (f"{'Within' if passes else 'Over'} the doubled limit: the closest 2 of the people with a known destination average "
+                                 f"{minutes}.0 minutes (rounded) against 60.0 minutes, twice the average of those same people's stated maximum "
+                                 f"travel times (15, 45 minutes).")
+    m = x["travel"]["facts"]["majority"]
+    assert m["stated_limits_minutes"] == [15, 45] and m["limit_total_minutes"] == 60 and x["travel"]["facts"]["ceiling_minutes"] is None
+    assert x["journey_lines"][0].endswith(f"{minutes} minutes (rounded) by Public transport; over their own stated time (15 minutes); "
+                                          "long journey, discuss with the group (one of the closest majority)")
+    # the second person is over the group's doubled figure (60) only at 61 minutes: warned about then, never excluded by it
+    assert x["journey_lines"][1].endswith(f"{'over' if minutes > 45 else 'within'} their own stated time (45 minutes)"
+                                          + ("; long journey, discuss with the group" if minutes > 60 else "") + " (one of the closest majority)")
+    assert x["reasons_plain"] == ["a member has a long journey, over double their own stated time or over the group's doubled limit"]
+    assert r["current_offer"]["state"] == (ml.OFFER_PROVISIONAL if passes else ml.OFFER_FAILED)
+
+
+def test_a_missing_time_is_needs_confirmation_and_never_fails_an_apartment(group):
+    db, gid, ids = group
+    a, b = _members(db, gid)
+    _answer(db, gid, travel="15 minutes", only=[a])
+    _answer(db, gid, travel=None, only=[b])
     r = _check(db, gid, Provider(minutes=100))                                           # far over anyone's time, yet not a failure
-    assert [x["apartment_id"] for x in r["shortlist"]] == ids[:3] and r["failed"] == [] and r["unruled_note"] == mt.UNRULED_NOTE
+    assert [x["apartment_id"] for x in r["shortlist"]] == ids[:3] and r["failed"] == [] and r["limit_note"] == mt.LIMIT_MISSING_NOTE
     x = r["shortlist"][0]
-    assert x["result"] == mt.NEEDS_CONFIRMATION and x["reasons_plain"] == [why]
+    assert x["result"] == mt.NEEDS_CONFIRMATION and x["reasons_plain"] == ["a member has not stated a maximum travel time"]
+    assert x["result_plain"] == "Travel time needs confirmation. This is not a pass and not a failure."
     f = x["travel"]["facts"]
     assert f["majority"] is None and f["ceiling_minutes"] is None and f["stated_limit_minutes"] is None and f["within_ceiling"] is None
     assert x["journey_lines"][0].endswith("100 minutes (rounded) by Public transport; over their own stated time (15 minutes)")
-    assert x["journey_lines"][1].endswith("over their own stated time (45 minutes)" if second else "no maximum travel time stated")
+    assert x["journey_lines"][1].endswith("no maximum travel time stated")
+    assert (r["current_offer"]["state"], r["current_offer"]["why"]) == (ml.OFFER_PROVISIONAL, "needs_confirmation")
+    assert "unruled_note" not in r
+
+
+def _people(*names):
+    return [{"position": i + 1, "name": n, "stated_time": None, "no_destination_why": None, "unmeasurable_why": None} for i, n in enumerate(names)]
+
+
+def test_people_level_for_a_place_are_named_as_tied_and_never_as_chosen():
+    """The wording of a tie, from the arithmetic's own figures (three people; the group fixture has two)."""
+    M = lambda i, t, v: mt.Member(i, t, (PT,), {PT: v})   # noqa: E731
+    people = _people("Ann", "Ben", "Cal")
+    # the result would differ with who is counted: needs confirmation, with the reason in plain words
+    t = mt.assess_group([M(1, "15 minutes", 10), M(2, "5 minutes", 50), M(3, "60+ minutes", 50)]).as_dict()
+    assert ml._result_plain(t) == "Travel time needs confirmation. This is not a pass and not a failure."
+    assert [ml.REASON_PLAIN[x] for x in t["reasons"]] == ["members with the same journey time are tied for a place among the closest and have "
+                                                          "different maximum travel times, and the result depends on which of them is counted"]
+    lines = ml._journey_lines(t, people)
+    assert not any("closest majority" in x for x in lines)                               # nobody is shown as chosen, or as left out
+    # the same result whoever is counted: reported, with the doubled figure as its range and the tied people named as tied
+    t = mt.assess_group([M(1, "30 minutes", 10), M(2, "15 minutes", 20), M(3, "45 minutes", 20)]).as_dict()
+    assert ml._result_plain(t) == ("Within the doubled limit: the closest 2 of the people with a known destination average 15.0 minutes (rounded) "
+                                   "against a figure between 45.0 and 75.0 minutes, twice the average of the counted people's stated maximum "
+                                   "travel times. People with the same journey time are tied for a place among the closest; the result is the "
+                                   "same whichever of them is counted.")
+    lines = ml._journey_lines(t, people)
+    assert lines[0].endswith("(one of the closest majority)") and all(x.endswith("(tied for a place in the closest majority)") for x in lines[1:])
+    # one shared stated time and level journeys: the old wording, with the tie said
+    t = mt.assess_group([M(1, "30 minutes", 10), M(2, "30 minutes", 20), M(3, "30 minutes", 20)]).as_dict()
+    assert ml._result_plain(t).startswith("Within the doubled limit: the closest 2 of the people with a known destination average 15.0 minutes "
+                                          "(rounded) against 60 minutes, twice the stated 30. People with the same journey time are tied")
+
+
+# ------------------------------------------------------------------------- who a result covers; the current offer
+def test_a_result_says_who_it_covers_and_a_pass_for_part_of_the_group_is_not_the_groups(group):
+    db, gid, ids = group
+    a, b = _members(db, gid)
+    _answer(db, gid)
+    # a couple: the second person was never asked for a destination. Their travel is unverified, and the page says so.
+    db.execute("UPDATE enquiries SET party='Couple', party_size=2 WHERE id=?", (a,))
+    db.execute("INSERT INTO party_members(enquiry_id, name, email) VALUES (?, 'Pat Partner', 'pat@example.com')", (a,))
+    db.commit()
+    r = _check(db, gid, Provider(minutes=20))
+    x = r["shortlist"][0]
+    cov = x["coverage"]
+    assert x["result"] == mt.PASS and (cov["people"], cov["measured"], cov["complete"], cov["destination_never_asked"], cov["no_destination_given"]) == (3, 2, False, [2], [])
+    assert cov["plain"] == ("Journeys were measured for 2 of the 3 people in this group. Person 2 (Pat Partner) joined with another member and "
+                            "was never asked for a place of study or work, so their travel is unverified. The result is for the people "
+                            "measured, not for the whole group.")
+    assert (r["current_offer"]["state"], r["current_offer"]["why"]) == (ml.OFFER_PROVISIONAL, "part_of_group")
+    # someone who gave no place of study or work: said differently from someone never asked
+    db.execute("UPDATE enquiries SET doing='Other', work=NULL WHERE id=?", (b,))
+    db.commit()
+    cov = _check(db, gid, Provider(minutes=20))["shortlist"][0]["coverage"]
+    assert (cov["measured"], cov["destination_never_asked"], cov["no_destination_given"]) == (1, [2], [3])
+    assert "gave no place of study or work, so their travel is unverified." in cov["plain"] and cov["plain"].startswith("Journeys were measured for 1 of the 3 people")
+    # a failure is still a failure for the people measured, and says it is not the whole group's result
+    r = _check(db, gid, Provider(minutes=100))
+    assert r["current_offer"]["state"] == ml.OFFER_FAILED and "not for the whole group" in r["current_offer"]["plain"]
+    assert r["current_offer"]["plain"].startswith("The apartment currently offered failed the travel check. Over the doubled limit")
+    # nothing measurable at all: no result, and not a pass
+    db.execute("UPDATE enquiries SET doing='Other', work=NULL WHERE id=?", (a,))
+    db.commit()
+    r = _check(db, gid, Provider(minutes=20))
+    assert r["shortlist"][0]["result"] == mt.NO_DESTINATIONS and (r["current_offer"]["state"], r["current_offer"]["why"]) == (ml.OFFER_PROVISIONAL, "no_destinations")
+
+
+def test_the_stored_view_never_claims_a_travel_result(group, monkeypatch):
+    db, gid, ids = group
+    out = _view(db, gid)
+    assert out["travel_offer"] == {"apartment_id": None, "state": ml.OFFER_PROVISIONAL, "why": "not_checked",
+                                   "plain": "Travel to campus or work has not been checked for the apartment currently offered." + ml.PROVISIONAL_TAIL}
+    monkeypatch.delenv(routing.AGENT_TOOLS_ENV, raising=False)
+    off = _view(db, gid)["travel_offer"]
+    assert off["state"] == ml.OFFER_PROVISIONAL and off["plain"].startswith(routing.LIVE_OFF) and off["plain"].endswith(ml.PROVISIONAL_TAIL)
+    assert ml._current_offer(None, [], [], {})["state"] == ml.OFFER_NONE
+    assert ml._current_offer(ids[5], [], [], {"held": False}) ["why"] == "not_checked"
 
 
 def test_no_travel_choice_answered_means_no_request_and_no_journey_selected(group):
@@ -490,6 +601,10 @@ def test_a_shortlist_is_ai_assessed_only_with_a_current_review_that_covered_it_a
     before = _snapshot(db)
     r = _check(db, gid, Provider(), ready=True)
     assert r["ai_gate"] == {"state": "assessed", "held": False, "plain": mr.ASSESSED_TEXT}
+    # only now is the apartment currently offered confirmed on travel: a pass for every person, and the AI's assessment in place
+    assert (r["current_offer"]["apartment_id"], r["current_offer"]["state"], r["current_offer"]["why"]) == (ids[0], ml.OFFER_CONFIRMED, None)
+    assert r["current_offer"]["plain"].startswith("The apartment currently offered passed the travel check for every person in the group, and the AI has assessed the result.")
+    assert _check(db, gid, Provider(), ready=False)["current_offer"]["state"] == ml.OFFER_PROVISIONAL      # the same journeys, held: provisional
     # a replacement the saved review never saw is not AI-assessed by this check's travel assessment alone
     r = _check(db, gid, Provider(slow={"2 Synthetic Road": 100}), ready=True)
     assert [x["apartment_id"] for x in r["shortlist"]] == [ids[0], ids[2], ids[3]] and r["shortlist"][2]["replacement"] is True
@@ -532,7 +647,7 @@ def test_a_travel_choice_answer_is_evidence_once_given_so_an_edit_makes_the_save
 
 # ------------------------------------------------------------------------------------------------------ the page
 def test_the_group_page_runs_the_check_on_open_labels_candidates_provisional_and_keeps_nothing():
-    panel = STAFF_JS.split("function groupTravelPanel(box, g) {", 1)[1].split("\n  }\n", 1)[0]
+    panel = STAFF_JS.split("function groupTravelPanel(box, g, onChange) {", 1)[1].split("\n  }\n", 1)[0]
     assert "\n    if (live.auto && !kept.tried) run(false);" in panel                         # automatic on open, not staff selection
     assert "if (kept.busy) return;" in panel and "kept.busy = true; kept.tried = true;" in panel   # one request at a time, one automatic attempt
     assert panel.count("run(false)") == 1 and panel.count("api.post(") == 1
@@ -544,10 +659,11 @@ def test_the_group_page_runs_the_check_on_open_labels_candidates_provisional_and
     assert "GMAPS_ATTR" in view and "GMAPS_TEXT" in view and 'data-role="mb-walk-warning"' in view
     assert "'Provisional shortlist (not confirmed)'" in view and "gate.held ? 'Held.' : 'AI-assessed.'" in view
     assert "const provisional = gate.held !== false;" in view                             # anything but an explicit pass reads provisional
-    assert 'data-role="mb-travel-unruled"' in view and "Failed the travel check (not on the shortlist)" in view
+    assert 'data-role="mb-travel-limit-note"' in view and "Failed the travel check (not on the shortlist)" in view
+    assert 'data-role="mb-travel-coverage"' in view and 'data-role="mb-travel-offer"' in view and "mb-travel-unruled" not in STAFF_JS
     card = STAFF_JS.split("function travelProvisionalHtml(g, opts = {}) {", 1)[1].split("\n  }\n", 1)[0]
     assert "<b>Provisional.</b>" in card and "they are candidates and not a confirmed shortlist" in card
-    assert "${travelProvisionalHtml(g, opts)}" in STAFF_JS and "groupTravelPanel(p.querySelector('[data-role=\"mb-travel-panel\"]'), g);" in STAFF_JS
+    assert "${travelProvisionalHtml(g, opts)}" in STAFF_JS and "groupTravelPanel(p.querySelector('[data-role=\"mb-travel-panel\"]'), g, applyTravel);" in STAFF_JS
     for code in ("H28", "GP6", "T6", "M4"):                                                # staff screens never quote register codes
         assert code not in panel and code not in view and code not in card, code
     assert "Travel to campus or work has not been checked for these apartments." not in STAFF_JS

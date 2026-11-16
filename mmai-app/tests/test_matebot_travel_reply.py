@@ -2,8 +2,9 @@
 
 Synthetic figures and a stand-in for the model; no network, no provider, no database. Covers: off by default and only on
 ALM's own AI account with the approved model; the model is given positions and figures only; every count, every person it
-names and the group result must equal the code's own; differing or missing stated times are never combined and can only be
-rated "not known"; what must be flagged cannot be left out; a wrong reply is withheld whole; no sentence from the model is
+names and the group result must equal the code's own; differing stated times are combined only by the code, as approved
+(H28(j)), and never by the model; a missing stated time, or members level for a place among the closest whose times would
+change the result, can only be rated "not known"; what must be flagged cannot be left out; a wrong reply is withheld whole; no sentence from the model is
 shown; and the gate holds the shortlist unless the saved review is current, covered every apartment shown and this check's
 assessment was accepted.
 """
@@ -31,6 +32,8 @@ def option(aid, members, rent=900, open_points=(), replacement=False):
 SAME_PASS = [M(1, "30 minutes", (PT,), {PT: 20}), M(2, "30 minutes", (W, PT), {W: 45, PT: 25})]
 SAME_OVER_OWN = [M(1, "30 minutes", (PT,), {PT: 20}), M(2, "30 minutes", (PT,), {PT: 50}), M(3, "30 minutes", (PT,), {PT: 28})]
 DIFFER = [M(1, "15 minutes", (PT,), {PT: 20}), M(2, "45 minutes", (PT,), {PT: 20})]
+TIED = [M(1, "15 minutes", (PT,), {PT: 10}), M(2, "5 minutes", (PT,), {PT: 50}), M(3, "60+ minutes", (PT,), {PT: 50})]   # result depends on who is counted
+TIED_SAME = [M(1, "30 minutes", (PT,), {PT: 10}), M(2, "15 minutes", (PT,), {PT: 20}), M(3, "45 minutes", (PT,), {PT: 20})]   # within either way
 MISSING = [M(1, None, (PT,), {PT: 20}), M(2, "30 minutes", (PT,), {PT: 20}), M(3, "30 minutes", (), None)]
 NOT_ANSWERED = [M(1, "30 minutes", (), {}), M(2, "30 minutes", (PT,), {PT: 20})]
 PARTLY = [M(1, "30 minutes", (W, PT), {W: U, PT: 40}), M(2, "30 minutes", (PT,), {PT: U})]
@@ -132,11 +135,14 @@ def test_the_model_is_given_positions_and_figures_only(on):
         {"person": 2, "journey": "measured", "own_stated_time_minutes": 30, "own_limit": "over", "minutes": "50", "by": [PT]},
         {"person": 3, "journey": "measured", "own_stated_time_minutes": 30, "own_limit": "within", "minutes": "28", "by": [PT]}]
     assert a["group"] == {"result": "within_doubled_limit", "same_stated_limit": True, "stated_limit_minutes": 30, "doubled_limit_minutes": 60,
+                          "closest_majority_average_stated_time_minutes": "30.0", "doubled_limit_minutes_range": None,
                           "why_needs_confirmation": [], "closest_majority_size": 2, "closest_majority_average_minutes": "24.0",
                           "closest_majority_average_within_stated_limit": True}
-    assert b["group"]["result"] == "needs_confirmation" and b["group"]["same_stated_limit"] is False
-    assert b["group"]["why_needs_confirmation"] == ["stated_times_differ"] and b["group"]["stated_limit_minutes"] is None
-    assert b["group"]["doubled_limit_minutes"] is None and b["group"]["closest_majority_average_minutes"] is None   # nothing combined
+    # differing stated times (15 and 45): the code's own figures as approved, already worked out; the model is given them, not asked
+    assert b["group"] == {"result": "within_doubled_limit", "same_stated_limit": False, "stated_limit_minutes": None, "doubled_limit_minutes": "60.0",
+                          "closest_majority_average_stated_time_minutes": "30.0", "doubled_limit_minutes_range": None,
+                          "why_needs_confirmation": [], "closest_majority_size": 2, "closest_majority_average_minutes": "20.0",
+                          "closest_majority_average_within_stated_limit": True}
     assert b["apartment"] == {"total_weekly_rent": 900, "open_points": ["an open point"], "took_the_place_of_one_that_failed_travel": True}
     keys = {k for o in given for k in o} | {k for o in given for p in o["people"] for k in p}
     assert keys == {"apartment_id", "people", "long_journey", "apartment", "group", "person", "journey", "own_stated_time_minutes", "own_limit", "minutes", "by"}
@@ -174,8 +180,10 @@ def test_own_time_statuses_and_counts_for_each_kind_of_person():
 @pytest.mark.parametrize("members,rating,advice,flagged", [
     (SAME_PASS, ("good", "acceptable"), ("offer",), []),
     (SAME_OVER_OWN, ("good", "acceptable", "poor"), ("offer_with_caveats",), ["some_over_own_limit"]),
-    (DIFFER, ("not_known",), ("confirm_first",), ["some_over_own_limit", "stated_times_differ_or_missing"]),
-    (MISSING, ("not_known",), ("confirm_first",), ["stated_times_differ_or_missing"]),
+    (DIFFER, ("good", "acceptable", "poor"), ("offer_with_caveats",), ["some_over_own_limit"]),
+    (MISSING, ("not_known",), ("confirm_first",), ["stated_time_missing"]),
+    (TIED, ("not_known",), ("confirm_first",), ["some_over_own_limit", "closest_majority_tied"]),
+    (TIED_SAME, ("good", "acceptable", "poor"), ("offer_with_caveats",), ["some_over_own_limit"]),
     (NOT_ANSWERED, ("not_known",), ("confirm_first",), ["journeys_not_known"]),
     (PARTLY, ("not_known",), ("confirm_first",), ["journeys_not_known"]),
     (FAILS, ("fails",), ("confirm_first",), ["some_over_own_limit", "long_journey_for_some"]),
@@ -185,27 +193,60 @@ def test_what_the_model_may_say_follows_the_figures(members, rating, advice, fla
     assert mr._ratings_allowed(f) == rating and mr._must_flag(f) == flagged and mr._advice_allowed(f, flagged) == advice
 
 
-def test_differing_or_missing_times_are_never_rated_or_offered_without_confirmation(on):
-    """The unruled case: the model cannot turn it into a result, a rating or a go-ahead, whatever the journeys are."""
-    for members in (DIFFER, MISSING):
+def test_a_missing_time_or_a_deciding_tie_is_never_rated_or_offered_without_confirmation(on):
+    """The model cannot turn "needs confirmation" into a result, a rating or a go-ahead, whatever the journeys are."""
+    for members, point in ((MISSING, "stated_time_missing"), (TIED, "closest_majority_tied")):
         for change in (lambda out: out["options"][0].update(travel_rating="good"),
                        lambda out: out["options"][0].update(travel_rating="acceptable"),
                        lambda out: out["options"][0].update(travel_rating="poor"),
                        lambda out: out["options"][0].update(advice="offer"),
                        lambda out: out["options"][0].update(advice="offer_with_caveats"),
                        lambda out: out["options"][0].update(group_result="within_doubled_limit"),
-                       lambda out: out["options"][0]["weaknesses"].remove("stated_times_differ_or_missing")):
+                       lambda out: out["options"][0].update(group_result="over_doubled_limit"),
+                       lambda out: out["options"][0]["weaknesses"].remove(point)):
             on.make = _edit(change)
             r = mr.travel_reply([option(1, members)])
             assert r == {"state": "withheld", "saved": False, "plain": mr.WITHHELD_TEXT, "options": []}
     on.make = faithful
-    r = mr.travel_reply([option(1, DIFFER)])
+    r = mr.travel_reply([option(1, TIED)])
     o = r["options"][0]
     assert r["state"] == "ready" and o["group_result"] == "needs_confirmation" and o["group_plain"] == "needs confirmation"
     assert o["travel_rating"] == "not_known" and o["advice"] == "confirm_first" and o["same_stated_limit"] is False
     assert o["stated_limit_minutes"] is None and o["doubled_limit_minutes"] is None
-    assert o["weaknesses"] == [mr.POINTS["some_over_own_limit"][1], mr.POINTS["stated_times_differ_or_missing"][1]]
-    assert o["note"] == "Over their own stated time: person 1."
+    assert o["weaknesses"] == [mr.POINTS["some_over_own_limit"][1], mr.POINTS["closest_majority_tied"][1]]
+    assert o["note"] == "Over their own stated time: person 2."
+    given = _packet_from(on.prompts[-1])["options"][0]["group"]
+    assert given["why_needs_confirmation"] == ["closest_majority_tied"] and given["closest_majority_average_minutes"] is None
+    assert given["doubled_limit_minutes"] is None and given["doubled_limit_minutes_range"] is None       # neither way of counting is given
+
+
+def test_differing_times_follow_the_codes_result_and_the_model_cannot_change_it(on):
+    """H28(j): the code compared the closest majority with twice the average of its own stated times; the model reports that."""
+    r = mr.travel_reply([option(1, DIFFER)])
+    o = r["options"][0]
+    assert r["state"] == "ready" and o["group_result"] == "within_doubled_limit" and o["same_stated_limit"] is False
+    assert o["stated_limit_minutes"] is None and o["doubled_limit_minutes"] == "60.0"
+    assert o["weaknesses"] == [mr.POINTS["some_over_own_limit"][1]] and o["note"] == "Over their own stated time: person 1."
+    assert o["advice"] == "offer_with_caveats" and o["travel_rating"] in ("good", "acceptable", "poor")
+    for change in (lambda out: out["options"][0].update(group_result="needs_confirmation"),
+                   lambda out: out["options"][0].update(group_result="over_doubled_limit"),
+                   lambda out: out["options"][0].update(travel_rating="not_known"),
+                   lambda out: out["options"][0].update(travel_rating="fails"),
+                   lambda out: out["options"][0].update(advice="offer"),
+                   lambda out: out["options"][0]["weaknesses"].remove("some_over_own_limit")):
+        on.make = _edit(change)
+        assert mr.travel_reply([option(1, DIFFER)])["state"] == "withheld"
+    # members level for a place whose stated times do not change the result: within, and the doubled figure is given as its range
+    on.make = faithful
+    r = mr.travel_reply([option(1, TIED_SAME)])
+    given = _packet_from(on.prompts[-1])["options"][0]["group"]
+    assert r["state"] == "ready" and given["result"] == "within_doubled_limit"
+    assert given["doubled_limit_minutes"] is None and given["doubled_limit_minutes_range"] == ["45.0", "75.0"]
+    assert given["closest_majority_average_stated_time_minutes"] is None and given["closest_majority_average_minutes"] == "15.0"
+    over = [M(1, "5 minutes", (PT,), {PT: 10}), M(2, "5 minutes", (PT,), {PT: 11}), M(3, "5 minutes", (PT,), {PT: 12}),
+            M(4, "60+ minutes", (PT,), {PT: 100}), M(5, "60+ minutes", (PT,), {PT: 101})]
+    f = mr.option_figures(option(1, over))
+    assert f["group"]["result"] == "over_doubled_limit" and f["group"]["doubled_limit_minutes"] == "10.0" and mr._ratings_allowed(f) == ("fails",)
 
 
 @pytest.mark.parametrize("change", [

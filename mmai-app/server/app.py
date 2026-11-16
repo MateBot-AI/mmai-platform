@@ -1415,6 +1415,8 @@ def _group_out(g: dict, occ: dict | None = None, circ: dict | None = None) -> di
     # one has been run on the page, and its AI assessment accepted, the apartments are provisional and are shown as such.
     g["travel_live"] = matebot_live.state(is_test=bool(g.get("is_test")))
     g["travel_check"] = "live" if g["travel_live"]["enabled"] else "off"
+    # nothing stored can say travel passed: an open group's current offer is provisional until the page's live check says otherwise
+    g["travel_offer"] = None if g["status"] in ("Leased", "Dissolved") else matebot_live.unchecked_offer(g["travel_live"])
     g["apartments"] = apts
     # the "next best" named when the current offer is leased is one staff can actually offer: shortlisted (so never a reserve,
     # a declined or a leased apartment) and not held for an essential need
@@ -1723,6 +1725,39 @@ def _claim_apartment(aid: int, gid: int | None, staff_name: str, *, missing: int
     return {"apartment_id": aid, "address": a["address"], "leased_at": when, "leased_group_id": gid, "repeated": False}
 
 
+# ---- travel at a staff action (GP6(d), H28(d), T6). Travel is never stored, so the only moment a known travel failure can stop an
+# apartment being presented to a group is the action that presents it. Each such action checks that ONE apartment live first
+# (matebot_live.action_check: outside every guard, in the worker pool; the actions are the offer switch, the introduction draft,
+# Mark Introduced, the revised-group introduction and the changed-offer acknowledgement), refuses on a known failure, and otherwise goes on with the
+# result carried back to the page once, worded as what it is. Inside the action's own guarded step the group and its people's
+# travel answers must still be what that check read. Recording a lease or a confirmation of the people is not gated: those
+# record what has happened. Nothing here moves a member, splits a group or sends anything.
+TRAVEL_CHANGED = "The group changed while travel was being checked. Nothing was changed; reload the group and try again."
+
+
+def _travel_public(check: dict | None) -> dict | None:
+    return None if check is None else {k: check.get(k) for k in ("outcome", "state", "saved", "plain", "coverage")}
+
+
+def _travel_refusal(check: dict) -> JSONResponse:
+    return JSONResponse({"detail": check["plain"], "travel_refused": True, "travel_at_action": _travel_public(check)}, status_code=409)
+
+
+def _travel_still_current(c, gid: int, check: dict | None) -> None:
+    if check is not None and not matebot_live.still_current(c, gid, check.get("token")):
+        raise HTTPException(409, TRAVEL_CHANGED)
+
+
+def _introduction_needs_travel(g: dict) -> bool:
+    """Would marking this group introduced get as far as presenting its current apartment? Read before any provider request,
+    so none is spent on an action its own checks refuse anyway (those checks still run, inside the guard)."""
+    if g.get("apartment_id") is None or not _circulation(g).get("ok"):
+        return False
+    if g["status"] == "Proposed":
+        return True
+    return g["status"] in group_responses.RESPOND_STATUSES and group_responses.needs_reintroduction(db, g["id"])
+
+
 def _introduction_ready(c, g: dict, intro_token: dict | None) -> None:
     """T6/GP2/r7 readiness for the Introduced action, inside the caller's guard: ready to circulate, a CURRENT introduction draft, and the
     request names THE DRAFT THE STAFF PAGE SHOWED (stable id + its context), which must still be the latest current row. A newer draft (same
@@ -1746,7 +1781,8 @@ def _introduction_ready(c, g: dict, intro_token: dict | None) -> None:
         raise HTTPException(409, "A newer introduction draft exists for this group since you opened the page. Reload the page, check the current draft is the one you sent, then mark it introduced.")
 
 
-def _set_group_status(gid: int, st: str, staff_name: str, apartment_id: int | None = None, conn=None, intro_token: dict | None = None) -> dict | None:
+def _set_group_status(gid: int, st: str, staff_name: str, apartment_id: int | None = None, conn=None, intro_token: dict | None = None,
+                      travel: dict | None = None) -> dict | None:
     """Status chain for a group; members' enquiry status follows (7.5). Leased (GP4) also claims the apartment (GP8) in the same
     guarded step and, after it, re-ranks every other group; returns the GP8 report when that happens.
     `apartment_id` (POST /api/apartments/{aid}/lease) names the apartment being leased: the group's current one, or another from
@@ -1781,6 +1817,7 @@ def _set_group_status(gid: int, st: str, staff_name: str, apartment_id: int | No
                 # yet. Marking it introduced again anchors the 24 h clock of the CURRENT version - after the same readiness checks as the
                 # first time (ready to circulate, the current draft the page showed). Nothing else changes; no links are minted.
                 _introduction_ready(c, g, intro_token)
+                _travel_still_current(c, gid, travel)
                 group_responses.anchor_introduction(c, gid, staff_name)
                 audit(c, staff_name, "group_reintroduced", "group", gid, "revised membership introduced; everyone answers again")
                 return None
@@ -1799,6 +1836,7 @@ def _set_group_status(gid: int, st: str, staff_name: str, apartment_id: int | No
                 if g.get("apartment_id") is None:
                     raise HTTPException(409, "This group has no current apartment; it cannot be introduced until it has a valid offer")
                 _introduction_ready(c, g, intro_token)
+                _travel_still_current(c, gid, travel)
                 n = c.execute("""UPDATE groups SET status='Introduced', updated_at=? WHERE id=? AND status='Proposed' AND is_primary=1 AND evidence_hash=?
                                  AND review_verdict='approve' AND brief_status='ok' AND ai_status='ok' AND intro_text IS NOT NULL AND apartment_id=?""",
                               (now_iso(), gid, g.get("evidence_hash"), g["apartment_id"])).rowcount   # r7: the selected apartment is part of the transition
@@ -1860,7 +1898,7 @@ def _when_melbourne(iso):
         return str(iso)
 
 
-def _acknowledge_offer(gid: int, staff_name: str) -> None:
+def _acknowledge_offer(gid: int, staff_name: str, travel: dict | None = None) -> None:
     with retention_guard(db, label="offer acknowledgement"):
         g = row(db.execute("SELECT g.*, a.available_from, a.leased_at FROM groups g LEFT JOIN apartments a ON a.id=g.apartment_id WHERE g.id=?", (gid,)))
         if not g:
@@ -1876,6 +1914,7 @@ def _acknowledge_offer(gid: int, staff_name: str) -> None:
         ist = ai_queue.intro_state(db, gid)
         if not ist.get("current"):
             raise HTTPException(409, "There is no current introduction draft for this group (" + (ist.get("stale_reason") or "draft it first") + "). Draft it before acknowledging the offer.")
+        _travel_still_current(db, gid, travel)
         db.execute("UPDATE groups SET offer_changed_since_intro_at=NULL, updated_at=? WHERE id=?", (now_iso(), gid))
         audit(db, staff_name, "group_offer_acknowledged", "group", gid, f"current introduction and offer (apartment {g['apartment_id']}) acknowledged")
 
@@ -1936,12 +1975,21 @@ async def update_group(gid: int, req: Request, staff=Depends(current_staff)):
     if not g:
         raise HTTPException(404, "Not found")
     gp8 = None
+    travel = None   # the live travel result for the one apartment this action presents (see "travel at a staff action")
+
+    async def travel_first(apartment_id: int, action: str):
+        return await run_in_threadpool(matebot_live.action_check, db, gid, apartment_id, action, staff["display_name"])
     if "status" in body:
         st = body["status"]
         if st not in GROUP_STATUSES:
             raise HTTPException(422, "Invalid status")
+        if st == "Introduced" and _introduction_needs_travel(g):
+            travel = await travel_first(g["apartment_id"], matebot_live.ACTION_INTRODUCE)
+            if travel["refuse"]:
+                return _travel_refusal(travel)
         # the Introduced action carries the draft row the page showed (metadata of the one status operation, like the edit's)
-        gp8 = _set_group_status(gid, st, staff["display_name"], intro_token={"draft_id": body.get("draft_id"), "context_hash": body.get("context_hash")} if st == "Introduced" else None)
+        gp8 = _set_group_status(gid, st, staff["display_name"], intro_token={"draft_id": body.get("draft_id"), "context_hash": body.get("context_hash")} if st == "Introduced" else None,
+                                travel=travel)
     if "intro_text" in body:
         # T6 + r7: staff edit the CURRENT draft only (a stale or template draft must be drafted again); the edit is kept as history.
         # The client names the draft row it showed (draft_id = stable row id; context_hash = the context that draft was written
@@ -1992,7 +2040,18 @@ async def update_group(gid: int, req: Request, staff=Depends(current_staff)):
             raise HTTPException(503, "The system is busy finishing another update. Reload the page and try the edit again.")
     if "apartment_id" in body:  # GP6(b): offer another apartment from the group's own ranked list (never a hand-picked one)
         try:
-            matching.offer_apartment(db, gid, int(body["apartment_id"]), staff["display_name"])
+            aid = int(body["apartment_id"])
+        except (TypeError, ValueError):
+            raise HTTPException(422, "apartment_id must be a whole number")
+        # only an apartment this group could be offered at all is worth a travel request; anything else is refused below as before
+        if g["status"] in apartment_rejections.LIVE_GROUP_STATUSES and row(db.execute("SELECT 1 FROM group_apartments WHERE group_id=? AND apartment_id=?", (gid, aid))):
+            travel = await travel_first(aid, matebot_live.ACTION_OFFER)
+            if travel["refuse"]:
+                return _travel_refusal(travel)
+        try:
+            with retention_guard(db, label="manual apartment offer"):
+                _travel_still_current(db, gid, travel)
+                matching.offer_apartment(db, gid, aid, staff["display_name"])
         except RetentionLockTimeout:
             raise HTTPException(503, "The system is busy finishing another update. Reload the page and try the apartment offer again.")
         except apartment_rejections.OfferRefused as e:
@@ -2005,7 +2064,11 @@ async def update_group(gid: int, req: Request, staff=Depends(current_staff)):
         # Stock lifecycle: the explicit, audited staff acknowledgement that the CURRENT introduction and the CURRENT offer have been
         # handled with the group. Only a group that has a valid listed current offer and a current introduction draft can be
         # acknowledged; nothing else changes (membership version, approvals and the 24 h clock are untouched - GP13 is about people).
-        _acknowledge_offer(gid, staff["display_name"])
+        if g.get("offer_changed_since_intro_at") and g.get("apartment_id") is not None and g["status"] in apartment_rejections.LIVE_GROUP_STATUSES:
+            travel = await travel_first(g["apartment_id"], matebot_live.ACTION_ACKNOWLEDGE)
+            if travel["refuse"]:
+                return _travel_refusal(travel)
+        _acknowledge_offer(gid, staff["display_name"], travel)
     if "discount_note" in body:  # GP10(b): staff discretion, recorded as free text only; MMAI never changes a price
         db.execute("UPDATE groups SET discount_note=?, updated_at=? WHERE id=?", ((body["discount_note"] or "").strip() or None, now_iso(), gid))
         audit(db, staff["display_name"], "group_discount_note", "group", gid, (body["discount_note"] or "")[:200])
@@ -2013,6 +2076,8 @@ async def update_group(gid: int, req: Request, staff=Depends(current_staff)):
     out = group_detail(gid, staff)
     if gp8:
         out["gp8"] = gp8
+    if travel is not None:
+        out["travel_at_action"] = _travel_public(travel)   # for this reply only; not stored
     return out
 
 
@@ -2146,6 +2211,11 @@ async def group_introduction(gid: int, req: Request, staff=Depends(current_staff
             raise _intro_capture_refusal(e2)
     except (RetentionLockTimeout, ConnectionLostMidOperation):
         raise HTTPException(503, "The system is busy finishing another update. Reload the page and draft the introduction again.")
+    # the introduction presents the apartment currently offered: a known travel failure stops it here, before the AI is asked
+    travel = await run_in_threadpool(matebot_live.action_check, db, gid, cap["apartment_id"], matebot_live.ACTION_DRAFT, staff["display_name"]) \
+        if cap.get("apartment_id") is not None else None
+    if travel and travel["refuse"]:
+        return _travel_refusal(travel)
     apt, ginfo, members = cap["apt"], cap["ginfo"], cap["members"]
     basis = list(cap.get("basis") or [])   # the structured basis items as captured (section, text, fact ids, subjects, coverage): the drafter uses the provenance, not just the sentence
     basis_label, audit_detail = "AI", "AI"
@@ -2168,6 +2238,7 @@ async def group_introduction(gid: int, req: Request, staff=Depends(current_staff
     try:
         with retention_guard(db, label="intro draft"):   # the model call above is OUTSIDE the guard; only the checks and writes are inside
             _recheck_circulation(gid, "The introduction was not kept")
+            _travel_still_current(db, gid, travel)
             n = db.execute("UPDATE groups SET intro_text=?, updated_at=? WHERE id=? AND evidence_hash=? AND status=? AND brief_status='ok' AND member_key=? AND apartment_id=?",
                            (text, now_iso(), gid, cap.get("evidence_hash"), cap["status"], cap.get("member_key"), cap["apartment_id"])).rowcount
             if n != 1:
@@ -2184,7 +2255,8 @@ async def group_introduction(gid: int, req: Request, staff=Depends(current_staff
     without = [p["name"] for p in people if not p.get("email")]
     st = ai_queue.intro_state(db, gid)
     return {"intro_text": text, "basis": basis_label, "current": basis_label == "AI" and bool(st.get("current")), "intro_state": st,
-            "recipients": recipients, "without_email": without, "intro_missing": [x for p in people for x in (p.get("intro_missing") or [])]}
+            "recipients": recipients, "without_email": without, "intro_missing": [x for p in people for x in (p.get("intro_missing") or [])],
+            "travel_at_action": _travel_public(travel)}   # for this reply only; not stored
 
 
 def _intro_people(members: list[dict]) -> list[dict]:
@@ -2231,6 +2303,13 @@ async def group_responses_introduce(gid: int, req: Request, staff=Depends(curren
     version has no 24 h anchor. Same readiness checks as the first introduction (ready to circulate; the current draft the page showed,
     named by draft_id + context_hash). Anchors the clock; mints nothing; changes no status."""
     body = await sec.json_object(req)
+    travel = None
+    before = row(db.execute("SELECT * FROM groups WHERE id=?", (gid,)))
+    if before and before["status"] in group_responses.RESPOND_STATUSES and _introduction_needs_travel(before):
+        # the revised group is being introduced with its current apartment: the same travel check as the first introduction
+        travel = await run_in_threadpool(matebot_live.action_check, db, gid, before["apartment_id"], matebot_live.ACTION_INTRODUCE, staff["display_name"])
+        if travel["refuse"]:
+            return _travel_refusal(travel)
     with retention_guard(db, label="group re-introduced"):
         g = row(db.execute("SELECT * FROM groups WHERE id=?", (gid,)))
         if not g:
@@ -2240,9 +2319,13 @@ async def group_responses_introduce(gid: int, req: Request, staff=Depends(curren
         if not group_responses.needs_reintroduction(db, gid):
             raise HTTPException(409, "The current membership of this group has already been introduced; nothing to do.")
         _introduction_ready(db, g, {"draft_id": body.get("draft_id"), "context_hash": body.get("context_hash")})
+        _travel_still_current(db, gid, travel)
         group_responses.anchor_introduction(db, gid, staff["display_name"])
         audit(db, staff["display_name"], "group_reintroduced", "group", gid, "revised membership introduced; everyone answers again")
-    return _group_responses_call(group_responses.state, db, gid, staff["display_name"])
+    out = _group_responses_call(group_responses.state, db, gid, staff["display_name"])
+    if travel is not None and isinstance(out, dict):
+        out = {**out, "travel_at_action": _travel_public(travel)}   # for this reply only; not stored
+    return out
 
 
 @app.post("/api/groups/{gid}/responses/introduce-remaining")

@@ -361,10 +361,38 @@ Built in this package:
     Never more than three are shown as the shortlist, and nothing is searched
     for beyond the stored candidates.
   - When every person states the same maximum travel time the H28 calculation
-    applies as written. When the times differ or one is missing, no figure is
-    combined and no default is used: each person's journey is shown against
-    their own stated time and the group result is "needs confirmation". Such an
-    apartment keeps its place; it is neither passed nor failed.
+    applies as written. When the times differ (H28(j), approved 16 November
+    2026): the closest strict majority is chosen by journey time, never by the
+    size of anyone's stated time, and its average journey is compared with
+    twice the average of those same people's stated times. The comparison is
+    made on exact totals; a total exactly at the doubled figure passes. "60+
+    minutes" counts as 60. Someone far away, or with a short stated time,
+    who is outside that majority does not decide the result; they are warned
+    about. A person is warned about when their journey is over double their
+    own stated time or over the group's doubled figure; a warning never
+    excludes an apartment. HomeBot's calculation is unchanged.
+  - When any person in the group has not stated a maximum travel time, no
+    figure is combined and no default is used: each person's journey is shown
+    against their own stated time and the group result is "needs
+    confirmation". Such an apartment keeps its place; it is neither passed nor
+    failed.
+  - People level on journey time at the edge of the closest majority. This
+    case is not ruled; it is handled under the existing unknown-journey
+    safeguard and is recorded in the register as a matter raised. Nobody is
+    picked by position or by stated time. If the result would differ with who
+    is counted, the group result is "needs confirmation". If it is the same
+    whoever is counted, that result is given, the level people are named as
+    tied rather than chosen, and the doubled figure is shown as its range when
+    it is not one number.
+  - Every result says who it covers. A result is worked out over the people
+    with a destination. Others in a party were never asked for one, and some
+    people give none; their travel is unverified and the page says so by
+    position and name. A pass that leaves someone out is shown as a pass for
+    the people measured, not for the whole group.
+  - The apartment currently offered is "travel confirmed" only when this
+    page's check gave a pass that covers every person and the AI's assessment
+    of it was accepted. A known failure reads "failed travel". Everything else
+    reads "provisional".
   - Claude's assessment (`server/matebot_travel_reply.py`, behind
     `MMAI_TRAVEL_AI_REPLY`, which stays off): one request per check for at most
     three apartments, and one shorter second request only if the first was cut
@@ -403,13 +431,45 @@ Not done, and not to be reported as done:
   on the MateBot form.
 - **Secondary destinations** (a second place of work or study) are not asked on
   the MateBot form and are not measured.
-- **Differing or missing travel times.** How to combine them is not ruled. Until
-  it is, most real groups will read "needs confirmation".
-- **The result is not saved**, so it is not part of readiness. The lists of
-  groups, the "ready for reservations" state, the introduction and the offer
-  buttons do not depend on a travel check. A group can be ready by its saved
-  review while its travel is unchecked; the page says so with the
-  "Provisional" notice.
+- **A missing travel time** makes the whole group "needs confirmation". The
+  travel time question is optional on the form, so many real groups will read
+  that way until every member has answered it.
+- **The result is not saved**, so no stored list can show it. What is done
+  instead:
+  - The groups list and the overview count come from the saved review. Their
+    badge now reads "Ready for reservations · travel not confirmed" and is no
+    longer green. The overview count and the list filter count the same groups
+    as before and are labelled "Ready for reservations (travel not
+    confirmed)".
+  - On the group page the green "Ready to circulate." line appears only when
+    the page's check has confirmed the current offer on travel. A known
+    failure reads "Not ready to circulate" and switches off drafting, copying,
+    emailing and Mark Introduced, and the Offer button of each apartment that
+    failed. Anything else reads "Provisionally ready: travel not confirmed."
+    with the reason. While checks are switched off, every ready group reads
+    that way.
+  - The server checks one apartment live, without Claude, at each staff action
+    that presents it to the group: offering it, drafting the introduction for
+    it, Mark Introduced, introducing a revised group, and acknowledging a
+    changed offer. A known failure refuses the action and changes nothing. A
+    group that changed while the provider was being asked, or between that
+    check and the action's own step, is refused and must be reloaded. Every
+    other outcome lets the action go on and is reported once, in words, as
+    what it is: passed for everyone, passed for part of the group, needs
+    confirmation, no destinations, or not checked (switched off, a test
+    record, the allowance used, another check running). None of those is a
+    failure and only the first is a pass. Each of these checks uses the same
+    shared allowance and is recorded only as a count of requests.
+  - Not gated: Group confirmed, recording a lease, introducing the remaining
+    members after someone leaves, and the automatic moves after a stock
+    change. Those record what has happened or are not a staff presentation of
+    an apartment. Staff still write and send every message. Nobody is moved
+    and no group is split because of a journey.
+  - This cannot stop an email that staff sent before a failure was known. If
+    Mark Introduced is refused after the introduction went out, the message
+    says to tell the group the apartment is being changed.
+- **The readiness, tie and coverage wording** on these screens is engineering
+  copy written to match the code; it is not wording Bill has approved.
 - **Not run against the provider or Claude.** The live check for groups has only
   been run with stand-in replies. One controlled check on the host is still
   needed, and Google journey content must not go to Claude until the retention

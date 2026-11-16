@@ -10,19 +10,24 @@ What is settled, and applied here:
     otherwise-eligible candidate, which is checked in its turn (GP6(d)).
   * For each person the fastest journey by a choice THEY accepted is used and named; a choice they did not accept is never
     used, and someone who did not answer the travel choices question has no journey selected at all (H28(c)).
-  * When every member states the same maximum travel time, H28 applies as written: the closest strict majority of the people
-    with known destinations, their average against twice the stated time (H28(a), (b), (e)).
+  * The closest strict majority of the people with known destinations is chosen by journey time; its average journey is
+    compared with twice the average of those SAME members' stated maximum travel times (H28(a), (b), (e), (j)). When every
+    member states the same time this is H28 as first written: the average against twice that time.
+  * If any member's maximum travel time is missing the group result is NEEDS_CONFIRMATION (H28(j)). No default, minimum,
+    maximum or other member's time is used in its place.
   * An unknown or incomplete journey is neither a pass nor a failure (H28(d)).
+  * A long individual journey is flagged and never excludes the apartment by itself (H28(b), (e)).
 
-What is NOT settled, and therefore never decided here (register, "MateBot group travel threshold", not yet ruled):
-  * MateBot's maximum travel time (4.7) is optional and is each member's own. When the stated times differ, or any is missing,
-    there is no approved way to combine them. No default, average, minimum or maximum is used: every member's own measured
-    journey is reported against their own stated time, and the group result is NEEDS_CONFIRMATION.
+What is NOT settled, and therefore never decided here:
+  * Two or more members with exactly the same journey time at the edge of the closest majority, and different stated
+    times. The majority is chosen by journey time and never by the size of the members' limits (H28(j)), and no tie-break
+    is ruled. When every way of filling the tied places gives the same result, that result stands. When the ways disagree
+    the group result is NEEDS_CONFIRMATION, with that reason: no order of the members decides a pass or a failure.
 """
 from __future__ import annotations
 
 from dataclasses import dataclass
-from decimal import localcontext
+from decimal import Decimal, localcontext
 from typing import Callable, Optional
 
 from . import homebot_travel as ht
@@ -40,11 +45,14 @@ NO_MODE_ANSWER = "NO_MODE_ANSWER"                            # destination known
 WITHIN_OWN_LIMIT, OVER_OWN_LIMIT, NO_STATED_LIMIT, NOT_MEASURED = "WITHIN_OWN_LIMIT", "OVER_OWN_LIMIT", "NO_STATED_LIMIT", "NOT_MEASURED"
 
 TRAVEL_LIMIT_MISSING = "TRAVEL_LIMIT_MISSING"
-TRAVEL_LIMITS_DIFFER = "TRAVEL_LIMITS_DIFFER"
 TRAVEL_MODE_NOT_ANSWERED = "TRAVEL_MODE_NOT_ANSWERED"
-UNRULED_NOTE = ("The members' maximum travel times differ or are missing. How to combine them has not been ruled, so no group "
-                "result is calculated: each member's own journey is shown against their own stated time and the group needs "
-                "confirmation.")
+TRAVEL_MAJORITY_TIED = "TRAVEL_MAJORITY_TIED"
+LIMIT_MISSING_NOTE = ("At least one member has not stated a maximum travel time, so no group result is calculated: each member's "
+                      "own journey is shown against their own stated time and the group needs confirmation. No time is assumed "
+                      "for them.")
+MAJORITY_TIED_NOTE = ("Members with the same journey time sit at the edge of the closest majority and have different maximum "
+                      "travel times, and the result depends on which of them is counted. No group result is calculated: the "
+                      "group needs confirmation.")
 
 ROLE_SHORTLIST, ROLE_RESERVE, ROLE_UNAVAILABLE = "shortlist", "reserve", "unavailable"
 
@@ -118,7 +126,7 @@ def _fact(m: Member) -> dict:
     f = {"index": m.index, "status": m.status, "stated_limit_minutes": m.limit, "accepted_modes": list(m.accepted_modes),
          "fastest_minutes": None, "fastest_modes": [], "bound_minutes": None, "best_known_modes": [],
          "unknown_modes": [k for k, v in (m.journeys or {}).items() if v is None],
-         "own_limit": _own_limit(m), "warning": None, "in_majority": False}
+         "own_limit": _own_limit(m), "warning": None, "in_majority": False, "tied_for_majority": False}
     if m.status == MEASURED:
         f["fastest_minutes"], f["fastest_modes"] = ht._fmt(m.best), list(m.best_modes)
     elif m.status == PARTIAL:
@@ -162,7 +170,7 @@ def _assess(members) -> ht.TravelAssessment:
         "within_own_limit": [m.index for m in members if pf[m.index]["own_limit"] == WITHIN_OWN_LIMIT],
         "over_own_limit": [m.index for m in members if pf[m.index]["own_limit"] == OVER_OWN_LIMIT],
         "people": [pf[m.index] for m in members],
-        "majority": None, "within_ceiling": None, "meets_stated_limit": None,
+        "majority": None, "majority_tie": None, "within_ceiling": None, "meets_stated_limit": None,
         "routing_basis": ht.ROUTING_BASIS, "pass_meaning": ht.PASS_MEANING,
     }
     if n == 0:
@@ -171,10 +179,7 @@ def _assess(members) -> ht.TravelAssessment:
     reasons: list[str] = []
     if missing:
         reasons.append(TRAVEL_LIMIT_MISSING)
-    if len(limits) > 1:
-        reasons.append(TRAVEL_LIMITS_DIFFER)
-    if not uniform:
-        facts["unruled"] = UNRULED_NOTE
+        facts["limit_note"] = LIMIT_MISSING_NOTE
     if facts["no_mode_answer"]:
         reasons.append(TRAVEL_MODE_NOT_ANSWERED)
     if facts["partial"] or facts["unmeasured"]:
@@ -184,20 +189,63 @@ def _assess(members) -> ht.TravelAssessment:
     if reasons:
         return ht.TravelAssessment(NEEDS_CONFIRMATION, tuple(reasons), facts)   # never a pass, never an automatic failure
 
-    # every member states the same time and every known destination is fully measured: H28 as written
-    limit, ceiling = limits[0], 2 * limits[0]
-    chosen = sorted(known, key=lambda m: (m.best, m.index))[:k]
+    # every member states a time and every known destination is fully measured. H28(b): the closest strict majority BY JOURNEY
+    # TIME. H28(j): its average journey against twice the average of those same members' stated times; with one shared stated
+    # time that is H28(a) exactly. Compared as exact totals (k × average on both sides), never as rounded averages.
+    ordered = sorted(known, key=lambda m: (m.best, m.index))
+    chosen = ordered[:k]
     total = ht._sum_minutes(m.best for m in chosen)
-    for m in chosen:
+    edge = chosen[-1].best
+    sure = [m for m in ordered if m.best < edge]
+    tied = [m for m in ordered if m.best == edge]           # every one of these has an equal claim to the last place(s)
+    places = k - len(sure)
+    tied_limits = sorted(m.limit for m in tied)
+    least = sum(m.limit for m in sure) + sum(tied_limits[:places])
+    most = sum(m.limit for m in sure) + sum(tied_limits[len(tied_limits) - places:])
+    facts["majority_tie"] = ({"journey_minutes": ht._fmt(edge), "indices": [m.index for m in tied], "places": places}
+                             if len(tied) > places else None)
+    if (total <= 2 * least) != (total <= 2 * most):
+        # the journey total is the same whichever tied members are counted; only their stated times differ, and they decide
+        facts["tie_note"] = MAJORITY_TIED_NOTE
+        return ht.TravelAssessment(NEEDS_CONFIRMATION, (TRAVEL_MAJORITY_TIED,), facts)
+
+    # What is reported is only what holds for EVERY way of filling the tied places. The members strictly inside the edge are
+    # in the majority; the tied ones are named as tied, never as chosen. The stated-time figure is given as one number only
+    # when it is the same for every way; otherwise as its range.
+    one_set, one_figure = len(tied) == places, least == most
+    counted = chosen if one_set else sure
+    for m in counted:
         pf[m.index]["in_majority"] = True
+    if not one_set:
+        for m in tied:
+            pf[m.index]["tied_for_majority"] = True
     for m in known:
-        if m.best > ceiling:
+        # long for this person: over double their own stated time, or over the group's doubled figure (the same thing when
+        # every member states the same time; the lowest such figure when tied members could change it). A warning only; it
+        # never excludes the apartment (H28(b), (e)).
+        if m.best > 2 * m.limit or k * m.best > 2 * least:
             pf[m.index]["warning"] = ht.LONG_JOURNEY_WARNING
-    facts["majority"] = {"indices": [m.index for m in chosen], "size": k, "total_minutes": ht._fmt(total),
-                         "average_display": ht._avg_display(total, k),
-                         "comparison": f"exact total {ht._fmt(total)} vs {k} × ceiling {ceiling} = {k * ceiling} and {k} × limit {limit} = {k * limit}"}
-    facts["within_ceiling"] = total <= k * ceiling
-    facts["meets_stated_limit"] = total <= k * limit
+    if uniform:
+        limit, ceiling = limits[0], 2 * limits[0]
+        comparison = f"exact total {ht._fmt(total)} vs {k} × ceiling {ceiling} = {k * ceiling} and {k} × limit {limit} = {k * limit}"
+    elif one_figure:
+        comparison = (f"exact total {ht._fmt(total)} vs that member's stated time {least}, doubled {2 * least}" if k == 1 else
+                      f"exact total {ht._fmt(total)} vs the same {k} members' stated times totalling {least}, doubled {2 * least}")
+    else:
+        comparison = (f"exact total {ht._fmt(total)} vs the counted members' stated times totalling between {least} and {most}, "
+                      f"doubled {2 * least} to {2 * most}, depending on which tied members are counted; the result is the same for all")
+    facts["majority"] = {"indices": [m.index for m in counted], "tied_indices": [] if one_set else [m.index for m in tied],
+                         "size": k, "membership_determined": one_set, "figure_determined": one_figure,
+                         "total_minutes": ht._fmt(total), "average_display": ht._avg_display(total, k),
+                         "stated_limits_minutes": [m.limit for m in sorted(chosen, key=lambda m: m.index)] if one_set else None,
+                         "limit_total_minutes": least if one_figure else None,
+                         "limit_average_display": ht._avg_display(Decimal(least), k) if one_figure else None,
+                         "ceiling_display": ht._avg_display(Decimal(2 * least), k) if one_figure else None,
+                         "ceiling_range_display": None if one_figure else [ht._avg_display(Decimal(2 * least), k), ht._avg_display(Decimal(2 * most), k)],
+                         "comparison": comparison}
+    facts["within_ceiling"] = total <= 2 * least                      # equal to `total <= 2 * most`: checked above
+    # against the stated times themselves (not doubled): not known when the tied members' times would change the answer
+    facts["meets_stated_limit"] = (total <= least) if (total <= least) == (total <= most) else None
     warn = [ht.LONG_JOURNEY_WARNING] if any(pf[m.index]["warning"] for m in known) else []
     if facts["within_ceiling"]:
         return ht.TravelAssessment(PASS, tuple([ht.TRAVEL_MAJORITY_WITHIN_CEILING] + warn), facts)

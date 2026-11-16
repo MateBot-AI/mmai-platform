@@ -17,7 +17,8 @@ Seeded groups (dataset "test"):
 Checks (each prints OK or raises):
   L1 groups list (1280): the "Ready" filter shows exactly the groups the server's readiness predicate accepts; the overview
      counter "Ready for reservations" equals the number of ready primary groups; badges use plain words, no rule codes
-  D1 G1 detail: "Ready to circulate", Copy text enabled, "Open in email" shown with every real person's own address (4
+  D1 G1 detail: "Provisionally ready: travel not confirmed." (travel is never stored and live checks are off here, so the
+     green "Ready to circulate" must not appear), Copy text enabled, "Open in email" shown with every real person's own address (4
      recipients, party members included), textarea editable, brief names the people (no U1/U2/I1 refs)
   D2 G2 detail: readiness line reads "Group reviewed; create a current introduction before sharing." (never the green "Ready to
      circulate" without a current draft), stale banner "cannot be copied or sent until a fresh draft passes the checks" with
@@ -211,7 +212,7 @@ async def checks(seeded):
         # D1 ready group with a current AI draft
         g1 = seeded["G1"]["gid"]; await open_group(pg, g1)
         t = await page_text(pg)
-        assert "Ready to circulate" in t and "create a current introduction" not in t, t[:600]
+        assert "Provisionally ready: travel not confirmed." in t and "Ready to circulate" not in t and "create a current introduction" not in t, t[:600]
         assert not await pg.is_disabled('[data-action="copy"]') and await pg.is_visible('[data-role="mailto"]')
         href = await pg.get_attribute('[data-role="mailto"]', "href")
         for who in ("astrid@example.com", "bo@example.com", "cy@example.com", "devi@example.com"):

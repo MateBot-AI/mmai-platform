@@ -15,9 +15,11 @@ The MateBot counterpart of homebot_travel_reply, with the same division of work 
     database, a file, a cache or a log; a failure is logged as a fixed category only. It is never the group's saved review.
 
 What differs from HomeBot, and why. A MateBot group's members each give their own maximum travel time, and it is optional.
-When the stated times differ or one is missing there is no approved way to combine them (register, "MateBot group travel
-threshold", not yet ruled), so the code's group result is "needs confirmation" and the model is told exactly that. It may
-not rate such an apartment's travel as good, acceptable or poor, and may not advise offering it without confirmation.
+When the stated times differ, code compares the closest majority's average journey with twice the average of those same
+members' stated times (H28(j)) and the model is given that figure, already compared. When any member's time is missing, or
+members tied for a place among the closest would change the result, the code's group result is "needs confirmation" and the
+model is told exactly that. It may not rate such an apartment's travel as good, acceptable or poor, and may not advise
+offering it without confirmation. The model never combines stated times itself.
 
 The model is given positions and figures only: no names, addresses, institutions or destinations.
 
@@ -34,7 +36,7 @@ from . import ai, homebot_travel as ht, homebot_travel_reply as tr, matebot_trav
 
 log = logging.getLogger("mmai.matebot_travel_reply")
 
-REPLY_CONTRACT = "matebot-travel-assessment-v1"
+REPLY_CONTRACT = "matebot-travel-assessment-v2"
 MAX_OPTIONS = mt.MAX_SHORTLIST
 OUTPUT_TOKENS = 1200
 
@@ -44,7 +46,7 @@ GROUP_PLAIN = {WITHIN: "within the doubled limit", OVER: "over the doubled limit
                NONE: "no member has a place of study recorded that a journey can be measured to"}
 OWN = {mt.WITHIN_OWN_LIMIT: "within", mt.OVER_OWN_LIMIT: "over", mt.NOT_MEASURED: "not_known", mt.NO_STATED_LIMIT: "no_stated_time"}
 JOURNEY = {mt.MEASURED: "measured", mt.PARTIAL: "partly_measured", mt.UNMEASURED: "not_known", mt.NO_MODE_ANSWER: "travel_choice_not_answered"}
-WHY = {mt.TRAVEL_LIMITS_DIFFER: "stated_times_differ", mt.TRAVEL_LIMIT_MISSING: "stated_time_missing",
+WHY = {mt.TRAVEL_MAJORITY_TIED: "closest_majority_tied", mt.TRAVEL_LIMIT_MISSING: "stated_time_missing",
        mt.TRAVEL_MODE_NOT_ANSWERED: "travel_choice_not_answered",
        ht.TRAVEL_NEEDS_CONFIRMATION_INCOMPLETE_ESTIMATES: "journeys_not_known", ht.FASTEST_MODE_UNCONFIRMED: "fastest_choice_not_confirmed"}
 
@@ -93,8 +95,12 @@ def _journey_unknown(f, pk=None) -> bool:
     return any(p["journey"] in ("partly_measured", "not_known", "travel_choice_not_answered") for p in f["people"])
 
 
-def _times_unsettled(f, pk=None) -> bool:
-    return f["group"]["result"] != NONE and f["group"]["same_stated_limit"] is False
+def _time_missing(f, pk=None) -> bool:
+    return "stated_time_missing" in f["group"]["why_needs_confirmation"]
+
+
+def _majority_tied(f, pk=None) -> bool:
+    return "closest_majority_tied" in f["group"]["why_needs_confirmation"]
 
 
 # code -> (side, the sentence shown, when it is true). The model chooses among the true ones; it cannot word its own.
@@ -103,16 +109,18 @@ POINTS = {
                                   lambda f, pk: f["counts"]["within_own_limit"] > 0 and not _others(f)),
     "most_within_own_limit": ("strength", "Most members with a known destination have a journey within their own stated travel time.",
                               lambda f, pk: f["counts"]["within_own_limit"] > _others(f) > 0),
-    "majority_average_within_stated_limit": ("strength", "The closest majority's average journey is within the stated travel time itself, not only double it.",
+    "majority_average_within_stated_limit": ("strength", "The closest majority's average journey is within their stated travel time itself (the average of their times where these differ), not only double it.",
                                              lambda f, pk: f["group"]["result"] == WITHIN and f["group"]["closest_majority_average_within_stated_limit"] is True),
     "lowest_rent_of_these": ("strength", "The lowest whole-apartment rent of these apartments.", lambda f, pk: _rent_is(f, pk, min)),
-    "majority_average_over_stated_limit": ("weakness", "The closest majority's average journey is over the stated travel time, though within double it.",
+    "majority_average_over_stated_limit": ("weakness", "The closest majority's average journey is over their stated travel time (the average of their times where these differ), though within double it.",
                                            _average_over_stated),
     "some_over_own_limit": ("weakness", "At least one member's journey is over their own stated travel time.", lambda f, pk: f["counts"]["over_own_limit"] > 0),
-    "long_journey_for_some": ("weakness", "At least one member has a long journey, over double the stated travel time.", lambda f, pk: bool(f.get("long_journey"))),
+    "long_journey_for_some": ("weakness", "At least one member has a long journey: over double their own stated travel time, or over the group's doubled limit.", lambda f, pk: bool(f.get("long_journey"))),
     "journeys_not_known": ("weakness", "At least one member's journey is not fully known, so travel cannot be confirmed yet.", _journey_unknown),
-    "stated_times_differ_or_missing": ("weakness", "The members' maximum travel times differ or are missing, so no group travel result is calculated.",
-                                       _times_unsettled),
+    "stated_time_missing": ("weakness", "At least one member has not stated a maximum travel time, so no group travel result is calculated.",
+                            _time_missing),
+    "closest_majority_tied": ("weakness", "Members with the same journey time are tied for a place among the closest and have different stated "
+                                          "travel times, so no group travel result is calculated.", _majority_tied),
     "no_destination_for_some": ("weakness", "At least one member has no place of study or work of their own recorded.",
                                 lambda f, pk: f["counts"]["no_destination"] > 0),
     "highest_rent_of_these": ("weakness", "The highest whole-apartment rent of these apartments.", lambda f, pk: _rent_is(f, pk, max)),
@@ -121,14 +129,16 @@ POINTS = {
 
 
 def _must_flag(f) -> list:
-    """Weaknesses the model may not leave out, whatever it thinks of the apartment (H28(b)/(d), and the unruled threshold)."""
+    """Weaknesses the model may not leave out, whatever it thinks of the apartment (H28(b)/(d)/(j))."""
     need = []
     if _journey_unknown(f):
         need.append("journeys_not_known")
     if f["counts"]["over_own_limit"]:
         need.append("some_over_own_limit")
-    if _times_unsettled(f):
-        need.append("stated_times_differ_or_missing")
+    if _time_missing(f):
+        need.append("stated_time_missing")
+    if _majority_tied(f):
+        need.append("closest_majority_tied")
     if _average_over_stated(f):
         need.append("majority_average_over_stated_limit")
     if f.get("long_journey"):
@@ -193,7 +203,12 @@ def option_figures(option: dict) -> dict | None:
             "apartment": {"total_weekly_rent": apartment.get("total_weekly_rent"), "open_points": list(apartment.get("open_points") or []),
                           "took_the_place_of_one_that_failed_travel": bool(apartment.get("replacement"))},
             "group": {"result": GROUP_RESULT[travel["status"]], "same_stated_limit": bool(facts.get("same_stated_limit")),
-                      "stated_limit_minutes": facts.get("stated_limit_minutes"), "doubled_limit_minutes": facts.get("ceiling_minutes"),
+                      "stated_limit_minutes": facts.get("stated_limit_minutes"),
+                      # H28(j): the average of the closest majority's own stated times, and twice it; one figure, or its range
+                      # when members tied for a place would change it (the result is then the same for every way of counting)
+                      "closest_majority_average_stated_time_minutes": majority.get("limit_average_display"),
+                      "doubled_limit_minutes": facts.get("ceiling_minutes") if facts.get("same_stated_limit") else majority.get("ceiling_display"),
+                      "doubled_limit_minutes_range": majority.get("ceiling_range_display"),
                       "why_needs_confirmation": [WHY[r] for r in travel.get("reasons") or [] if r in WHY] if travel["status"] == mt.NEEDS_CONFIRMATION else [],
                       "closest_majority_size": majority.get("size"), "closest_majority_average_minutes": majority.get("average_display"),
                       "closest_majority_average_within_stated_limit": facts.get("meets_stated_limit")},
@@ -222,22 +237,25 @@ def build_prompt(pk: dict, compact: bool = False) -> str:
         "Count, for each apartment: within_own_limit, over_own_limit, not_known and no_stated_limit.",
         "A person who is not known, or has no stated time, is neither within nor over a time. Never describe them as meeting or missing it.",
         "group_result is the apartment's group.result exactly as given. It is a separate question from the own-time counts. When the "
-        "members' stated times differ or one is missing, no rule for combining them has been approved, so the result is "
-        "needs_confirmation (see group.why_needs_confirmation). Do not work out a group result of your own.",
+        "members' stated times differ, code has already compared the closest majority's average journey with twice the average of "
+        "those same members' stated times (group.closest_majority_average_stated_time_minutes, group.doubled_limit_minutes, or "
+        "group.doubled_limit_minutes_range when members with equal journeys are tied for a place). When any member's stated time is "
+        "missing, or tied members would change the result, the result is needs_confirmation (see group.why_needs_confirmation). Do "
+        "not work out a group result of your own and do not combine stated times yourself.",
         "people_over_own_limit: the person numbers that are over their own stated time. people_not_known: the person numbers whose own_limit is not_known.",
         "Then give YOUR OWN assessment of each apartment. This part is your judgement; weigh the journeys together with the apartment's other points (apartment).",
         "travel_rating: one of " + ", ".join(RATING_PLAIN) + ". Use not_known when group_result is needs_confirmation, not_applicable "
         "when it is no_destinations, fails when it is over_doubled_limit. Otherwise choose good, acceptable or poor: how well the "
         "journeys suit this group, considering how many people are over their own stated time, any long journey and whether the "
-        "closest majority's average is within the stated time itself.",
+        "closest majority's average is within their stated time itself (group.closest_majority_average_within_stated_limit).",
         "strengths and weaknesses: choose the statements that matter most for this apartment, most important first, at most "
         + str(MAX_POINTS) + " in each list, using only these codes and only where true for the apartment. Strengths: "
         + "; ".join(f"{k} ({v[1]})" for k, v in POINTS.items() if v[0] == "strength") + ". Weaknesses: "
         + "; ".join(f"{k} ({v[1]})" for k, v in POINTS.items() if v[0] == "weakness") + ".",
         "Always include journeys_not_known when any person's journey is partly_measured, not_known or travel_choice_not_answered; "
-        "some_over_own_limit when anyone is over their own stated time; stated_times_differ_or_missing when group.same_stated_limit is "
-        "false and group_result is not no_destinations; majority_average_over_stated_limit when the closest majority's average is over "
-        "the stated time; long_journey_for_some when long_journey is true; other_points_to_confirm when the apartment has open_points.",
+        "some_over_own_limit when anyone is over their own stated time; stated_time_missing when group.why_needs_confirmation "
+        "contains stated_time_missing; closest_majority_tied when it contains closest_majority_tied; majority_average_over_stated_limit "
+        "when group.closest_majority_average_within_stated_limit is false; long_journey_for_some when long_journey is true; other_points_to_confirm when the apartment has open_points.",
         "advice: confirm_first when group_result is needs_confirmation or over_doubled_limit, or the apartment has open_points; otherwise "
         "offer when you list no weaknesses and offer_with_caveats when you list any.",
         "preferred_order: every apartment_id once, the one you judge most suitable for this group first.",

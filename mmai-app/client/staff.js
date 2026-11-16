@@ -24,7 +24,7 @@
   const badgeClass = st => ({ 'New': 'new', 'Proposed in group': 'proposed', 'Proposed': 'proposed', 'Introduced': 'introduced', 'Group confirmed': 'confirmed', 'Leased': 'leased', 'Withdrawn': 'withdrawn', 'Dissolved': 'dissolved', 'Awaiting replacement': 'awaiting' }[st] || '');
   const badge = (st, extra = '') => `<span class="badge badge--${badgeClass(st)} ${extra}">${esc(st)}</span>`;
   const noCurrentApartment = g => g && g.apartment_id == null && ['Proposed', 'Introduced', 'Group confirmed'].includes(g.status);
-  const stateBadge = g => !g || ['Leased', 'Dissolved'].includes(g.status) || (g.status === 'Awaiting replacement' && g.ai_status !== 'failed') ? '' : noCurrentApartment(g) ? '<span class="badge badge--warn">Held: no current apartment</span>' : g.review_state === 'Ready for reservations' ? '<span class="badge badge--ready" title="The AI review approved this group under the current rules, the staff brief is current and nobody is in another circulating group">Ready for reservations</span>' : g.review_state === 'AI assessed; not ready' ? `<span class="badge badge--flag" title="${esc(((g.circulation || {}).reasons || []).join('; '))}">Assessed, not ready</span>`
+  const stateBadge = g => !g || ['Leased', 'Dissolved'].includes(g.status) || (g.status === 'Awaiting replacement' && g.ai_status !== 'failed') ? '' : noCurrentApartment(g) ? '<span class="badge badge--warn">Held: no current apartment</span>' : g.review_state === 'Ready for reservations' ? '<span class="badge badge--alt" data-role="ready-badge" title="The AI review approved this group under the current rules, the staff brief is current and nobody is in another circulating group. Travel to campus or work is checked last, on the group page, and is not saved: until that check passes, the apartment offered is provisional">Ready for reservations · travel not confirmed</span>' : g.review_state === 'AI assessed; not ready' ? `<span class="badge badge--flag" title="${esc(((g.circulation || {}).reasons || []).join('; '))}">Assessed, not ready</span>`
     : g.review_state === 'AI assessment failed' ? `<span class="badge badge--warn" title="${esc(g.ai_error || 'The AI call failed')}">AI assessment failed · retry</span>`
     : g.review_state === 'AI assessment held' ? `<span class="badge badge--warn" title="${esc((g.hold && g.hold.label) || 'The AI could not read a member\'s notes after the automatic retries')}">AI assessment held · retry</span>` : '<span class="badge badge--pending" title="The AI is still assessing this group and ranking its apartments; it is not ready for reservations yet">AI assessment pending</span>';
   const barredBadge = e => e && e.barred_at ? `<span class="badge badge--warn" title="${e.barred_person ? esc(e.barred_person) + ' is barred from matching by staff; the rest of the form left with them' : 'Barred from matching by staff'}${e.barred_reason ? ': ' + esc(e.barred_reason) : ''}">${e.barred_person ? 'barred: ' + esc(e.barred_person) : 'barred'}</span>` : '';
@@ -170,7 +170,7 @@
         <div class="kpi"><b>${test ? s.enquiries_test : s.enquiries_real}</b><span>${test ? 'Test' : 'Real'} enquiries</span></div>
         <div class="kpi"><b>${s.apartments_available} / ${s.apartments}</b><span>Apartments available${s.apartments_leased ? ` · ${s.apartments_leased} leased` : ''}</span></div>
         <div class="kpi"><b>${s.groups_proposed}</b><span>Proposed groups${s.groups_alternative ? ` (+${s.groups_alternative} alternatives)` : ''}</span></div>
-        <div class="kpi ${s.groups_ai_pending_primary || s.groups_ai_failed ? 'kpi--flag' : ''}" title="A group is ready only once the AI has assessed it and ranked its apartments"><b>${s.groups_ready}</b><span>Ready for reservations${s.groups_ai_pending_primary ? ` · ${s.groups_ai_pending_primary} waiting for the AI` : ''}${s.groups_ai_failed ? ` · <a href="#/staff/groups" data-ai-failed>${s.groups_ai_failed} AI failed – retry</a>` : ''}</span></div>
+        <div class="kpi ${s.groups_ai_pending_primary || s.groups_ai_failed ? 'kpi--flag' : ''}" title="A group is ready only once the AI has assessed it and ranked its apartments. Travel is checked last, on each group's page, and is not part of this count"><b>${s.groups_ready}</b><span>Ready for reservations (travel not confirmed)${s.groups_ai_pending_primary ? ` · ${s.groups_ai_pending_primary} waiting for the AI` : ''}${s.groups_ai_failed ? ` · <a href="#/staff/groups" data-ai-failed>${s.groups_ai_failed} AI failed – retry</a>` : ''}</span></div>
         <div class="kpi"><b>${s.groups_active}</b><span>Introduced or confirmed</span></div>
         <div class="kpi"><b>${s.groups_leased}</b><span>Leased</span></div>
         ${s.groups_awaiting ? `<div class="kpi kpi--flag"><b>${s.groups_awaiting}</b><span>Awaiting a replacement${s.groups_replacement_found ? ` · ${s.groups_replacement_found} with a replacement to review` : ''}</span></div>` : ''}
@@ -1143,7 +1143,7 @@
     const pct = total ? Math.round(ready / total * 100) : 0;
     const passPct = q.pass_total ? Math.round(q.pass_done / q.pass_total * 100) : 0;
     return `<h3>AI assessment queue</h3>
-      <p class="small">Every new or changed group is assessed by the AI (${esc(q.model || '')}) and its apartments ranked before it is <b>Ready for reservations</b>. Unchanged groups are never re-run. ${q.ai_configured ? '' : '<span class="badge badge--warn">no AI credentials in this server process</span> '}${q.thread_alive ? '' : '<span class="badge badge--warn">queue worker not running</span>'}</p>
+      <p class="small">Every new or changed group is assessed by the AI (${esc(q.model || '')}) and its apartments ranked before it is <b>Ready for reservations</b>. Travel is checked last, on each group's page, and is not part of that. Unchanged groups are never re-run. ${q.ai_configured ? '' : '<span class="badge badge--warn">no AI credentials in this server process</span> '}${q.thread_alive ? '' : '<span class="badge badge--warn">queue worker not running</span>'}</p>
       <div class="progress" title="${ready} of ${total} live ${state.dataset === 'test' ? 'TEST' : 'real'} groups are AI-assessed"><span class="${pend ? 'progress--live' : ''}" style="width:${pct}%"></span></div>
       <div class="kpis kpis--tight">
         <div class="kpi ${pend ? 'kpi--flag' : ''}"><b>${pend}</b><span>AI assessment pending${ds.running ? ` · ${ds.running} being assessed now` : ''}</span></div>
@@ -1186,7 +1186,7 @@
       </div>
       <div class="toolbar toolbar--plain">
         <select data-role="status"><option value="">All statuses</option>${['Proposed', 'Introduced', 'Group confirmed', 'Awaiting replacement', 'Leased'].map(s => `<option ${f.status === s ? 'selected' : ''}>${s}</option>`).join('')}</select>
-        <select data-role="ai"><option value="">Ready or pending</option><option value="ready" ${f.ai === 'ready' ? 'selected' : ''}>Ready for reservations</option><option value="pending" ${f.ai === 'pending' ? 'selected' : ''}>AI assessment pending</option><option value="failed" ${f.ai === 'failed' ? 'selected' : ''}>AI assessment failed or held for retry</option></select>
+        <select data-role="ai"><option value="">Ready or pending</option><option value="ready" ${f.ai === 'ready' ? 'selected' : ''}>Ready for reservations (travel not confirmed)</option><option value="pending" ${f.ai === 'pending' ? 'selected' : ''}>AI assessment pending</option><option value="failed" ${f.ai === 'failed' ? 'selected' : ''}>AI assessment failed or held for retry</option></select>
         <label class="small"><input type="checkbox" data-role="alts" ${f.alts ? 'checked' : ''}> Show alternative groupings</label>
         <span class="small muted">${grp.items.filter(g => g.is_primary !== false).length} group(s) · ${grp.items.filter(g => g.is_primary && g.ready_for_reservations).length} ready for reservations${grp.items.filter(g => g.is_primary && g.status === 'Proposed' && !g.ready_for_reservations).length ? ` · ${grp.items.filter(g => g.is_primary && g.status === 'Proposed' && !g.ready_for_reservations).length} waiting for the AI` : ''}</span>
       </div>
@@ -1299,16 +1299,18 @@
       <div class="apt-opt__body"><b>${esc(x.address || '')}</b> <span class="small muted">${esc(x.type_label || '')} · ${esc(x.suburb || '')} · ${money(x.total_weekly)}/wk whole apartment</span>
         <span class="badge ${x.role === 'failed' ? 'badge--flag' : gate.held ? 'badge--alt' : 'badge--ok'}">${esc(label)}</span>${x.is_current ? ' <span class="badge">current offer</span>' : ''}${x.replacement ? ' <span class="badge badge--alt">moved up after another failed travel</span>' : ''}
         <p class="small"><b>${esc(x.result_plain)}</b>${(x.reasons_plain || []).length ? ' Why: ' + x.reasons_plain.map(esc).join('; ') + '.' : ''}</p>
+        ${x.coverage ? `<p class="small${x.coverage.complete ? ' muted' : ' msg'}" data-role="mb-travel-coverage" data-complete="${x.coverage.complete ? '1' : '0'}"><b>Who this covers.</b> ${esc(x.coverage.plain)}</p>` : ''}
         ${x.practical_need_hold ? `<p class="small msg">${esc(x.practical_need_reason || 'An essential practical need is not confirmed for this apartment.')}</p>` : ''}
         ${aiNote(x)}
         <details class="small" ${x.role === 'failed' ? '' : 'open'}><summary>Journey estimates for each person</summary>${(x.journey_lines || []).map(esc).join('<br>')}${x.measured ? '<br>' + GMAPS_ATTR : ''}</details>
         ${sources(x)}</div></li>`;
     const provisional = gate.held !== false;
     return `<div data-role="mb-travel-result"><p class="small">${GMAPS_ATTR}<br>Journey estimates. ${esc(k.basis || '')}. Checked ${fmtDT(k.checked_at)}.</p>
+      ${r.current_offer ? `<p class="msg ${r.current_offer.state === 'failed' ? 'err ' : r.current_offer.state === 'confirmed' ? 'ok ' : ''}small" data-role="mb-travel-offer" data-state="${esc(r.current_offer.state || '')}"><b>${r.current_offer.state === 'failed' ? 'Current offer: failed travel.' : r.current_offer.state === 'confirmed' ? 'Current offer: travel confirmed.' : r.current_offer.state === 'none' ? 'No current offer.' : 'Current offer: provisional.'}</b> ${esc(r.current_offer.plain)}</p>` : ''}
       ${gate.plain ? `<p class="${gate.held ? 'msg ' : ''}small" data-role="mb-travel-gate" data-state="${esc(gate.state || '')}"><b>${gate.held ? 'Held.' : 'AI-assessed.'}</b> ${esc(gate.plain)}</p>` : ''}
       ${ai.plain ? `<p class="small${ai.state === 'ready' ? '' : ' muted'}" data-role="mb-travel-ai" data-state="${esc(ai.state || '')}">${esc(ai.plain)}</p>` : ''}
       <p class="small muted">The apartments are chosen without travel first. Travel is checked last, for up to ${r.shortlist_max || 3} apartments; one that fails is replaced by the next stored candidate and the replacement is checked. ${esc(r.plain)}</p>
-      ${r.unruled_note ? `<p class="msg small" data-role="mb-travel-unruled">${esc(r.unruled_note)}</p>` : ''}
+      ${r.limit_note ? `<p class="msg small" data-role="mb-travel-limit-note">${esc(r.limit_note)}</p>` : ''}
       ${missed ? `<p class="msg small">${missed} journey${missed === 1 ? '' : 's'} could not be checked this time; where a time is missing the apartment reads "Travel time needs confirmation".</p>` : ''}
       ${!k.requests ? '<p class="small muted">No journeys were requested: no member has both a place of study or work that a journey can be measured to and an answer for how they would travel.</p>' : ''}
       ${(r.shortlist || []).length ? `<h4 class="small">${provisional ? 'Provisional shortlist (not confirmed)' : 'Shortlist'} · up to ${r.shortlist_max || 3}</h4><ol class="apt-list">${r.shortlist.map(x => item(x, provisional ? 'provisional' : 'AI-assessed')).join('')}</ol>` : '<p class="small">No apartment is left on the shortlist after the travel check.</p>'}
@@ -1320,7 +1322,7 @@
   }
   /* The group page's live travel check: run once when the page opens (when that is switched on) and again on request. The reply
      is kept in this page only, for at most 30 minutes, so a redraw does not ask again; nothing is saved anywhere. */
-  function groupTravelPanel(box, g) {
+  function groupTravelPanel(box, g, onChange) {
     const live = g.travel_live || {};
     if (!box || !live.enabled || ['Leased', 'Dissolved'].includes(g.status) || !(g.apartments || []).length) { if (box) box.innerHTML = ''; return; }
     mbTravelShown.forEach(kept => { if (kept.reply && Date.now() - kept.at > HB_TRAVEL_KEEP_MS) kept.reply = null; });
@@ -1341,6 +1343,9 @@
       out.innerHTML = kept.busy ? '<p class="small muted">Checking travel times… this can take up to a minute.</p>'
         : kept.reply ? groupTravelView(kept.reply)
         : kept.note ? `<p class="${kept.noteErr ? 'msg err small' : 'small muted'}">${esc(kept.note)}</p>` : '';
+      // the rest of the group page (readiness, the offer and introduction buttons) follows what this check shows now
+      if (onChange) onChange(kept.busy ? { state: 'checking' } : kept.reply && kept.reply.ok ? { ...(kept.reply.current_offer || {}), failed: (kept.reply.failed || []).map(x => x.apartment_id) }
+        : kept.reply ? { state: 'provisional', why: 'not_checked', plain: `Travel was not checked for the apartment currently offered. ${kept.reply.plain || ''} This is provisional: not a confirmed pass and not a failure.` } : null);
     };
     const run = async asked => {
       if (kept.busy) return;   // one request at a time for this group: a second click or redraw while one is running asks nothing
@@ -1424,12 +1429,21 @@
 
   // a stored reason as its own sentence: capitalised, ending in a full stop, followed by a space (empty when there is none)
   const sentence = t => { const w = (t || '').trim(); return w ? w.charAt(0).toUpperCase() + w.slice(1) + (/[.!?]$/.test(w) ? '' : '.') + ' ' : ''; };
-  function readinessHtml(g) {
+  /* Readiness to share an introduction. `travel` is where the apartment currently offered stands on travel: what the server
+     sent with the group (never checked: nothing about travel is stored) or what this page's live check has just shown. Green
+     only when that check confirmed the offer; a known failure is not ready; anything else is provisional and says so. */
+  function readinessHtml(g, travel) {
     if (['Leased', 'Dissolved'].includes(g.status)) return '';
+    const t = travel || g.travel_offer || { state: 'provisional', plain: 'Travel to campus or work has not been checked for the apartment currently offered. This is provisional: not a confirmed pass and not a failure.' };
     if (g.ready) {
+      if (t.state === 'failed') return `<p class="msg err small" data-role="readiness" data-travel="failed"><b>Not ready to circulate.</b> ${esc(t.plain)}</p>`;
+      if (t.state === 'checking') return `<p class="msg small" data-role="readiness" data-travel="checking"><b>Checking travel…</b> The AI review approved this group under the current rules and the staff brief is current. Travel for the apartment currently offered is being checked now; wait for the result before sharing.</p>`;
       // green only with a CURRENT introduction draft; a reviewed group with no draft, or an out-of-date one, is not shareable yet
-      if (g.intro && g.intro.current) return `<p class="msg ok small"><b>Ready to circulate.</b> The AI review approved this group under the current rules, the staff brief is current, every member is only in this proposed group and the introduction below is current.</p>`;
-      return `<p class="msg small"><b>Group reviewed; create a current introduction before sharing.</b> The AI review approved this group under the current rules and the staff brief is current, but ${g.intro && g.intro.text ? 'the introduction draft below is out of date' : 'no introduction has been drafted yet'}.</p>`;
+      if (g.intro && g.intro.current) {
+        if (t.state === 'confirmed') return `<p class="msg ok small" data-role="readiness" data-travel="confirmed"><b>Ready to circulate.</b> The AI review approved this group under the current rules, the staff brief is current, every member is only in this proposed group and the introduction below is current. ${esc(t.plain)}</p>`;
+        return `<p class="msg small" data-role="readiness" data-travel="provisional"><b>Provisionally ready: travel not confirmed.</b> The AI review approved this group under the current rules, the staff brief is current, every member is only in this proposed group and the introduction below is current. ${esc(t.plain)}</p>`;
+      }
+      return `<p class="msg small" data-role="readiness" data-travel="${esc(t.state || 'provisional')}"><b>Group reviewed; create a current introduction before sharing.</b> The AI review approved this group under the current rules and the staff brief is current, but ${g.intro && g.intro.text ? 'the introduction draft below is out of date' : 'no introduction has been drafted yet'}. ${esc(t.plain)}</p>`;
     }
     const why = ((g.circulation || {}).reasons || []);
     return `<p class="msg err small"><b>Not ready to circulate.</b> ${why.length ? esc(why.join('; ')) : 'The checks have not completed.'}${g.is_primary === false ? ' This is an alternative grouping shown for comparison only.' : ''}</p>`;
@@ -1530,7 +1544,7 @@
           const ta = introBox && introBox();
           const bound = ta ? { draft_id: ta.dataset.draftId ? Number(ta.dataset.draftId) : null, context_hash: ta.dataset.contextHash || null } : {};
           st = await api.post(`/api/groups/${g.id}/responses/introduce`, bound);
-          draw(); say('Recorded: the revised group has been introduced. Make a new link for each person.', true);
+          draw(); say('Recorded: the revised group has been introduced. Make a new link for each person.' + (st.travel_at_action ? ' ' + st.travel_at_action.plain : ''), !st.travel_at_action || st.travel_at_action.outcome === 'passed');
           return;
         }
         if (b.dataset.action === 'introduce-remaining') {
@@ -1554,11 +1568,11 @@
   async function groupDetail(p, id) {
     const g = await api.get(`/api/groups/${id}`);
     setDataset(g.is_test ? 'test' : 'real');
-    const flash = state.cache.flash; setTimeout(() => { if (state.cache.flash === flash) { state.cache.flash = null; state.cache.flashHeld = false; } }, 0);
+    const flash = state.cache.flash; setTimeout(() => { if (state.cache.flash === flash) { state.cache.flash = null; state.cache.flashHeld = false; state.cache.flashNeutral = false; } }, 0);
     const consentMissing = g.members.filter(m => !m.consent_share);
     p.innerHTML = `
       <div class="pane-head"><button class="btn btn--ghost btn--sm" type="button" data-role="back">← Groups</button><h1>Group ${g.id}</h1>${g.apartment_id != null ? `<a class="small" href="#/staff/apartments/${g.apartment_id}">${esc(g.address)}</a>` : `<span class="small muted">No current offer</span>`}</div>
-      ${state.cache.flash ? `<p class="msg ${state.cache.flashHeld || /^No replacement/.test(state.cache.flash) ? 'err' : 'ok'}">${esc(state.cache.flash)}</p>` : ''}
+      ${state.cache.flash ? `<p class="msg ${state.cache.flashHeld || /^No replacement/.test(state.cache.flash) ? 'err' : state.cache.flashNeutral ? '' : 'ok'}">${esc(state.cache.flash)}</p>` : ''}
       ${groupCard(g, { offer: true })}
       <div data-role="mb-travel-panel"></div>
       <div data-role="exit-exceptions"></div>
@@ -1636,8 +1650,10 @@
     // recipients: every real person's OWN email where sharing was agreed (from the draft response, else the consented leads)
     let recipients = g.intro_recipients || null;
     const recipientList = () => recipients ? recipients.map(r => r.email) : g.members.filter(x => x.consent_share).map(x => x.email);
+    let travelNow = null;   // where the apartment currently offered stands on travel, from this page's live check (see applyTravel)
+    const travelFailed = () => !!(travelNow && travelNow.state === 'failed');
     const mailto = () => {
-      const a = p.querySelector('[data-role="mailto"]'); const current = !!(g.intro && g.intro.current) && !!ta.value.trim();
+      const a = p.querySelector('[data-role="mailto"]'); const current = !!(g.intro && g.intro.current) && !!ta.value.trim() && !travelFailed();
       a.href = current ? `mailto:${recipientList().join(',')}?subject=${encodeURIComponent('Your proposed housemates – Apartment Living Melbourne')}&body=${encodeURIComponent(ta.value)}` : '#';
       a.hidden = !current; p.querySelector('[data-action="copy"]').disabled = !current; p.querySelector('[data-action="save-intro"]').disabled = !current;
     };
@@ -1654,7 +1670,39 @@
       const lb = p.querySelector('[data-role="intro-label"]'); if (lb) lb.textContent = 'Earlier draft: reload required';
       msg(im, `${why} The draft shown here is no longer the current one: copying, emailing and saving are switched off until you reload this group. Your unsaved text remains in the text box.`, false);
     };
-    groupTravelPanel(p.querySelector('[data-role="mb-travel-panel"]'), g);
+    // Travel for the apartment currently offered, as this page's live check last showed it (null: not checked on this page). A
+    // known failure switches off drafting, copying, emailing and Mark Introduced, and the Offer button of any apartment that
+    // failed; the server refuses the same actions with its own check, so this only saves the staff member a refused click.
+    const applyTravel = t => {
+      travelNow = t;
+      const readiness = p.querySelector('[data-role="introduction-readiness"]');
+      if (readiness && readiness.querySelector('[data-role="readiness"]')) readiness.innerHTML = readinessHtml(g, t);
+      const failedIds = new Set(((t && t.failed) || []).map(Number));
+      p.querySelectorAll('button[data-offer]').forEach(b => {
+        if (!b.dataset.label) { b.dataset.label = b.textContent; b.dataset.tip = b.title || ''; }
+        const failed = failedIds.has(+b.dataset.offer);
+        b.disabled = failed; b.textContent = failed ? 'Failed the travel check' : b.dataset.label;
+        b.title = failed ? 'This apartment failed the live travel check on this page, so it cannot be offered. Check travel times again if the group\'s details have changed.' : b.dataset.tip;
+      });
+      const blocked = travelFailed(), why = 'The apartment currently offered failed the travel check. Offer another apartment from the group\'s list first.';
+      // switch a control off for a failed offer, and back on only if this is what switched it off and nothing else has since
+      // (a stale draft, a booking change in progress, a request already on its way)
+      const gate = (el, offAnyway) => {
+        if (!el) return;
+        if (blocked) {
+          if (!el.dataset.travelOff) { el.dataset.travelOff = el.disabled ? 'kept' : 'set'; el.dataset.tip = el.title || ''; }
+          el.disabled = true; el.title = why;
+        } else if (el.dataset.travelOff) {
+          if (el.dataset.travelOff === 'set' && !offAnyway()) el.disabled = false;
+          if (el.title === why) el.title = el.dataset.tip;
+          delete el.dataset.travelOff;
+        }
+      };
+      gate(p.querySelector('[data-status="Introduced"]'), () => !(g.ready && g.intro && g.intro.current));
+      gate(p.querySelector('[data-action="draft"]'), () => !g.ready);
+      mailto();
+    };
+    groupTravelPanel(p.querySelector('[data-role="mb-travel-panel"]'), g, applyTravel);
     window.MMAI_STAFF_EXCEPTIONS.mount(p.querySelector('[data-role="exit-exceptions"]'), {
       bot: 'matebot', id, owner: g,
       canWrite: ['Proposed', 'Introduced', 'Group confirmed', 'Awaiting replacement'].includes(g.status) && g.is_primary !== false,
@@ -1670,7 +1718,7 @@
       const label = p.querySelector('[data-role="intro-label"]'); if (label) label.textContent = 'Reload to verify the current introduction';
       const readiness = p.querySelector('[data-role="introduction-readiness"]');
       if (readiness) readiness.textContent = 'Sharing is paused until this booking change has been checked.';
-      p.querySelectorAll('.badge--ready').forEach(b => { b.className = 'badge badge--warn'; b.textContent = 'Reload to check readiness'; });
+      p.querySelectorAll('.badge--ready, [data-role="ready-badge"]').forEach(b => { b.className = 'badge badge--warn'; b.textContent = 'Reload to check readiness'; });
       msg(im, 'A booking decision or option re-check is in progress. Reload this group before copying, emailing or editing its introduction.', false);
     }
     p.addEventListener('click', async ev => {
@@ -1698,9 +1746,27 @@
           return;
         }
         if (b.dataset.action === 'reload-group') { render(); return; }
-        if (b.dataset.offer) { b.disabled = true; await api.patch(`/api/groups/${id}`, { apartment_id: +b.dataset.offer }); render(); return; }
+        if (b.dataset.offer) {
+          // the server checks travel for this one apartment before it switches the offer: a known failure refuses it
+          b.disabled = true; msg(m, 'Checking travel for this apartment before offering it…');
+          try {
+            const r = await api.patch(`/api/groups/${id}`, { apartment_id: +b.dataset.offer });
+            if (r.travel_at_action) { state.cache.flash = `Offer changed. ${r.travel_at_action.plain}`; state.cache.flashNeutral = r.travel_at_action.outcome !== 'passed'; }
+            render();
+          } catch (ex) {
+            msg(m, ex.message, false);
+            if (ex.data && ex.data.travel_refused && ex.data.travel_at_action && ex.data.travel_at_action.outcome === 'failed') { b.textContent = 'Failed the travel check'; b.title = ex.message; }
+            else b.disabled = false;
+          }
+          return;
+        }
         if (b.dataset.action === 'rerank-ack') { await api.patch(`/api/groups/${id}`, { rerank_ack: true }); render(); return; }
-        if (b.dataset.action === 'offer-ack') { await api.patch(`/api/groups/${id}`, { offer_ack: true }); render(); return; }
+        if (b.dataset.action === 'offer-ack') {
+          b.disabled = true;
+          const r = await api.patch(`/api/groups/${id}`, { offer_ack: true });
+          if (r.travel_at_action) { state.cache.flash = `Acknowledged. ${r.travel_at_action.plain}`; state.cache.flashNeutral = r.travel_at_action.outcome !== 'passed'; }
+          render(); return;
+        }
         if (b.dataset.action === 'mate-decline') {  // GP11(l): staff speak with the inviter, then record their choice
           const box = p.querySelector(`[data-decline-choice="${b.dataset.rid}"]`); if (box) { box.hidden = !box.hidden; } return;
         }
@@ -1719,7 +1785,12 @@
           const bound = b.dataset.status === 'Introduced' && ta ? { draft_id: ta.dataset.draftId ? Number(ta.dataset.draftId) : null, context_hash: ta.dataset.contextHash || null } : {};
           let r;
           try { r = await api.patch(`/api/groups/${id}`, { status: b.dataset.status, ...bound }); }
-          catch (ex) { if (b.dataset.status === 'Introduced' && ex.status === 409) { introStale(ex.message); return; } throw ex; }
+          catch (ex) {
+            if (b.dataset.status === 'Introduced' && ex.data && ex.data.travel_refused) { msg(im, ex.message, false); b.disabled = !!(ex.data.travel_at_action && ex.data.travel_at_action.outcome === 'failed'); return; }
+            if (b.dataset.status === 'Introduced' && ex.status === 409) { introStale(ex.message); return; }
+            throw ex;
+          }
+          if (r.travel_at_action) { state.cache.flash = `Marked introduced. ${r.travel_at_action.plain}`; state.cache.flashNeutral = r.travel_at_action.outcome !== 'passed'; }
           if (r.gp8) { state.cache.flash = r.gp8.message ? `${r.gp8.address}: ${r.gp8.message}` : `Leased: ${r.gp8.address} is now taken. ${r.gp8.affected.length} other group(s) moved to their next best apartment and flagged.`; }
           render();
         }
@@ -1761,7 +1832,11 @@
             const r = await api.post(`/api/groups/${id}/introduction`, {});
             state.cache.flash = r.current ? `Introduction drafted by the AI for ${r.recipients.length} recipient(s).` + (r.without_email.length ? ` No email on record for: ${r.without_email.join(', ')}.` : '')
               : `${r.basis}. This template is not an AI draft: it cannot be copied or sent; draft again when the AI is available.`;
-          } catch (ex) { if (ex.status === 409) introStale(ex.message); else msg(im, ex.message, false); b.disabled = false; return; }
+            if (r.travel_at_action) { state.cache.flash += ` ${r.travel_at_action.plain}`; state.cache.flashNeutral = r.travel_at_action.outcome !== 'passed'; }
+          } catch (ex) {
+            if (ex.data && ex.data.travel_refused) { msg(im, ex.message, false); b.disabled = !!(ex.data.travel_at_action && ex.data.travel_at_action.outcome === 'failed'); return; }
+            if (ex.status === 409) introStale(ex.message); else msg(im, ex.message, false); b.disabled = false; return;
+          }
           render(); return;   // re-read the group so the current/historical labels, recipients and buttons come from the server
         }
         if (b.dataset.action === 'copy') { if (!(g.intro && g.intro.current)) return msg(im, 'Only a current draft can be copied. Draft it again first.', false); await navigator.clipboard.writeText(ta.value); msg(im, 'Copied.'); }
