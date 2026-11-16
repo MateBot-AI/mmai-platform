@@ -443,7 +443,10 @@
         const measured = person.fastest_minutes != null;
         const mins = measured ? routeMinutes(person.fastest_minutes) : '';
         const detail = measured ? `${mins} minutes (rounded) by ${(person.fastest_modes || []).join(' / ')}` :
-          ((f.no_destination || []).includes(person.index) ? 'destination not yet known' : 'travel time needs confirmation');
+          ((f.no_destination || []).includes(person.index) ? 'destination not yet known' :
+            // car journeys are never measured, and a car answer is never swapped for another way of travelling
+            ((person.unknown_modes || []).includes('Car') ? 'travel time needs confirmation (car was accepted; car journeys are not measured)' :
+              'travel time needs confirmation'));
         const warning = person.warning ? (measured ? '; long journey, discuss with the applicant' :
           '; possible long journey, confirm before discussing') : '';
         return `Person ${person.index}: ${detail}${warning}`;

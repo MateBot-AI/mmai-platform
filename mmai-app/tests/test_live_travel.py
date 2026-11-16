@@ -35,8 +35,7 @@ class Provider:
             {"travelMode": "WALK"}, {"travelMode": "TRANSIT", "transitDetails": {"transitLine": {"vehicle": {"type": self.vehicle}}}}]}]}]}
 
 
-@pytest.fixture
-def live(on, monkeypatch):
+def _live_env(monkeypatch):
     monkeypatch.setenv("MMAI_ROUTING_LIVE", "1")
     monkeypatch.setenv("GOOGLE_ROUTES_API_KEY", "test-key-not-real")
     monkeypatch.setenv("MMAI_ROUTING", "0")                      # the stored-evidence path stays off throughout
@@ -44,6 +43,11 @@ def live(on, monkeypatch):
     for name in routing.LIVE_LIMITS:
         monkeypatch.delenv(name, raising=False)
     monkeypatch.setattr(routing, "_post", lambda body: (_ for _ in ()).throw(AssertionError("real provider call in a test")))
+
+
+@pytest.fixture
+def live(on, monkeypatch):
+    _live_env(monkeypatch)
     stock(on)
     eid = submit(on)
     assert hs.run_pending(on.db)
@@ -223,12 +227,72 @@ def test_default_limits_and_what_each_request_asks_for(live):
     mask = routing.FIELD_MASK.lower()
     assert not any(word in mask for word in ("polyline", "toll", "traveladvisory", "speedreading"))
     when = routing.departure_at(datetime(2026, 11, 10, 2, 0, tzinfo=timezone.utc))
-    for mode in ("Walk", "Bike or scooter", "Tram", "Train", "Bus", "Car"):
+    assert routing.ROUTED_MODES == ("Walk", "Bike or scooter", "Tram", "Train", "Bus")
+    for mode in routing.ROUTED_MODES:
         body = routing.request_body("1 Test Street, Melbourne", "2 Test Street, Melbourne", mode, when)
-        assert body["travelMode"] in ("WALK", "BICYCLE", "TRANSIT", "DRIVE"), mode          # never the two-wheeler mode
+        assert body["travelMode"] in ("WALK", "BICYCLE", "TRANSIT"), mode                    # never car or the two-wheeler mode
         assert set(body) <= {"origin", "destination", "travelMode", "computeAlternativeRoutes", "transitPreferences",
-                             "departureTime", "routingPreference", "languageCode", "units", "regionCode"}, (mode, sorted(body))
-        assert ("routingPreference" in body) == (body["travelMode"] == "DRIVE"), mode       # traffic-aware routing for car only
+                             "departureTime"}, (mode, sorted(body))                           # no traffic-aware routing
+    for mode in ("Car", "DRIVE", "Scooter", ""):
+        with pytest.raises(ValueError):
+            routing.request_body("1 Test Street, Melbourne", "2 Test Street, Melbourne", mode, when)
+
+
+def _party(on, monkeypatch, transport):
+    _live_env(monkeypatch)
+    stock(on)
+    eid = submit(on, transport=transport)
+    assert hs.run_pending(on.db)
+    return eid
+
+
+def test_car_is_never_requested_and_never_swapped_for_another_way_of_travelling(on, monkeypatch):
+    """A party that accepted Tram and Car: only tram journeys are requested, the car journey stays not measured, and the
+    result is neither a confirmed pass nor a rejection, however quick the tram is."""
+    eid = _party(on, monkeypatch, ["Tram", "Car"])
+    p = Provider(tram="300s")
+    out = hs.live_travel_check(on.db, eid, CUR, "Anna", now=NOW, post=p)
+    assert out["ok"] and len(p.bodies) == 8 and out["check"]["requests"] == 8            # two buildings x four destinations x tram
+    assert {b["travelMode"] for b in p.bodies} == {"TRANSIT"}
+    assert not any("routingPreference" in b for b in p.bodies)
+    shown = everything(out)
+    assert shown and all(x["travel"]["status"] == tv.NEEDS_CONFIRMATION for x in shown)
+    for x in shown:
+        assert x["travel"]["facts"]["accepted_modes"] == ["Tram", "Car"]
+        for person in x["travel"]["facts"]["people"]:
+            if person["status"] != tv.NO_DESTINATION:
+                assert person["unknown_modes"] == ["Car"] and person["fastest_modes"] == [], person
+    # nothing is ruled out on travel: the only travel wording anywhere is the needs-confirmation line
+    for x in out["why_not"] + shown:
+        assert all(r.startswith("Travel time needs confirmation") for r in x["reasons"] if "ravel" in r or "ourney" in r), x["reasons"]
+
+
+def test_a_party_that_accepted_only_car_gets_no_request_and_needs_confirmation(on, monkeypatch):
+    eid = _party(on, monkeypatch, ["Car"])
+    p = Provider()
+    out = hs.live_travel_check(on.db, eid, CUR, "Anna", now=NOW, post=p)
+    assert p.bodies == []                                                                 # nothing is asked of the provider
+    assert out["ok"] and out["check"]["requests"] == 0 and out["check"]["measured"] == 0 and out["check"]["not_requested"] == 0
+    assert audits(on) == []                                                               # no request, so no usage on record
+    shown = everything(out)
+    assert shown and all(x["travel"]["status"] == tv.NEEDS_CONFIRMATION for x in shown)
+    assert all(person["unknown_modes"] == ["Car"] for x in shown for person in x["travel"]["facts"]["people"]
+               if person["status"] != tv.NO_DESTINATION)
+    stored = json.loads(current(on, eid)["result_json"])
+    assert stored["listed"] and all(x["travel"]["status"] == tv.NEEDS_CONFIRMATION for x in stored["listed"])
+
+
+def test_stored_journey_path_never_requests_car(monkeypatch):
+    """The stored-evidence path (switched off) uses the same five ways of travelling."""
+    from types import SimpleNamespace
+    req = SimpleNamespace(transport=("Walk", "Car"), people=[{"position": 1, "doing": "Working", "place": "1 Work Street, Melbourne"}])
+    inv = [{"id": 7, "address": "10 Test Street", "suburb": "Carlton"}]
+    policy = {"max_requests_per_job": 50, "fresh_seconds": 3600, "valid_until": "2099-01-01T00:00:00Z", "digest": "x"}
+    p = Provider()
+    est = routing.Estimates(req, inv, policy, now=datetime(2026, 11, 10, 2, 0, tzinfo=timezone.utc), post=p)
+    got = est(7, 1, "primary")
+    assert [b["travelMode"] for b in p.bodies] == ["WALK"] and est.calls == 1
+    assert "Car" not in got and got["Walk"] is not tv.UNMEASURED
 
 
 def test_the_request_count_is_on_record_before_the_first_request_leaves(live, monkeypatch):
@@ -338,6 +402,7 @@ def test_page_wording_and_attribution():
     block = js[start:js.index("const scenario = (key, sc) =>", start)]
     attr = '<img class="gmaps-attr" src="/img/google_maps_logo.svg" alt="Google Maps" translate="no" width="98" height="18">'
     assert f"const GMAPS_ATTR = '{attr}';" in js                           # the provider's logo, labelled with its untranslated name
+    assert "car was accepted; car journeys are not measured" in js          # why a car answer always reads needs confirmation
     assert '<p class="small">${GMAPS_ATTR}<br>Journey estimates.' in block  # at the head of the live options
     import hashlib
     logo = open(os.path.join(root, "client", "img", "google_maps_logo.svg"), "rb").read()   # the provider's own file, byte for byte

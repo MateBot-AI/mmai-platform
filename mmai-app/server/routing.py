@@ -33,7 +33,11 @@ REQUIRED_FIELDS = frozenset(("duration", "mode", "departure", "attribution"))
 TRANSIT = {"Tram": ("LIGHT_RAIL", {"TRAM", "LIGHT_RAIL"}),
            "Train": ("TRAIN", {"HEAVY_RAIL", "COMMUTER_TRAIN", "HIGH_SPEED_TRAIN", "SUBWAY", "RAIL"}),
            "Bus": ("BUS", {"BUS", "INTERCITY_BUS", "TROLLEYBUS"})}
-DIRECT = {"Walk": "WALK", "Car": "DRIVE", "Bike or scooter": "BICYCLE"}
+DIRECT = {"Walk": "WALK", "Bike or scooter": "BICYCLE"}
+# The only ways of travelling a journey is ever requested for: walking, bicycle, tram, train and bus. Car journeys are
+# not measured. A person who accepted Car keeps that answer; it is never swapped for another way of travelling, and
+# the car journey stays "not measured", so the travel result for that party reads as needing confirmation.
+ROUTED_MODES = tuple(DIRECT) + tuple(TRANSIT)
 ENDPOINT = "https://routes.googleapis.com/directions/v2:computeRoutes"
 FIELD_MASK = "routes.duration,routes.legs.steps.travelMode,routes.legs.steps.transitDetails.transitLine.vehicle.type"
 UNAVAILABLE = "Travel time needs confirmation"
@@ -105,6 +109,8 @@ def _valid_route(route, mode):
         return False
     if mode in DIRECT:
         return all(s.get("travelMode") == DIRECT[mode] for s in steps)
+    if mode not in TRANSIT:
+        return False
     vehicles = []
     for step in steps:
         if step.get("travelMode") == "WALK":
@@ -116,14 +122,13 @@ def _valid_route(route, mode):
 
 
 def request_body(origin, destination, mode, departure):
+    if mode not in ROUTED_MODES:
+        raise ValueError("no journey is requested for this way of travelling")
     body = {"origin": {"address": origin}, "destination": {"address": destination},
             "travelMode": DIRECT.get(mode, "TRANSIT"), "computeAlternativeRoutes": True}
     if mode in TRANSIT:
         body["transitPreferences"] = {"allowedTravelModes": [TRANSIT[mode][0]]}
-    if mode in TRANSIT or mode == "Car":
         body["departureTime"] = departure.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
-    if mode == "Car":
-        body["routingPreference"] = "TRAFFIC_AWARE"
     return body
 
 
@@ -181,6 +186,8 @@ class Estimates:
             return {}
         result = {}
         for mode in self.req.transport:
+            if mode not in ROUTED_MODES:
+                continue   # never requested; the caller reads a missing mode as not measured
             key = (origin, destination, mode)
             if key not in self.cache:
                 self.cache[key] = tv.UNMEASURED
@@ -241,10 +248,12 @@ LIVE_ENV = "MMAI_ROUTING_LIVE"
 LIVE_BASIS = "Estimated weekday departure at 08:00 Melbourne; not a guaranteed journey time"
 LIVE_OFF = "Live travel checks are switched off."
 # Request limits: (default, lowest, highest). The provider bills each successful request under one price tier chosen by
-# the features asked for. What this module asks for (request_body + FIELD_MASK) is in the lowest tier for walking, cycling
-# and public transport, and in the middle tier for car journeys (traffic-aware routing); it asks for nothing in the highest
-# tier (no two-wheeler mode, tolls, traffic on polylines or large-vehicle routing). The monthly default is kept below the
-# middle tier's monthly free allowance (5,000 requests), so the default cannot run past it whatever mix of modes is used.
+# the features asked for. What this module asks for (request_body + FIELD_MASK) uses none of the features the provider
+# lists for its middle tier (traffic-aware routing, waypoint optimisation, more than ten stops, location modifiers) or
+# its highest tier (two-wheeler mode, tolls, traffic on polylines, large-vehicle routing), which by its published list
+# leaves the lowest tier. That reading is from the provider's price pages as read on 16 November 2026; it has not been
+# checked against a bill. The monthly default is kept low for that reason: under the middle tier's monthly free
+# allowance (5,000 requests) as well as the lowest tier's (10,000).
 LIVE_LIMITS = {"MMAI_ROUTING_LIVE_MAX_REQUESTS": (200, 1, 500),          # one check
                "MMAI_ROUTING_LIVE_DAILY_REQUESTS": (1000, 1, 20000),     # all checks in one UTC day
                "MMAI_ROUTING_LIVE_MONTHLY_REQUESTS": (4000, 1, 50000)}   # all checks in one UTC month
@@ -305,7 +314,8 @@ class LiveEstimates(Estimates):
                 destination = _destination(person, which)
                 if destination:
                     for mode in self.req.transport:
-                        yield (origin, destination, mode)
+                        if mode in ROUTED_MODES:   # never a car journey
+                            yield (origin, destination, mode)
 
     def _measure(self, key):
         origin, destination, mode = key

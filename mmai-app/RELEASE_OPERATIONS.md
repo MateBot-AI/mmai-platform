@@ -84,15 +84,21 @@ stored options. It is off by default and is not approved for use.
 - Cost basis, from the provider's published
   [price tiers](https://developers.google.com/maps/billing-and-pricing/sku-details/routes)
   and [price list](https://developers.google.com/maps/billing-and-pricing/pricing)
-  (read 16 November 2026): each successful request is billed under one tier. Walking,
-  cycling and public-transport requests as sent here use no listed higher-tier feature
-  (lowest tier, 10,000 free requests a month). Car requests set traffic-aware routing
-  (middle tier, 5,000 free a month). Nothing sent here is a listed highest-tier
-  feature. The monthly default of 4,000 is below the middle tier's free allowance, so
-  at the published prices the default should cost nothing in any mix of modes, provided
-  nothing else on the same billing account uses these tiers. This reading has not been
-  confirmed against a billing report; check the first month's report before raising
-  the limit.
+  (read 16 November 2026): each successful request is billed under one tier. The
+  walking, bicycle, tram, train and bus requests sent here use none of the features the
+  provider lists for its middle or highest tier, which by that list leaves the lowest
+  tier (10,000 free requests a month). The monthly default of 4,000 is below that and
+  below the middle tier's free allowance (5,000), so at the published prices the
+  default should cost nothing, provided nothing else on the same billing account uses
+  these tiers. This reading has not been confirmed against a billing report; check the
+  first month's report before raising the limit.
+- Journeys are requested for five ways of travelling only: walking, bicycle, tram,
+  train and bus. No car journey is ever requested, by this check or by the stored
+  journey path. A party that accepted Car keeps that answer: it is not swapped for
+  another way of travelling, the car journey stays not measured, and every option for
+  that party reads "Travel time needs confirmation", whether Car was the only answer or
+  one of several. The HomeBot form still offers Car; removing it, or assessing such a
+  party on its other answers alone, needs Bill's ruling.
 - A decline recorded for an apartment that was offered from the live view keeps the
   saved details for that apartment (travel time needing confirmation), never the live
   journey times.
