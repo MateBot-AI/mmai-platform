@@ -1601,7 +1601,7 @@ def group_detail(gid: int, staff=Depends(current_staff)):
     if out["travel_live"]["enabled"] and out["status"] not in ("Leased", "Dissolved"):
         # which state of the group this page shows, as a travel check reads it: the page drops a travel result it is holding
         # as soon as the group, one of its apartments or anyone's travel answers is no longer what that result was for
-        out["travel_live"] = {**out["travel_live"], "key": matebot_live.view_key(db, gid)}
+        out["travel_live"] = matebot_live.page_state(db, gid, out["travel_live"])
     # alternative groupings that share a member with this group (shown to staff as alternatives only)
     ids = [m["enquiry_id"] for m in out["members"]]
     if ids:

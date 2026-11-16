@@ -1359,7 +1359,8 @@
       // already knows for the group as it stands is still a failure until a completed check says otherwise, so what it
       // switched off stays off. Nothing else is carried over: a pass is never remembered.
       const why = kept.busy ? 'Travel is being checked again.'
-        : kept.reply ? `Travel was not checked again. ${kept.reply.plain || ''}` : 'Its journey times are no longer shown. Check travel times again to see current ones.';
+        : kept.reply ? `Travel was not checked again. ${kept.reply.plain || ''}`
+        : kept.stale ? 'Reload the group to check travel for it as it stands.' : 'Its journey times are no longer shown. Check travel times again to see current ones.';
       if (kept.fail && kept.fail.offer) onChange({ state: 'failed', plain: `${kept.fail.plain} ${why}`.trim(), failed: kept.fail.ids, held: true });
       else if (kept.busy) onChange({ state: 'checking', failed: kept.fail ? kept.fail.ids : [] });
       else if (kept.reply) onChange({ state: 'provisional', why: 'not_checked', failed: kept.fail ? kept.fail.ids : [], plain: `Travel was not checked for the apartment currently offered. ${kept.reply.plain || ''} This is provisional: not a confirmed pass and not a failure.` });
@@ -1367,21 +1368,24 @@
     };
     const run = async asked => {
       if (kept.busy) return;   // one request at a time for this group: a second click or redraw while one is running asks nothing
-      kept.busy = true; kept.tried = true; kept.note = '';
+      kept.busy = true; kept.tried = true; kept.note = ''; kept.stale = false;
       kept.show();
       try {
         const reply = await api.post(`/api/groups/${g.id}/travel-check`, {});
-        if (reply && reply.ok && live.key && reply.key !== live.key) {
-          // the check was made for the group as it is now, which is not the group this page is showing
-          kept.reply = null; kept.fail = null; kept.noteErr = true;
-          kept.note = 'The group, one of its apartments or a travel answer changed after this page was opened. Reload the group to check travel for it as it stands.';
+        if (reply && reply.ok && (live.key_unavailable || (live.key && reply.key !== live.key))) {
+          // The check was made for the group as it is now, and this page cannot tell that is the group it is showing: it
+          // changed after the page was opened, or its state could not be named when it was. The result is not used. A
+          // failure this page already knows is NOT lifted by it: only a completed check for the state on the page does that.
+          kept.reply = null; kept.noteErr = true; kept.stale = true;
+          kept.note = live.key_unavailable ? 'Travel for this group cannot be confirmed on this page: its travel details could not be read in full. Reload the group; if this stays, check the members\' travel answers.'
+            : 'The group, one of its apartments or a travel answer changed after this page was opened. Reload the group to check travel for it as it stands.';
           return;
         }
         kept.reply = reply;
         kept.at = Date.now();
         const shownAt = kept.at;
         setTimeout(() => {
-          if (kept.at !== shownAt) return;
+          if (kept.at !== shownAt || !kept.reply) return;   // a later check took its place, or it was already dropped: nothing to clear
           kept.reply = null; kept.noteErr = false;
           kept.note = 'The journey times shown earlier have been cleared. Check travel times again to see current ones.';
           kept.show();

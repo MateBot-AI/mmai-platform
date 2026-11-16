@@ -426,6 +426,28 @@ def test_the_group_page_is_given_the_key_only_while_live_checks_can_run(client, 
     assert all("key" not in (x.get("travel_live") or {}) for x in client.get("/api/groups?dataset=test").json()["items"])   # lists never work it out
 
 
+def test_a_group_whose_travel_details_cannot_be_read_still_opens_and_is_never_confirmed(client, monkeypatch, caplog):
+    db, a, lead, solo, g, other = _ready_party_with_two_offers(client, monkeypatch)
+    gid = g["id"]
+    _on(monkeypatch, db, gid, Provider(minutes=20))
+
+    def unreadable(c, group_id):
+        raise ValueError("12 Secret Street could not be read")
+    monkeypatch.setattr(ml, "group_people", unreadable)
+    with caplog.at_level("WARNING"):
+        r = client.get(f"/api/groups/{gid}")
+    assert r.status_code == 200                                                          # the page opens
+    live = r.json()["travel_live"]
+    assert live["enabled"] is True and live["key"] is None and live["key_unavailable"] is True
+    assert r.json()["travel_offer"]["state"] == "provisional" and r.json()["members"]     # provisional, and the rest of the page is there
+    said = [x.getMessage() for x in caplog.records if "travel key unavailable" in x.getMessage()]
+    assert said == [f"matebot travel key unavailable group={gid} kind=ValueError"]       # the kind only: nothing from the stored answer
+    assert "Secret" not in caplog.text
+    # unit: the same, without the app
+    assert ml.page_state(db, gid, {"enabled": True}) == {"enabled": True, "key": None, "key_unavailable": True}
+    monkeypatch.undo()
+
+
 def test_a_changed_offer_that_fails_travel_cannot_be_acknowledged(client, monkeypatch):
     from server import stock_lifecycle as sl
     from tests.test_gp13_group_responses import _introduced
@@ -492,9 +514,12 @@ def test_the_page_never_shows_ready_in_green_without_a_confirmed_travel_check():
     assert ".length} ready for reservations (travel not confirmed)$" in STAFF_JS and ".length} ready for reservations$" not in STAFF_JS   # the list's own count
     panel = STAFF_JS.split("function groupTravelPanel(box, g, onChange) {", 1)[1].split("\n  }\n", 1)[0]
     assert "const key = `${g.id}:${live.key || ''}:" in panel                            # what the page holds is held for one state of the group
-    assert "if (reply && reply.ok && live.key && reply.key !== live.key) {" in panel     # a result for another state is not used
+    assert "if (reply && reply.ok && (live.key_unavailable || (live.key && reply.key !== live.key))) {" in panel   # a result for another state, or for a state the page could not name, is not used
     assert "if (kept.fail && kept.fail.offer) onChange({ state: 'failed'," in panel       # a known failure outlasts a re-check and the cleared figures
-    assert panel.count("kept.fail = ") == 2 and "kept.fail = cur.state === 'failed' || ids.length ?" in panel and "kept.reply = null; kept.fail = null;" in panel
+    assert panel.count("kept.fail = ") == 1 and "kept.fail = cur.state === 'failed' || ids.length ?" in panel   # set or lifted in ONE place: a completed check
+    assert "kept.fail = null" not in panel and "kept.reply = null; kept.noteErr = true; kept.stale = true;" in panel   # a result that is not used lifts nothing
+    assert "if (kept.at !== shownAt || !kept.reply) return;" in panel                      # the 30-minute clear leaves a reload or could-not-check note alone
+    assert "kept.stale ? 'Reload the group to check travel for it as it stands.'" in panel   # and what it leaves switched off says to reload, not to check again
     assert "state: 'confirmed'" not in panel and "'confirmed'" not in panel               # a pass is never remembered or made up here
     assert STAFF_JS.count("ex.data.travel_refused") >= 3 and STAFF_JS.count("r.travel_at_action.plain") >= 4
     for code in ("H28", "GP6", "T6", "M4", "T4"):                                        # staff screens never quote register codes

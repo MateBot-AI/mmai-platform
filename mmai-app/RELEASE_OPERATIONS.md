@@ -472,7 +472,12 @@ Not done, and not to be reported as done:
     instead. After any change the page checks again by itself when it is next
     opened or redrawn. A page left open while someone else edits the group
     does not know until it is reloaded; the server's check at each action does
-    not depend on the page.
+    not depend on the page. A result for another state lifts nothing the page
+    already knows: a known failure stays in force and the page asks for a
+    reload. If the server cannot read a group's travel details to name its
+    state, the group page still opens, uses no travel result for that group
+    and never shows travel as confirmed; the log records only the group
+    number and the kind of error.
   - A failure the page knows about stays in force on that page while travel is
     being checked again, when a re-check could not run, and after the journey
     times have been cleared from view at 30 minutes. Only a completed check for

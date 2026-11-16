@@ -416,6 +416,17 @@ def view_key(c, gid: int) -> str:
     return _key((_signature(c, int(gid)), _people_key(group_people(c, int(gid)))))
 
 
+def page_state(c, gid: int, live: dict) -> dict:
+    """`live` (see state) with the key of the group as it stands, for the group's own page. If the group cannot be read for
+    travel (a stored answer the travel code cannot use), the page still opens: it is told the key is unavailable, and then
+    uses no travel result at all for this group, so nothing can read as confirmed. The cause is logged by its kind only."""
+    try:
+        return {**live, "key": view_key(c, gid)}
+    except Exception as ex:   # the group page must not go down because of a travel answer
+        hs.log.warning("matebot travel key unavailable group=%s kind=%s", int(gid), type(ex).__name__)
+        return {**live, "key": None, "key_unavailable": True}
+
+
 def _checked(c, gid: int, ids: list, people: list, staff: str, now, post, work):
     """The part every live check shares, under the one travel lock: the shared allowance, the provider adapter, the count
     of requests recorded before they leave, and the refusal when the group changed while the provider was being asked.
