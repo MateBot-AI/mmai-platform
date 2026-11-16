@@ -241,7 +241,8 @@ SECTIONS: list[tuple[str, list[tuple[str, str, str]]]] = [
     ("Study or work", [
         ("doing", "What will you be doing in Melbourne?", "text"), ("school", "Where will you study?", "school"),
         ("course", "Course name", "text"), ("level", "Level", "text"), ("course_start", "Course start date", "date"), ("course_end", "Course end date", "date"),
-        ("work", "Where will you work?", "text"), ("areas", "Preferred areas", "list"), ("travel", "Maximum travel time to campus or work", "text"),
+        ("work", "Where will you work?", "text"), ("areas", "Preferred areas", "list"),
+        ("travel_modes", "How would you get to campus or work?", "list"), ("travel", "Maximum travel time to campus or work", "text"),
     ]),
     ("Ideal housemates", [   # 8 Nov 2026: the own-country/region and avoid-country/region questions are no longer asked or shown, even for older records
         ("smoke", "Do you smoke or vape?", "text"), ("smoke_ok", "Are you OK living with someone who smokes or vapes outside?", "text"),
@@ -258,7 +259,7 @@ SECTIONS: list[tuple[str, list[tuple[str, str, str]]]] = [
     ]),
 ]
 
-LIST_FIELDS = {"apt_sizes", "rooms", "areas", "features", "features_top", "languages"}
+LIST_FIELDS = {"apt_sizes", "rooms", "areas", "travel_modes", "features", "features_top", "languages"}
 SCHOOL_NAMED = ("Other", "English language school (enter name)")  # the form asks for the name in both cases
 
 
@@ -278,6 +279,8 @@ def applicable(field: str, a: dict) -> bool:
         return a.get("couples_answer") == "Yes"
     if field in ("features", "features_top"):   # asked since 8 Nov 2026; older records never saw the question
         return "features" in a and (field == "features" or bool(a.get("features")))
+    if field == "travel_modes":   # asked since 16 Nov 2026 (H31): a record saved before then never saw the question, so it is not listed
+        return "travel_modes" in a
     if field == "adults_confirm":   # pre-8 November 2026 records never answered this question; it is not shown for them
         return "adults_confirm" in a
     if field in ("intro_sex", "intro_age"):   # optional introduction-only questions asked since 8 Nov 2026; shown only when answered
@@ -344,7 +347,7 @@ def receipt_rows(e: dict) -> list[tuple[str, list[tuple[str, str]]]]:
                 text = "" if v is None else str(v)
             text = text.strip() if isinstance(text, str) else str(text)
             if not text:
-                text = "No preferences selected" if f in LIST_FIELDS else "Not provided"
+                text = "No preferences selected" if f in LIST_FIELDS and f != "travel_modes" else "Not provided"
             items.append((q, text))
         if items:
             out.append((title, items))

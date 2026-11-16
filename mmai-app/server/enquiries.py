@@ -52,7 +52,7 @@ ANSWER_KEYS = frozenset({
     "first_name", "last_name", "email", "phone_code", "phone", "contact_method", "birth_country_raw", "live_country_raw", "languages", "languages_other",
     "city", "move_in", "move_in_flex", "move_out", "move_out_flex", "budget_option", "apt_sizes", "mate_ideal", "mate_max", "rooms", "room_first", "bunk_ok",
     "party", "party_size", "party_members", "couples_answer", "couples", "doing", "school", "school_other", "course", "level", "course_start", "course_end",
-    "work", "areas", "travel", "features", "features_top", "smoke", "smoke_ok", "routine", "tidy", "social", "guests",
+    "work", "areas", "travel", "travel_modes", "features", "features_top", "smoke", "smoke_ok", "routine", "tidy", "social", "guests",
     "diet", "else_text", "intro", "source", "consent_store", "consent_share", "consent_marketing", ADULTS_FIELD,
     *ip.KEYS,   # introduction-only sex / current age (optional; Bill 8 Nov 2026) — display data, never a matching input
     "campaign", "staff_member", "staff_notes", "channel", "enq_date", "is_test", "referrer",
@@ -226,6 +226,24 @@ def _d(s):
         return None
 
 
+# H31 / H28(c) / GP6(d) (16 Nov 2026): how the person would travel to their place of study or work. The same three choices as the
+# HomeBot form; public transport is one combined choice. DERIVED wording: Bill approved the three choices for both forms, the
+# question text here is taken from the HomeBot form's and is not his own wording. Optional, like 4.7. An enquiry saved before
+# this question, or one that leaves it blank, has NO answer (NULL): a choice is never inferred, and no choice is assumed.
+TRAVEL_MODES = ("Walk", "Bicycle", "Public transport")
+TRAVEL_MODES_MESSAGE = "Please choose from the travel choices shown."
+
+
+def travel_modes_value(v):
+    """The clean list of chosen travel choices in the form's order; [] for no answer; None when the value is not a list of
+    the three choices (a string, an unknown or repeated choice): refused, never repaired."""
+    if v is None or v == "" or v == []:
+        return []
+    if not isinstance(v, list) or any(not isinstance(x, str) or x not in TRAVEL_MODES for x in v) or len(set(v)) != len(v):
+        return None
+    return [m for m in TRAVEL_MODES if m in v]
+
+
 def validate(a: dict, today: date | None = None, party_max: int | None = None) -> dict:
     """Server-side validation shared by every channel. Returns {field: message}. `party_max` (GP12): the most people one
     party may hold, one less than the beds in ALM's largest available apartment (matching.mate_limit); 7 when not given."""
@@ -262,6 +280,8 @@ def validate(a: dict, today: date | None = None, party_max: int | None = None) -
         err["rooms"] = "Please tick at least one room arrangement."
     if (a.get("city") or "Melbourne") != "Melbourne":
         err["city"] = "Only Melbourne is available at launch."  # C1
+    if travel_modes_value(a.get("travel_modes")) is None:
+        err["travel_modes"] = TRAVEL_MODES_MESSAGE
     mi, mo = _d(a.get("move_in")), _d(a.get("move_out"))
     if a.get("move_in") and not mi:
         err["move_in"] = "Please enter a valid date."
@@ -456,6 +476,7 @@ def create_enquiry(c, a: dict, channel: str, staff: str | None = None, is_test: 
         couples_answer=couples_answer, couples_json=j(couples),
         doing=a.get("doing"), school=a.get("school"), school_other=a.get("school_other"), course=a.get("course"), level=a.get("level"),
         course_start=a.get("course_start"), course_end=a.get("course_end"), work=a.get("work"), areas=j(a.get("areas") or []), travel=a.get("travel"),
+        travel_modes=j(travel_modes_value(a.get("travel_modes"))) if travel_modes_value(a.get("travel_modes")) else None,   # NULL = no answer
         sex_pref=NOT_COLLECTED, age_pref=None, own_region=None, avoid_answer=NOT_COLLECTED, avoid_regions=None, avoid_countries=None,   # retired 8 Nov 2026
         features=j(a.get("features") or []), features_top=j(a.get("features_top") or []), smoke=a["smoke"], smoke_ok=a["smoke_ok"],
         routine=a.get("routine"), tidy=a.get("tidy"), social=a.get("social"), guests=a.get("guests"), diet=a.get("diet"), else_text=a.get("else_text"), intro=a.get("intro"),
@@ -497,7 +518,7 @@ def create_enquiry(c, a: dict, channel: str, staff: str | None = None, is_test: 
 
 EDITABLE = {"status", "staff_notes", "campaign", "staff_member", "first_name", "last_name", "email", "phone_code", "phone", "contact_method",
             "birth_country", "birth_country_confirmed", "live_country", "move_in", "move_in_flex", "move_out", "move_out_flex", "budget_option", "mate_ideal", "mate_max",
-            "bunk_ok", "room_first", "doing", "school", "school_other", "course", "level", "work", "travel", "smoke", "smoke_ok",
+            "bunk_ok", "room_first", "doing", "school", "school_other", "course", "level", "work", "travel", "travel_modes", "smoke", "smoke_ok",
             "routine", "tidy", "social", "guests", "diet", "else_text", "intro", "source", "languages", "apt_sizes", "rooms", "areas", "features", "features_top",
             "consent_share", "consent_marketing", "city", "couples_answer", "couples_json", "adults_confirmed", *ip.KEYS}
 JSON_FIELDS = {"languages", "apt_sizes", "rooms", "areas", "features", "features_top", "couples_json"}
@@ -558,6 +579,11 @@ def _update_enquiry_guarded(c, eid: int, patch: dict, staff: str | None) -> None
             raise ValidationError({"smoke": "Please choose one of the smoking answers."})
         if k == "smoke_ok" and v not in SMOKE_OK_OPTIONS:
             raise ValidationError({"smoke_ok": YES_NO_MESSAGE})
+        if k == "travel_modes":   # the form's three choices only; an empty list clears the answer (NULL), nothing is inferred
+            modes = travel_modes_value(v)
+            if modes is None:
+                raise ValidationError({"travel_modes": TRAVEL_MODES_MESSAGE})
+            v = j(modes) if modes else None
         if k == "birth_country_confirmed":
             v = 1 if v in (True, 1, "1", "Yes", "yes", "true") else 0
         if k == "adults_confirmed":
@@ -694,6 +720,7 @@ def get_enquiry(c, eid: int) -> dict:
         raise KeyError("Enquiry not found")
     for k in JSON_FIELDS:
         e[k] = pj(e[k])
+    e["travel_modes"] = pj(e.get("travel_modes"))   # [] = no answer (not asked, or left blank)
     # I8: retired identity fields are never returned (historical values stay in the row, untouched and unused)
     for k in RETIRED_FIELDS:
         e.pop(k, None)

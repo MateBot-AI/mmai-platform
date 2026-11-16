@@ -164,19 +164,16 @@ def preference_score(apt: rules.Apartment, units: list[rules.Unit], check: rules
     leads = [u.extra for u in units]
     n_people = sum(u.size for u in units)
     parts: dict[str, float] = {}
-    # M4 proximity to campus (and 4.7 travel time) + 4.6 preferred areas
-    prox = []
+    # 4.6 preferred areas only. M4 / GP6(d) (16 Nov 2026): distance to the place of study and the 4.7 travel time are NOT
+    # part of this score. Travel is checked last, on the shortlisted apartments, from measured journeys (matebot_travel);
+    # the former straight-line distance, its fixed distance per travel-time answer and its assumed 30 minutes for a blank
+    # answer are gone. The weight of this part is unchanged, not re-tuned.
+    area_fit = []
     for e in leads:
-        c = _campus(e)
-        if c:
-            km = _km(apt.lat, apt.lon, c["lat"], c["lon"])
-            if km is not None:
-                limit_km = {"5 minutes": 1.0, "15 minutes": 3.0, "30 minutes": 7.0, "45 minutes": 12.0, "60+ minutes": 20.0}.get(e.get("travel") or "", 7.0)
-                prox.append(max(0.0, 1 - km / (2 * limit_km)))
         areas = pj(e.get("areas"))
         if areas and "No preference" not in areas:
-            prox.append(1.0 if apt.suburb in areas else 0.3)
-    parts["proximity"] = sum(prox) / len(prox) if prox else 0.6
+            area_fit.append(1.0 if apt.suburb in areas else 0.3)
+    parts["areas"] = sum(area_fit) / len(area_fit) if area_fit else 0.6
     # lease-length alignment (2.4 spread)
     outs = [u.move_out for u in units]
     spread = (max(outs) - min(outs)).days if len(outs) > 1 else 0
@@ -209,7 +206,7 @@ def preference_score(apt: rules.Apartment, units: list[rules.Unit], check: rules
             pair_scores["diet"].append(1.0 if da == db_ or "None" in (da, db_) else 0.7)
     for k, v in pair_scores.items():
         parts[k] = sum(v) / len(v) if v else 0.7
-    weights = {"proximity": 2.0, "dates": 1.5, "vacancy": 1.5, "group_size": 1.0, "room_choice": 1.0,
+    weights = {"areas": 2.0, "dates": 1.5, "vacancy": 1.5, "group_size": 1.0, "room_choice": 1.0,
                "routine": 1.0, "tidy": 1.2, "social": 1.2, "guests": 1.0, "diet": 0.5}
     total = sum(parts[k] * w for k, w in weights.items()) / sum(weights.values())
     return round(total * 100, 1), {k: round(v, 2) for k, v in parts.items()}

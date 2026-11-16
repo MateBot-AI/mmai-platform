@@ -96,7 +96,9 @@ OUTPUT_TOKENS = 1800
 # at their maximum, plus each option note at its maximum. An engineering limit, not a rule: sized at three characters per
 # token (a cautious figure for English prose inside JSON; not measured against the model), never below the earlier fixed
 # budget and never above ai.OUTPUT_TOKEN_CEILING. A reply cut off there gets the usual one compact retry and no more.
-OUTPUT_TOKENS_BASE, OUTPUT_TOKENS_PER_OPTION = 1500, 120
+# 2000 + 150 (first 1500 + 120): the reviewer's margin, because digits and fact ids take more tokens than prose and the number
+# of fact ids in a finding is not capped. Too small a budget costs a held review, never an unreviewed pass.
+OUTPUT_TOKENS_BASE, OUTPUT_TOKENS_PER_OPTION = 2000, 150
 # automatic consumer (runs inside the existing AI queue worker, ai_queue._iteration): rows per batch, batches per wake, and the
 # delay before a row that stays pending after an attempt (provider failure / unusable reply) is tried again
 BATCH = int(os.environ.get("MMAI_HOMEBOT_REVIEW_BATCH", "5"))

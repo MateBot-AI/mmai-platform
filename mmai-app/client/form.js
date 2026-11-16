@@ -485,7 +485,7 @@
 
     function collect() {
       const a = {};
-      const multi = ['languages', 'apt_sizes', 'rooms', 'areas', 'features', 'features_top'];
+      const multi = ['languages', 'apt_sizes', 'rooms', 'areas', 'travel_modes', 'features', 'features_top'];
       new FormData(form).forEach((v, k) => { if (multi.includes(k)) { (a[k] = a[k] || []).push(v); } else if (v !== '') a[k] = v; });
       multi.forEach(k => { a[k] = a[k] || []; });
       if (a.languages.includes('Other') && a.languages_other) a.languages = a.languages.filter(l => l !== 'Other').concat(a.languages_other.split(/,\s*/));

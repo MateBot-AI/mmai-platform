@@ -1,5 +1,6 @@
 """I9 / M4 campus reference data (8 November 2026): five campus addresses verified against official pages (address only),
 unknown coordinates stay unknown, and an unknown campus location never scores as a zero-distance or CBD match."""
+import json
 from datetime import date
 
 from server import matching, rules
@@ -38,16 +39,27 @@ def test_no_generic_cbd_centroid_and_no_zero_coordinates():
     assert all("verified_on" in i for i in INSTITUTIONS)
 
 
-def test_unknown_campus_location_does_not_score_as_proximity():
+def test_distance_to_the_place_of_study_is_not_part_of_the_score():
+    """M4 / GP6(d): proximity is not an initial ranking input. The score has an areas part (4.6) and no distance part; an
+    unknown campus point is still never reported as a distance."""
     apt = apartment("2B2B")
     assert matching._campus({"school": "Monash University – Clayton"}) is None       # unknown point → no campus
     assert matching._campus({"school": "English language school (enter name)"}) is None
     assert matching._campus({"school": "RMIT University – Melbourne City"}) is not None
     u1, u2 = unit("a"), unit("b")
-    u1.extra = {"id": "a", "school": "Monash University – Clayton", "travel": "5 minutes", "areas": [], "move_out": "2028-02-01"}
-    u2.extra = {"id": "b", "school": "English language school (enter name)", "travel": "5 minutes", "areas": [], "move_out": "2028-02-01"}
+    u1.extra = {"id": "a", "school": "Monash University – Clayton", "travel": "5 minutes", "areas": "[]", "move_out": "2028-02-01"}
+    u2.extra = {"id": "b", "school": "English language school (enter name)", "travel": "5 minutes", "areas": "[]", "move_out": "2028-02-01"}
     chk = rules.check_group(apt, [u1, u2])
     assert chk.ok, chk.reasons
     score, parts = matching.preference_score(apt, [u1, u2], chk)
-    assert parts["proximity"] == 0.6                      # the "no campus information" default, not a 0 km pass (which would be 1.0)
+    assert "proximity" not in parts and parts["areas"] == 0.6   # nobody named an area: the neutral default, whatever the campus or 4.7 answer
+    u1.extra["school"] = u2.extra["school"] = "RMIT University – Melbourne City"   # a located campus and a 5-minute answer change nothing
+    assert matching.preference_score(apt, [u1, u2], chk) == (score, parts)
+    u1.extra["travel"] = u2.extra["travel"] = None
+    assert matching.preference_score(apt, [u1, u2], chk) == (score, parts)
+    u1.extra["areas"] = json.dumps([apt.suburb])   # stored as JSON text, as the enquiries table holds it
+    assert matching.preference_score(apt, [u1, u2], chk)[1]["areas"] == 1.0   # the named area still counts
+    u1.extra["areas"] = json.dumps(["Somewhere else"])
+    assert matching.preference_score(apt, [u1, u2], chk)[1]["areas"] == 0.3
+    u1.extra["areas"] = "[]"
     assert matching._campus_km(apt, [u1, u2]) is None     # no distance is reported for staff either

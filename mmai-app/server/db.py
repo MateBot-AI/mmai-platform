@@ -1754,6 +1754,9 @@ MIGRATIONS = [
     ("enquiries", "notes_attempts", "INTEGER"),             # failed extraction rounds for the current input tuple
     ("enquiries", "notes_next_retry_at", "TEXT"),           # scheduled time of the next automatic attempt (NULL = due now / not scheduled)
     # A10 total-only offer identity. Old ordinary offers remain NULL/NULL.
+    # 16 Nov 2026 (H31 / H28(c) / GP6(d)): the optional travel choices question (JSON list of Walk / Bicycle / Public transport).
+    # NULL = no answer: every enquiry saved before the question existed, and any that leaves it blank. Never inferred.
+    ("enquiries", "travel_modes", "TEXT"),
     ("group_apartments", "exception_ref", "TEXT"),
     ("group_apartments", "exception_total", "TEXT"),
     ("groups", "exception_ref", "TEXT"),

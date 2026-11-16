@@ -224,11 +224,13 @@ made. It is off by default.
 - Size of the review. A full pool makes the review request about 69,000 characters
   (three options and twelve reserves, measured on test data) and its reply carries
   fifteen option notes. The output budget now follows the number of options:
-  1,500 tokens plus 120 for each option, never below the earlier fixed 1,800 and
-  never above the 8,000 ceiling; 3,300 for a full pool, and 4,950 for the one
+  2,000 tokens plus 150 for each option, never below the earlier fixed 1,800 and
+  never above the 8,000 ceiling; 4,250 for a full pool, and 6,375 for the one
   compact retry. It is sized so that the longest reply the validator accepts fits
-  at three characters a token. That figure is an engineering estimate; it has not
-  been measured against the model. Every option, reserve or not, still needs its
+  at three characters a token with at least a fifth to spare (9,504 characters for
+  a full pool on test data). That figure is an engineering estimate; it has not
+  been measured against the model, and neither have the time and input cost of a
+  full-pool review: run one controlled review before relying on it. Every option, reserve or not, still needs its
   own valid note, and a reply cut off twice is recorded as held, not as a review.
   A larger request for every review is the cost of this design, whether or not a
   travel check ever needs a reserve.
@@ -269,6 +271,53 @@ None of these is established by this package; each needs its own evidence.
    public transport journey returns a time and a source link in the expected shape. A
    source link that is not an https address on a Google host would show as "not
    measured" and would need to be looked at before going further.
+
+## MateBot groups: what is and is not done for travel
+
+This is partial. It is recorded here so that the HomeBot travel check above is not
+read as covering MateBot groups.
+
+Done in this package, with no provider or model call and nothing switched on:
+
+- **Distance is no longer in the group score.** The rule score that orders a
+  group's apartments has an areas part (the preferred areas answer) and no
+  distance part. The straight-line distance to the place of study, the fixed
+  distance per travel-time answer, and the 30 minutes assumed for a blank answer
+  are removed. The weight of the part is unchanged. A score already stored was
+  calculated with the old part and stays as stored until matching next
+  calculates it.
+- **An optional travel choices question** (one new nullable column,
+  `enquiries.travel_modes`, added by the ordinary startup migration; the release
+  before this one ignores it) on the MateBot form: Walk, Bicycle,
+  Public transport. It is optional like the travel time question, nothing is
+  pre-selected, and no answer is stored as no answer. An enquiry saved before the
+  question existed keeps no answer; none is inferred from its travel time. Staff
+  can record or clear it. The question wording is derived from the HomeBot form;
+  only the three choices are Bill's. The answer is collected and shown; no
+  calculation reads it yet, and it is not part of the review evidence.
+- **Three at most.** A group still stores up to six ranked apartments. Staff see
+  at most three as the shortlist (the current offer included); the others are
+  labelled reserves, keep their ranked order, have no offer button, and move up
+  only when a shortlisted apartment is leased or declined. Nothing is deleted or
+  re-ranked. The page states that travel has not been checked.
+- **The arithmetic, not connected** (`server/matebot_travel.py`): each member's
+  fastest journey by a choice they accepted against their own stated time; the
+  H28 majority calculation only when every member states the same time; and the
+  travel-last replacement order. When stated times differ or any is missing the
+  group result is "needs confirmation" and no figure is combined, because how to
+  combine them has not been ruled.
+
+Not done, and not to be reported as done:
+
+- No journey is measured for a MateBot group, no result is shown to staff, and
+  Claude receives no journey result for a MateBot group.
+- The MateBot AI ranking request still includes the straight-line distance to
+  campus. Removing it changes the review contract and makes saved reviews out of
+  date, so it waits for a decision.
+- Apartment rows on the group card still show the straight-line distance as
+  information.
+- How party members inside one enquiry are counted for the majority is not
+  built.
 
 ## Controlled startup
 

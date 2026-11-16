@@ -23,7 +23,7 @@ from fastapi.responses import JSONResponse, FileResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.concurrency import run_in_threadpool
 
-from . import access_facts, accounts, ai, ai_queue, apartment_rejections, group_responses, homebot, homebot_handoff, homebot_shortlist, importer, matching, outcome_ledger, receipts, rules, scheduler, seed, staff_view, stock_lifecycle, submissions
+from . import access_facts, accounts, ai, ai_queue, apartment_rejections, group_responses, homebot, homebot_handoff, homebot_shortlist, importer, matching, matebot_travel, outcome_ledger, receipts, rules, scheduler, seed, staff_view, stock_lifecycle, submissions
 from . import apartment_features as feat
 from . import security as sec
 from . import homebot_receipts, notifications
@@ -1396,6 +1396,16 @@ def _group_out(g: dict, occ: dict | None = None, circ: dict | None = None) -> di
         a["taken_by"] = [leased] if leased and leased.get("group_id") != g["id"] else []       # GP8: taken only when marked Leased
         a["also_first_choice_of"] = [{"group_id": x} for x in info["first_choice"] if x != g["id"]]  # information only; nothing is held
     staff_view.apartment_reasons(db, g, apts)   # T10: the AI's apartment reasons in plain words through their own saved basis
+    # GP6(d): at most three apartments are a group's shortlist. Every stored candidate stays listed, in its stored order (GP14
+    # history included); the ones beyond three are reserves that move up only when a place opens. Travel is NOT part of this:
+    # the final travel check is not connected for MateBot groups, and the view says so rather than implying a result.
+    declined = apartment_rejections.declined_in_group(db, g["id"]) if apts and g.get("status") not in ("Leased", "Dissolved") else {}
+    declined_ids = {int(k) for k in declined}
+    for a, role in zip(apts, matebot_travel.shortlist_roles([{"id": a["apartment_id"], "current": a["is_current"],
+                                                              "unavailable": bool(a["taken_by"]) or a["apartment_id"] in declined_ids} for a in apts])):
+        a["shortlist_role"] = role
+    g["shortlist_max"] = matebot_travel.MAX_SHORTLIST
+    g["travel_check"] = "not_connected"
     g["apartments"] = apts
     g["next_best"] = next((a for a in apts if not a["is_current"] and not a["taken_by"] and not a["practical_need_hold"]), None)
     g["rejected"] = pj(g.get("rejected_json"), [])
