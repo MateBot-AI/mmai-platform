@@ -225,7 +225,7 @@
   "mmai-app/tests/test_intake_smoke_enum.py": "e3d4e4e9feca9424f07500a802f5ae17c4c100666cbcc6bd281b53e34d49fe9d",
   "mmai-app/tests/test_intro_profile.py": "92c9b034762ff40b9a4dc2e93dce07887ad30018974e3528b5ea3970ccb13cce",
   "mmai-app/tests/test_launch_neutral.py": "66e91c2ed028af8a73d869f0038db8a3eed0c4e75e6fb0a394172c1cdb624776",
-  "mmai-app/tests/test_live_travel.py": "d0686c4e758a2e0c964e3050bed206efcae6ae1f621f31dfaa5e3178c4973019",
+  "mmai-app/tests/test_live_travel.py": "5119f57bd2879cd6e1b466880465eb61cd56e6bc3b57aeba395612f76e2ba2c9",
   "mmai-app/tests/test_mail_graph.py": "a9f020183537178be70ca80670c1d8dc9cdacfaf283d3b406050272fd8e6bf74",
   "mmai-app/tests/test_notes_adversarial_reply.py": "15ea24d62582a30a4197d398c3b95a2218625f0945ef5158bc7c9735790b774d",
   "mmai-app/tests/test_notes_cache_lifecycle_v2.py": "e3976c51e57d624fe907b6ba4cca24fb11688f29e284e92c7b729f32cc9d500b",

@@ -272,7 +272,15 @@ def test_car_is_no_longer_offered_on_the_form(on):
     with pytest.raises(homebot.ValidationError) as err:                                    # any other unknown answer keeps the usual message
         homebot.validate(form_body(transport=["Teleport"], move_out="2027-11-30"))
     assert err.value.errors == {"transport": "Not one of the offered choices."}
-    assert on.db.execute("SELECT COUNT(*) AS n FROM homebot_enquiries").fetchone()["n"] == before
+    # the public form's own address refuses it too, in plain words, and stores nothing; the same form without Car is stored
+    from tests.test_homebot import post as form_post
+    count = lambda: on.db.execute("SELECT COUNT(*) AS n FROM homebot_enquiries").fetchone()["n"]
+    for i, answer in enumerate((["Car"], ["Tram", "Car"])):
+        r = form_post(on, form_body(transport=answer, move_out="2027-11-30"), f"hb-car-key-{i:04d}")
+        assert r.status_code == 422 and "Car is no longer one of the choices" in r.text, r.text
+        assert count() == before
+    r = form_post(on, form_body(transport=["Tram"], move_out="2027-11-30"), "hb-car-key-0009")
+    assert r.status_code == 201 and count() == before + 1, r.text
 
 
 def test_an_old_car_answer_stays_until_staff_untick_it_and_can_never_be_added(on, monkeypatch):
