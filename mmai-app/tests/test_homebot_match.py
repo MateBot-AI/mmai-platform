@@ -1,8 +1,7 @@
 """H1: pure HomeBot candidate evaluation (server/homebot_match.py). Synthetic apartments and parties only; no database, clock,
 provider or AI. Includes an independent brute-force oracle for the complete date/tariff/budget search."""
 from datetime import date, timedelta
-from decimal import Decimal, Inexact, localcontext
-from fractions import Fraction
+from decimal import Decimal
 
 import pytest
 
@@ -410,72 +409,88 @@ def test_dominated_option_ranks_below_and_non_dominated_pair_is_a_flagged_trade_
     assert {c.apartment_id for c in sl2.listed} == {1, 2}
 
 
-def test_unknown_travel_is_incomparable_not_a_penalty_or_a_pass():
+def test_travel_is_not_an_initial_ranking_input():
+    """GP6(d)/H20 (16 Nov 2026): the first order is made from the non-travel points only. A journey time, known or not,
+    never beats, loses to, or breaks a tie between two apartments."""
     r = req()
     a = hm._dims(hm.evaluate(r, apt(1), TODAY))
     b = hm._dims(hm.evaluate(r, apt(2, rent12=900, rent6=900, building="20 B Street"), TODAY))
-    assert a["travel"] is None and b["travel"] is None
+    assert "travel" not in a and "travel" not in b
     assert hm.dominates(b, a, False) and not hm.dominates(a, b, False)
+    # same on every non-travel point, very different journeys: neither beats the other and the order does not move
+    near, far = hm.evaluate(r, apt(1), TODAY, estimates_all(5)), hm.evaluate(r, apt(2, building="20 B Street"), TODAY, estimates_all(55))
+    assert near.travel["status"] == far.travel["status"] == travel.PASS
+    assert not hm.dominates(hm._dims(near), hm._dims(far), False) and not hm._material(hm._dims(near), hm._dims(far))
+    assert [c.apartment_id for c in hm.rank([far, near], r)] == [1, 2] and near.pareto_rank == far.pareto_rank == 0
+    # the whole shortlist comes out in the same order whichever apartment has the shorter journey
+    apts = [apt(1, rent12=980, rent6=980), apt(2, rent12=950, rent6=950, building="20 B Street"), apt(3, rent12=900, rent6=900, building="30 C Street")]
+    for minutes in ({1: 5, 2: 30, 3: 55}, {1: 55, 2: 30, 3: 5}, None):
+        est = (lambda aid, pos, kind: {"Tram": minutes[aid]}) if minutes else None
+        assert [c.apartment_id for c in hm.build_shortlist(r, apts, TODAY, est).listed] == [3, 2, 1]
 
 
-def _ranking_candidate(aid, total, size=3, rent=1000):
-    """Isolate ranking from route validation and offer arithmetic."""
-    c = hm.evaluate(req(), apt(aid, rent12=rent, rent6=rent), TODAY)
-    c.klass = hm.SUITABLE
-    c.travel = {"status": travel.PASS, "facts": {"majority": {"total_minutes": total, "size": size}}}
-    return c
+def _five():
+    return [apt(i, rent12=900 + 10 * i, rent6=900 + 10 * i, building=f"{i}0 A Street") for i in (1, 2, 3, 4, 5)]
 
 
-@pytest.mark.parametrize("precision", [1, 2, 6])
-@pytest.mark.parametrize("trap", [False, True])
-def test_travel_ranking_is_exact_independent_of_decimal_context(precision, trap):
-    worse = _ranking_candidate(1, "2.000000002")
-    better = _ranking_candidate(2, "2.000000001")
-    r = req()
-    with localcontext() as ctx:
-        ctx.prec = precision
-        ctx.traps[Inexact] = trap
-        a, b = hm._dims(better), hm._dims(worse)
-        assert a["travel"] == Fraction(2000000001, 3000000000)
-        assert hm.dominates(a, b, False)
-        assert not hm.dominates(b, a, False)
-        assert [c.apartment_id for c in hm.rank([worse, better], r)] == [2, 1]
-        assert better.pareto_rank == 0 and worse.pareto_rank == 1
-        assert hm.TRADE_OFF not in better.flags
+class Staged:
+    """Estimates that record which apartments were asked about and each prepare() stage, like the live object."""
+
+    def __init__(self, minutes):
+        self.minutes, self.asked, self.stages = minutes, [], []
+
+    def prepare(self, ids):
+        self.stages.append(list(ids))
+
+    def __call__(self, aid, pos, kind):
+        self.asked.append(aid)
+        m = self.minutes.get(aid, 10)
+        return {"Tram": travel.UNMEASURED if m is None else m}
 
 
-def test_exact_travel_distinction_keeps_real_tradeoff_and_equal_averages_equal():
-    fast = _ranking_candidate(1, "2.000000001", rent=1000)
-    cheap = _ranking_candidate(2, "2.000000002", rent=900)
-    equal = _ranking_candidate(3, "4.000000002", size=6)
-    r = req()
-    with localcontext() as ctx:
-        ctx.prec = 1
-        ctx.traps[Inexact] = True
-        assert hm._dims(fast)["travel"] == hm._dims(equal)["travel"]
-        assert not hm._material(hm._dims(fast), hm._dims(equal))
-        hm.rank([fast, cheap], r)
-        assert fast.pareto_rank == cheap.pareto_rank == 0
-        assert hm.TRADE_OFF in fast.flags and hm.TRADE_OFF in cheap.flags
+def test_travel_is_checked_last_and_only_for_the_shortlisted():
+    r, est = req(), Staged({})
+    sl = hm.build_shortlist(r, _five(), TODAY, est)
+    assert [c.apartment_id for c in sl.listed] == [1, 2, 3] and est.stages == [[1, 2, 3]] and set(est.asked) == {1, 2, 3}
+    assert all(c.klass == hm.SUITABLE and c.travel["status"] == travel.PASS for c in sl.listed)
+    by = {c.apartment_id: c for c in sl.candidates}
+    for aid in (4, 5):   # not shortlisted: not measured, flagged, and never read as a pass
+        assert hm.TRAVEL_NOT_CHECKED in by[aid].flags and by[aid].klass == hm.NEEDS_CONFIRMATION
+        assert hm.TRAVEL_NEEDS_CONFIRMATION in by[aid].confirmation_reasons and by[aid].travel["status"] == travel.NEEDS_CONFIRMATION
+    assert not any(hm.TRAVEL_NOT_CHECKED in c.flags for c in sl.listed)
+    assert "not checked" in hm.PLAIN[hm.TRAVEL_NOT_CHECKED]
 
 
-def test_known_travel_sort_key_has_no_magic_unknown_sentinel():
-    # Synthetic ranking dimensions only: provider/ceiling validation is tested separately.
-    known = _ranking_candidate(2, "4000000", size=2)
-    unknown = _ranking_candidate(1, None)
-    a, b = hm._dims(known), hm._dims(unknown)
-    assert not hm.dominates(a, b, False) and not hm.dominates(b, a, False)
-    assert [c.apartment_id for c in hm.rank([unknown, known], req())] == [2, 1]
+def test_a_failed_travel_check_is_replaced_by_the_next_and_the_replacement_is_checked():
+    r, est = req(), Staged({2: 61})   # 30-minute limit: over 60 fails
+    sl = hm.build_shortlist(r, _five(), TODAY, est)
+    by = {c.apartment_id: c for c in sl.candidates}
+    assert [c.apartment_id for c in sl.listed] == [1, 3, 4] and [c.order for c in sl.listed] == [1, 2, 3]
+    assert est.stages == [[1, 2, 3], [4]] and set(est.asked) == {1, 2, 3, 4}          # the other qualifying choices are kept
+    assert by[2].klass == hm.EXCLUDED and hm.TRAVEL_EXCEEDS_CEILING in by[2].exclusion_reasons and hm.REPLACED_AFTER_TRAVEL in by[2].flags
+    assert hm.REPLACEMENT_AFTER_TRAVEL in by[4].flags and by[4].klass == hm.SUITABLE
+    assert hm.TRAVEL_NOT_CHECKED in by[5].flags and hm.REPLACEMENT_AFTER_TRAVEL not in by[1].flags + by[3].flags
+    # a replacement that fails is replaced in turn; when the candidates run out the shortlist is shorter, never padded
+    est = Staged({1: 61, 2: 61, 4: 61})
+    sl = hm.build_shortlist(r, _five(), TODAY, est)
+    assert [c.apartment_id for c in sl.listed] == [3, 5] and est.stages == [[1, 2, 3], [4, 5]]
+    est = Staged({i: 61 for i in (1, 2, 3, 4, 5)})
+    sl = hm.build_shortlist(r, _five(), TODAY, est)
+    assert sl.listed == [] and sl.alternatives == [] and not sl.has_shortlist and est.stages == [[1, 2, 3], [4, 5]]
+    assert sl.summary()["counts"][hm.EXCLUDED] == 5
 
 
-def test_exact_ranking_fraction_never_leaks_into_serialized_candidate():
-    import json
-    c = _ranking_candidate(1, "2.000000001")
-    before = json.dumps(c.as_dict(), sort_keys=True)
-    hm._dims(c)
-    assert json.dumps(c.as_dict(), sort_keys=True) == before
-    hm.rank([c], req())
-    assert json.loads(json.dumps(c.as_dict()))["travel"] == c.travel
+def test_an_unknown_journey_is_neither_a_pass_nor_a_failure_and_is_not_replaced():
+    r, est = req(), Staged({2: None})
+    sl = hm.build_shortlist(r, _five(), TODAY, est)
+    assert [c.apartment_id for c in sl.listed] == [1, 2, 3] and est.stages == [[1, 2, 3]]
+    two = sl.listed[1]
+    assert two.klass == hm.NEEDS_CONFIRMATION and hm.TRAVEL_NEEDS_CONFIRMATION in two.confirmation_reasons and two.exclusion_reasons == []
+    assert sl.summary()["nothing_suitable_yet"] is False
+    # with no estimates at all (the stored options) every shortlisted apartment needs confirmation; none is dropped
+    sl = hm.build_shortlist(r, _five(), TODAY)
+    assert [c.apartment_id for c in sl.listed] == [1, 2, 3] and all(c.klass == hm.NEEDS_CONFIRMATION for c in sl.listed)
+    assert sl.summary()["nothing_suitable_yet"] is True
 
 
 def test_up_to_three_listed_then_alternatives_only_when_fewer_than_three():
@@ -487,28 +502,39 @@ def test_up_to_three_listed_then_alternatives_only_when_fewer_than_three():
     assert len(sl2.listed) == 2 and [c.apartment_id for c in sl2.alternatives] == [9] and sl2.alternatives[0].klass == hm.ALTERNATIVE_AREA
 
 
-def test_fourth_option_is_provisional_and_never_listed_by_the_module():
-    """GP6(d): the module only screens (2+1+1 buildings, same Pareto rank). Listed stays three; the fourth is handed on as a
-    provisional candidate because rank equality does not prove comparable suitability."""
+def test_never_more_than_three_and_no_fourth_option():
+    """GP6(d) (16 Nov 2026): the maximum is three. The building-variety fourth option is gone, however the buildings fall."""
     r = req()
     apts = [apt(1, building="10 A Street"), apt(2, building="10 A Street"), apt(3, building="20 B Street"), apt(4, building="30 C Street")]
     sl = hm.build_shortlist(r, apts, TODAY, estimates_all(10))
-    assert len(sl.listed) == 3 and sl.fourth_option is not None and sl.fourth_option.apartment_id == 4
-    assert hm.FOURTH_OPTION_PROVISIONAL in sl.fourth_option.flags and "not been assessed" in sl.fourth_option_reason
-    assert sl.summary()["fourth_option"] == 4 and sl.as_dict()["fourth_option"]["apartment_id"] == 4
-    # a dominated fourth (dearer, longer commute) is not even a candidate
-    worse = dict(apt(4, building="30 C Street"), rent_12m=1090, rent_6m=1090)
-    est = lambda aid, pos, kind: {"Tram": 40 if aid == 4 else 10}
-    sl2 = hm.build_shortlist(r, apts[:3] + [worse], TODAY, est)
-    assert len(sl2.listed) == 3 and sl2.fourth_option is None
-    # four in only two buildings: no candidate
-    sl3 = hm.build_shortlist(r, [apt(1, building="10 A Street"), apt(2, building="10 A Street"), apt(3, building="20 B Street"), apt(4, building="20 B Street")], TODAY, estimates_all(10))
-    assert len(sl3.listed) == 3 and sl3.fourth_option is None
-    # a non-dominated fourth with a large price difference and a tiny date gain stays provisional, not listed
-    pricey = dict(apt(4, building="30 C Street"), rent_12m=1090, rent_6m=1090, available_from="2027-02-27")
-    est2 = lambda aid, pos, kind: {"Tram": 10}
-    sl4 = hm.build_shortlist(r, [dict(a, available_from="2027-02-26") for a in apts[:3]] + [pricey], TODAY, est2)
-    assert len(sl4.listed) == 3 and (sl4.fourth_option is None or hm.FOURTH_OPTION_PROVISIONAL in sl4.fourth_option.flags)
+    assert [c.apartment_id for c in sl.listed] == [1, 2, 3] and sl.fourth_option is None and sl.fourth_option_reason is None
+    assert sl.summary()["fourth_option"] is None and sl.as_dict()["fourth_option"] is None
+    assert not any(hm.FOURTH_OPTION_PROVISIONAL in c.flags for c in sl.candidates)
+    assert hm.MAX_SHORTLIST == 3 and not hasattr(hm, "_fourth_option")
+    many = [apt(i, building=f"{i} Z Street") for i in range(1, 12)]
+    assert len(hm.build_shortlist(r, many, TODAY, estimates_all(10)).listed) == 3
+
+
+def test_alternatives_stay_inside_the_same_maximum_of_three_and_are_travel_checked_last():
+    r = req(enquiry(area="South Yarra"))
+    full = [apt(i, suburb="South Yarra", building=f"{i}0 SY Street") for i in (1, 2)]
+    alts = [apt(i, suburb="Melbourne CBD", rent12=900 + i, rent6=900 + i, building=f"{i}0 CBD Street") for i in (7, 8, 9)]
+    est = Staged({})
+    sl = hm.build_shortlist(r, full + alts, TODAY, est)
+    assert [c.apartment_id for c in sl.listed] == [1, 2] and [c.apartment_id for c in sl.alternatives] == [7]   # three in all
+    assert est.stages == [[1, 2], [7]] and sl.alternatives[0].klass == hm.ALTERNATIVE_AREA
+    # an alternative that fails travel is replaced by the next alternative, which is checked
+    est = Staged({7: 61})
+    sl = hm.build_shortlist(r, full + alts, TODAY, est)
+    assert [c.apartment_id for c in sl.alternatives] == [8] and est.stages == [[1, 2], [7], [8]]
+    # a full match that fails travel leaves room for one more alternative; nothing is relabelled as a match
+    est = Staged({2: 61})
+    sl = hm.build_shortlist(r, full + alts, TODAY, est)
+    assert [c.apartment_id for c in sl.listed] == [1] and [c.apartment_id for c in sl.alternatives] == [7, 8]
+    assert all(c.klass == hm.ALTERNATIVE_AREA for c in sl.alternatives) and len(sl.listed) + len(sl.alternatives) == 3
+    # three full matches: no alternatives at all
+    three = full + [apt(3, suburb="South Yarra", building="30 SY Street")]
+    assert hm.build_shortlist(r, three + alts, TODAY, Staged({})).alternatives == []
 
 
 def test_no_candidate_means_no_shortlist():

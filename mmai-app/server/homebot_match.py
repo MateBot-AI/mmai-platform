@@ -78,7 +78,12 @@ WITHIN_ALLOWANCE = "WITHIN_ALLOWANCE"               # A16: above the stated maxi
 LONG_JOURNEY = "LONG_JOURNEY"                       # H28(e) warning carried from the travel helper
 CHEAPER_OFFER_AVAILABLE = "CHEAPER_OFFER_AVAILABLE"  # a different accepted date pair is cheaper than the closest-dates offer
 TRADE_OFF = "TRADE_OFF"                             # non-dominated against another listed option; staff/AI balance it
-FOURTH_OPTION_PROVISIONAL = "FOURTH_OPTION_PROVISIONAL"  # GP6(d): candidate fourth option; comparability still to be assessed
+FOURTH_OPTION_PROVISIONAL = "FOURTH_OPTION_PROVISIONAL"  # RETIRED 16 Nov 2026 (GP6(d): the maximum is three). Kept only so options
+                                                         # prepared before then still read in plain words; never set now.
+TRAVEL_NOT_CHECKED = "TRAVEL_NOT_CHECKED"           # GP6(d): travel is checked last, on the shortlisted apartments only
+REPLACED_AFTER_TRAVEL = "REPLACED_AFTER_TRAVEL"     # GP6(d): shortlisted on the other points, failed the travel check, replaced
+REPLACEMENT_AFTER_TRAVEL = "REPLACEMENT_AFTER_TRAVEL"   # GP6(d): took the place of an apartment that failed the travel check
+MAX_SHORTLIST = 3                                   # GP6(d)/H25/O4(d): never more, and never padded to reach it
 BUNK_CHEAPER_OTHER_DATES = "BUNK_CHEAPER_OTHER_DATES"  # H21: not cheaper at the offered dates, cheaper at other accepted dates
 
 PLAIN = {
@@ -107,6 +112,9 @@ PLAIN = {
     TRADE_OFF: "Neither this option nor another listed option is better on every point; the team weighs the trade-off.",
     DATE_SEARCH_UNRESOLVED: "The party's accepted date ranges are too wide for the automatic date check to cover completely; dates and cost for this apartment are unresolved and need a manual check.",
     FOURTH_OPTION_PROVISIONAL: "Candidate fourth option for building variety; whether it is comparably suitable has not been assessed yet.",
+    TRAVEL_NOT_CHECKED: "Travel was not checked for this apartment: travel is checked last, only for the apartments shortlisted on the other points.",
+    REPLACED_AFTER_TRAVEL: "Was shortlisted on the other points, then replaced because it failed the travel check.",
+    REPLACEMENT_AFTER_TRAVEL: "Took the place of an apartment that failed the travel check.",
     BUNK_CHEAPER_OTHER_DATES: "Using the bunk is not cheaper at the offered dates but is cheaper at other dates inside the party's accepted ranges; confirm with the party.",
     LEASED: "This apartment is recorded as leased.",
 }
@@ -589,8 +597,55 @@ def _nonbunk_people(people) -> list:
 
 
 def evaluate(req: Requirements, apt: dict, today: date, estimates: Optional[TravelEstimates] = None, *, exception_offers=()) -> Candidate:
-    """Everything about ONE apartment for this party except the cross-apartment bunk comparison and ranking (see build_shortlist).
-    Order of checks is fixed so staff always see every binding reason, not just the first."""
+    """Everything about ONE apartment for this party except the cross-apartment bunk comparison and ranking (see build_shortlist):
+    the non-travel checks (evaluate_without_travel) followed by the travel check (apply_travel). build_shortlist runs the two
+    steps apart, because travel is checked last and only for the shortlisted apartments (GP6(d), H20)."""
+    c = evaluate_without_travel(req, apt, today, exception_offers=exception_offers)
+    apply_travel(req, c, apt, estimates)
+    return c
+
+
+def _classify(c: Candidate) -> None:
+    """The class from the reasons recorded so far. Firm exclusions first; H27 allows one of the two exceptions, never both."""
+    firm = [r for r in c.exclusion_reasons if r not in (AREA_NOT_SELECTED, BATHROOMS_BELOW_REQUIRED)]
+    if firm or (not c.area_ok and not c.baths_ok):
+        c.klass = EXCLUDED
+    elif not c.area_ok:
+        c.klass = ALTERNATIVE_AREA
+    elif not c.baths_ok:
+        c.klass = ALTERNATIVE_BATHROOM
+    else:
+        c.klass = NEEDS_CONFIRMATION if c.confirmation_reasons else SUITABLE
+
+
+def apply_travel(req: Requirements, c: Candidate, apt: dict, estimates: Optional[TravelEstimates]) -> None:
+    """The H28 travel check for one apartment, applied on top of its non-travel result. Never a pass without measured
+    journeys for every known destination; an unknown journey is not a failure either (needs confirmation). Safe to apply
+    once per candidate only."""
+    if not req.known_people:
+        return
+    t = assess_travel(req, apt, estimates)
+    c.travel = t.as_dict()
+    if t.status == travel.EXCEEDS_CEILING:
+        firm = [r for r in c.exclusion_reasons if r not in (AREA_NOT_SELECTED, BATHROOMS_BELOW_REQUIRED)]
+        c.exclusion_reasons = firm + [TRAVEL_EXCEEDS_CEILING] + [r for r in c.exclusion_reasons if r not in firm]
+    elif t.status == travel.NEEDS_CONFIRMATION:
+        # kept where it has always been read: before the note-review and bunk-comparison reasons
+        later = [i for i, r in enumerate(c.confirmation_reasons) if r in (ESSENTIAL_NOTE_REVIEW, BUNK_COMPARISON_UNAVAILABLE, BUNK_CHEAPER_OTHER_DATES)]
+        c.confirmation_reasons.insert(later[0] if later else len(c.confirmation_reasons), TRAVEL_NEEDS_CONFIRMATION)
+    elif t.status == travel.NO_DESTINATIONS:
+        c.flags.append(NO_DESTINATIONS)
+    if any(r in (travel.LONG_JOURNEY_WARNING, travel.LONG_JOURNEY_PROVISIONAL) for r in t.reasons):
+        c.flags.append(LONG_JOURNEY)
+    was = c.klass
+    _classify(c)
+    if was == EXCLUDED:
+        c.klass = EXCLUDED   # a travel result never brings back an apartment that was already ruled out
+
+
+def evaluate_without_travel(req: Requirements, apt: dict, today: date, *, exception_offers=()) -> Candidate:
+    """Every non-travel check for ONE apartment. Order of checks is fixed so staff always see every binding reason, not just
+    the first. Travel is not looked at here."""
     code = rules.normalise_type(apt["type_code"])
     c = Candidate(int(apt["id"]), apt.get("address") or "", building_key(apt.get("address") or ""), apt.get("suburb") or "", code,
                   int(apt.get("bathrooms") or rules.APT_TYPES[code]["bathrooms"]))
@@ -664,34 +719,13 @@ def evaluate(req: Requirements, apt: dict, today: date, estimates: Optional[Trav
                 c.flags.append(WITHIN_ALLOWANCE)
             if c.cheapest.total_weekly_rent < c.offer.total_weekly_rent:
                 c.flags.append(CHEAPER_OFFER_AVAILABLE)
-    # travel (H28): never a pass without measured journeys for every known destination
-    if req.known_people:
-        t = assess_travel(req, apt, estimates)
-        c.travel = t.as_dict()
-        if t.status == travel.EXCEEDS_CEILING:
-            excl.append(TRAVEL_EXCEEDS_CEILING)
-        elif t.status == travel.NEEDS_CONFIRMATION:
-            c.confirmation_reasons.append(TRAVEL_NEEDS_CONFIRMATION)
-        elif t.status == travel.NO_DESTINATIONS:
-            c.flags.append(NO_DESTINATIONS)
-        if any(r in (travel.LONG_JOURNEY_WARNING, travel.LONG_JOURNEY_PROVISIONAL) for r in t.reasons):
-            c.flags.append(LONG_JOURNEY)
     # features: preference facts only (H11/H20)
     c.features = feat.compare(list(req.extras), list(req.extras_top), apt)
     if req.notes_review:
         c.confirmation_reasons.append(ESSENTIAL_NOTE_REVIEW)
     # class
     c.exclusion_reasons = excl + ([AREA_NOT_SELECTED] if not c.area_ok else []) + ([BATHROOMS_BELOW_REQUIRED] if not c.baths_ok else [])
-    if excl:
-        c.klass = EXCLUDED
-    elif not c.area_ok and not c.baths_ok:        # H27: never both exceptions together
-        c.klass = EXCLUDED
-    elif not c.area_ok:
-        c.klass = ALTERNATIVE_AREA
-    elif not c.baths_ok:
-        c.klass = ALTERNATIVE_BATHROOM
-    else:
-        c.klass = NEEDS_CONFIRMATION if c.confirmation_reasons else SUITABLE
+    _classify(c)
     return c
 
 
@@ -750,22 +784,17 @@ def apply_bunk_condition(req: Requirements, cands: list) -> None:
 
 # ------------------------------------------------------------------------------------------------------------ ranking
 def _dims(c: Candidate) -> dict:
-    """Measured dimensions for Pareto screening. Lower is better unless noted. None = unknown (incomparable, treated as equal)."""
-    maj = ((c.travel or {}).get("facts") or {}).get("majority") or {}
-    trav = None
-    if (c.travel or {}).get("status") == travel.PASS and maj.get("total_minutes") is not None and maj.get("size"):
-        # Exact internal ratio, independent of the caller's Decimal precision/traps.
-        trav = Fraction(str(maj["total_minutes"])) / int(maj["size"])
+    """Measured NON-TRAVEL dimensions for Pareto screening. Lower is better. Travel is not here: it is checked last, on the
+    shortlisted apartments only, and is never an initial ranking input (GP6(d), H20)."""
     return {"date_distance": c.offer.date_distance_days, "empty_days": c.offer.future_empty_days, "total_rent": c.offer.total_weekly_rent,
-            "travel": trav,
             "features_missing": -((c.features or {}).get("counts", {}).get("available", 0)),   # more available features = better
             "layout": 0 if c.layout_priced else 1, "baths": 0 if c.two_bathrooms else 1}
 
 
 def dominates(a: dict, b: dict, prefers_two_baths: bool) -> bool:
-    """a beats b: no worse on every comparable dimension and strictly better on at least one. Unknown travel is incomparable."""
+    """a beats b: no worse on every comparable dimension and strictly better on at least one."""
     better = False
-    for k in ("date_distance", "empty_days", "total_rent", "travel", "features_missing", "layout", "baths"):
+    for k in ("date_distance", "empty_days", "total_rent", "features_missing", "layout", "baths"):
         if k == "baths" and not prefers_two_baths:
             continue
         x, y = a[k], b[k]
@@ -781,12 +810,18 @@ def dominates(a: dict, b: dict, prefers_two_baths: bool) -> bool:
 def _material(a: dict, b: dict) -> bool:
     """Two non-dominated options differ 'materially' when they differ on any measured point at all; the module does not
     decide how much matters (no weights, H20) — it only refuses to hide the difference."""
-    return any(a[k] != b[k] for k in ("date_distance", "empty_days", "total_rent", "travel") if a[k] is not None and b[k] is not None)
+    return any(a[k] != b[k] for k in ("date_distance", "empty_days", "total_rent") if a[k] is not None and b[k] is not None)
+
+
+def _settled(c: Candidate) -> bool:
+    """Nothing but travel still needs confirming (travel plays no part in the initial order)."""
+    return not [r for r in c.confirmation_reasons if r != TRAVEL_NEEDS_CONFIRMATION]
 
 
 def rank(cands: list, req: Requirements) -> list:
-    """Pareto screening then the PROVISIONAL priority order (H20: date fit, layout, price, travel, amenities). Returns the listed
-    candidates in order with pareto_rank, order and TRADE_OFF flags set. Alternatives are ranked the same way, separately."""
+    """Pareto screening then the PROVISIONAL priority order on the non-travel points (H20: date fit, layout, price,
+    amenities). Returns the candidates that have an offer in order, with pareto_rank, order and TRADE_OFF flags set.
+    Alternatives are ranked the same way, separately. Travel is not an input (GP6(d))."""
     out = []
     for group in ([c for c in cands if c.listed], [c for c in cands if c.klass == ALTERNATIVE_AREA and c.offer is not None],
                   [c for c in cands if c.klass == ALTERNATIVE_BATHROOM and c.offer is not None]):
@@ -796,11 +831,9 @@ def rank(cands: list, req: Requirements) -> list:
         for c in group:
             if c.pareto_rank == 0 and any(o is not c and o.pareto_rank == 0 and _material(dims[c.apartment_id], dims[o.apartment_id]) for o in group):
                 c.flags.append(TRADE_OFF)
-        group.sort(key=lambda c: (c.pareto_rank, 0 if c.klass == SUITABLE else 1, c.offer.date_distance_days, c.offer.future_empty_days,
+        group.sort(key=lambda c: (c.pareto_rank, 0 if _settled(c) else 1, c.offer.date_distance_days, c.offer.future_empty_days,
                                   0 if c.layout_priced else 1, 0 if (c.two_bathrooms or not req.prefers_two_baths) else 1,
-                                  c.offer.total_weekly_rent, dims[c.apartment_id]["travel"] is None,
-                                  dims[c.apartment_id]["travel"] if dims[c.apartment_id]["travel"] is not None else 0,
-                                  dims[c.apartment_id]["features_missing"], c.apartment_id))
+                                  c.offer.total_weekly_rent, dims[c.apartment_id]["features_missing"], c.apartment_id))
         for i, c in enumerate(group, start=1):
             c.order = i
         out.extend(group)
@@ -814,7 +847,7 @@ class Shortlist:
     listed: list                   # up to three full matches in provisional order
     alternatives: list             # H27 alternatives, only when fewer than three full matches exist
     candidates: list               # every evaluated apartment (for "why not" and reruns)
-    fourth_option: Optional[Candidate] = None   # GP6(d) PROVISIONAL candidate fourth option (building variety); not listed
+    fourth_option: Optional[Candidate] = None   # RETIRED (GP6(d), 16 Nov 2026): always None now; the key stays for older readers
     fourth_option_reason: Optional[str] = None
     unresolved: list = field(default_factory=list)   # candidates whose dates/cost could not be enumerated (explicit unknown)
     notes_review: bool = False
@@ -838,20 +871,35 @@ class Shortlist:
                 "unresolved": [c.as_dict() for c in self.unresolved], "candidates": [c.as_dict() for c in self.candidates]}
 
 
-def _fourth_option(ordered: list) -> Optional[str]:
-    """GP6(d) screening only: a fourth may be CONSIDERED when the four would span exactly three buildings as two + one + one and
-    the fourth is not dominated by anything the third is not also dominated by (same Pareto rank). Rank equality is not proof of
-    comparable suitability (a large price or travel difference can coexist with a tiny date gain without domination), so the
-    fourth is returned as a PROVISIONAL candidate for the trade-off assessment, never listed by this module."""
-    if len(ordered) < 4 or ordered[3].pareto_rank != ordered[2].pareto_rank:
-        return None
-    counts: dict[str, int] = {}
-    for c in ordered[:4]:
-        counts[c.building] = counts.get(c.building, 0) + 1
-    if sorted(counts.values()) == [1, 1, 2]:
-        return ("Provisional fourth option for building variety (two in one building, one in each of two others); "
-                "whether it is comparably suitable to the three listed has not been assessed.")
-    return None
+def _prepare(estimates, apartment_ids) -> None:
+    """Let a live estimates object measure the journeys for these apartments now (and only these). Stored or absent
+    estimates have nothing to prepare."""
+    prepare = getattr(estimates, "prepare", None)
+    if prepare is not None and apartment_ids:
+        prepare(list(apartment_ids))
+
+
+def _travel_last(req: Requirements, ordered: list, by_id: dict, estimates, room: int) -> list:
+    """GP6(d): take the candidates in their non-travel order, check travel for as many as there is room for, replace any
+    that fail (over the doubled limit) with the next candidate and check that one, and stop when the room is filled or the
+    candidates run out. An unknown journey is not a failure: that apartment stays, reading 'needs confirmation'. Journeys
+    are measured for the apartments reached here and for no others."""
+    kept, queue, replacing = [], list(ordered), False
+    while len(kept) < room and queue:
+        batch, queue = queue[:room - len(kept)], queue[room - len(kept):]
+        _prepare(estimates, [c.apartment_id for c in batch])
+        failed = False
+        for c in batch:
+            apply_travel(req, c, by_id[c.apartment_id], estimates)
+            if replacing:
+                c.flags.append(REPLACEMENT_AFTER_TRAVEL)
+            if c.klass == EXCLUDED:
+                c.flags.append(REPLACED_AFTER_TRAVEL)
+                failed = True
+            else:
+                kept.append(c)
+        replacing = replacing or failed
+    return kept
 
 
 def build_shortlist(req: Requirements, apartments: list, today: date, estimates: Optional[TravelEstimates] = None, progress=None, *,
@@ -861,22 +909,27 @@ def build_shortlist(req: Requirements, apartments: list, today: date, estimates:
     bathrooms, rent_12m, rent_6m, available_from, min_lease_months, bedroom1..3, feat_* columns).
     `progress(done, total)` (optional) is called after each apartment is evaluated; it may raise to abandon the run (the H2 job
     runner uses it for owner-fenced lease heartbeats). It never changes a result."""
-    cands = []
+    cands, by_id = [], {int(a["id"]): a for a in apartments}
     for i, a in enumerate(apartments, start=1):
         exact = (exception_offers_by_apartment or {}).get(int(a["id"]), ())
-        cands.append(evaluate(req, a, today, estimates, exception_offers=exact) if exact else evaluate(req, a, today, estimates))
+        cands.append(evaluate_without_travel(req, a, today, exception_offers=exact) if exact else evaluate_without_travel(req, a, today))
         if progress is not None:
             progress(i, len(apartments))
     apply_bunk_condition(req, cands)
     rank(cands, req)
-    listed = [c for c in cands if c.listed]
-    listed.sort(key=lambda c: c.order)
-    reason = _fourth_option(listed)
-    fourth = None
-    if reason:
-        fourth = listed[3]
-        fourth.flags.append(FOURTH_OPTION_PROVISIONAL)
+    # GP6(d): travel last. Full matches first, up to three; a failed one is replaced by the next and the replacement checked.
+    listed = _travel_last(req, sorted([c for c in cands if c.listed], key=lambda c: c.order), by_id, estimates, MAX_SHORTLIST)
+    # H27/H25: alternatives only when fewer than three full matches remain, and only inside the same maximum of three
     alts: list = []
-    if len(listed) < 3:
-        alts = sorted([c for c in cands if c.alternative and c.offer is not None], key=lambda c: (c.klass, c.order))[:3]
-    return Shortlist(req.scenario, listed[:3], alts, cands, fourth, reason, [c for c in cands if c.unresolved], req.notes_review)
+    if len(listed) < MAX_SHORTLIST:
+        alts = _travel_last(req, sorted([c for c in cands if c.alternative and c.offer is not None], key=lambda c: (c.klass, c.order)),
+                            by_id, estimates, MAX_SHORTLIST - len(listed))
+    # everything else was not shortlisted, so its journeys are not measured: it reads 'not checked', never a pass
+    for c in cands:
+        if c.travel is None and req.known_people:
+            apply_travel(req, c, by_id[c.apartment_id], None)
+            if c.klass != EXCLUDED:
+                c.flags.append(TRAVEL_NOT_CHECKED)
+    for i, c in enumerate(listed, start=1):
+        c.order = i
+    return Shortlist(req.scenario, listed, alts, cands, None, None, [c for c in cands if c.unresolved], req.notes_review)

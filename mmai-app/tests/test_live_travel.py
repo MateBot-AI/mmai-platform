@@ -528,7 +528,7 @@ def test_a_slow_provider_is_cut_off_and_counted(live, monkeypatch):
         raise RuntimeError("late")
     monkeypatch.setattr(routing, "LIVE_DEADLINE_SEC", 0.2)
     req_est = routing.LiveEstimates.prefetch
-    monkeypatch.setattr(routing.LiveEstimates, "prefetch", lambda self, ids=None: req_est(self, ids, deadline_sec=0.2))
+    monkeypatch.setattr(routing.LiveEstimates, "prefetch", lambda self, ids=None, **kw: req_est(self, ids, deadline_sec=0.2))
     try:
         out = hs.live_travel_check(c.db, eid, CUR, "Anna", now=NOW, post=slow)
     finally:
@@ -595,3 +595,92 @@ def test_page_wording_and_attribution():
     assert "localStorage" not in js[js.index("const hbTravelShown"):js.index("const hbTravelShown") + 400]
     for text in (hs.TRAVEL_NOT_SAVED, routing.LIVE_BASIS, routing.LIVE_OFF):
         assert not re.search(r"\b(?:T|H|GP|I)\d+(?:\([a-z]\))?", text)
+
+
+# ------------------------------------------------------------------------------------------------- travel checked last
+class ByBuilding(Provider):
+    """Journeys from the named buildings are far too long (over double the 30-minute limit); the rest are as usual."""
+
+    def __init__(self, far=()):
+        super().__init__()
+        self.far = tuple(far)
+
+    def __call__(self, body):
+        out = super().__call__(body)
+        if any(b in body["origin"]["address"] for b in self.far):
+            out["routes"][0]["duration"] = "7300s"
+        return out
+
+
+def _five_buildings(on, monkeypatch):
+    from tests.test_homebot_shortlist import _apt
+    _live_env(monkeypatch)
+    on.db.execute("DELETE FROM apartments")
+    for i in (1, 2, 3, 4, 5):
+        _apt(on.db, i, rent12=900 + 10 * i, building=f"{i}0 Stage Street")
+    on.db.commit()
+    eid = submit(on)
+    assert hs.run_pending(on.db)
+    return eid
+
+
+def _buildings(p):
+    return [b for b in dict.fromkeys(body["origin"]["address"].split(",")[0] for body in p.bodies)]
+
+
+def test_travel_is_measured_last_and_only_for_the_three_shortlisted(on, monkeypatch):
+    eid = _five_buildings(on, monkeypatch)
+    stored = json.loads(current(on, eid)["result_json"])
+    assert [x["apartment_id"] for x in stored["listed"]] == [1, 2, 3] and stored["fourth_option"] is None
+    p = Provider()
+    out = hs.live_travel_check(on.db, eid, CUR, "Anna", now=NOW, post=p)
+    assert [x["apartment_id"] for x in out["listed"]] == [1, 2, 3] and out["fourth_option"] is None and out["alternatives"] == []
+    assert sorted(_buildings(p)) == ["10 Stage Street", "20 Stage Street", "30 Stage Street"]      # the other two are never sent
+    assert out["check"]["requests"] == len(p.bodies) == 24 and out["check"]["stages"] == 1
+    (a,) = audits(on)
+    assert json.loads(a["detail"]) == {"scenario": CUR, "shortlist_id": out["shortlist_id"], "requests": 24, "not_requested": 0}
+    left = {x["apartment_id"]: x for x in out["why_not"]}
+    assert set(left) == {4, 5}
+    for x in left.values():   # not shortlisted, so not measured: says so, and is never shown as meeting the travel limit
+        assert x["class"] == hm.NEEDS_CONFIRMATION and hm.PLAIN[hm.TRAVEL_NOT_CHECKED] in x["notes"]
+    # no AI assessment was made (its switch is off), so this is held: journey figures alone are not a ready shortlist
+    assert out["ai_gate"]["state"] == "held" and out["ai_gate"]["held"] is True and out["ai_gate"]["reason"] == "off"
+    assert out["ai_gate"]["plain"].startswith("Held, not a ready shortlist: ")
+
+
+def test_a_shortlisted_apartment_that_fails_travel_is_replaced_and_the_replacement_is_measured(on, monkeypatch):
+    eid = _five_buildings(on, monkeypatch)
+    stored_before = current(on, eid)["result_json"]
+    p = ByBuilding(far=["20 Stage Street"])
+    out = hs.live_travel_check(on.db, eid, CUR, "Anna", now=NOW, post=p)
+    assert [x["apartment_id"] for x in out["listed"]] == [1, 3, 4]                       # 1 and 3 are kept; 4 steps in
+    assert all(x["travel"]["status"] == tv.PASS for x in out["listed"])
+    assert _buildings(p)[-1] == "40 Stage Street" and "50 Stage Street" not in _buildings(p)   # the replacement is measured, last
+    assert out["check"]["requests"] == len(p.bodies) == 32 and out["check"]["stages"] == 2
+    # the allowance is held before each stage leaves: counts only, nothing about which apartment or why
+    assert [json.loads(a["detail"])["requests"] for a in audits(on)] == [24, 8]
+    assert all(set(json.loads(a["detail"])) == {"scenario", "shortlist_id", "requests", "not_requested"} for a in audits(on))
+    left = {x["apartment_id"]: x for x in out["why_not"]}
+    assert left[2]["class"] == hm.EXCLUDED and hm.PLAIN[hm.TRAVEL_EXCEEDS_CEILING] in left[2]["reasons"]
+    assert hm.PLAIN[hm.REPLACED_AFTER_TRAVEL] in left[2]["notes"] and hm.PLAIN[hm.TRAVEL_NOT_CHECKED] in left[5]["notes"]
+    assert hm.PLAIN[hm.REPLACEMENT_AFTER_TRAVEL] in out["listed"][2]["notes"]
+    assert current(on, eid)["result_json"] == stored_before                                # the saved options are untouched
+    # every shortlisted apartment failing leaves a shorter list, never a padded one
+    p = ByBuilding(far=["10 Stage Street", "20 Stage Street", "30 Stage Street", "40 Stage Street"])
+    out = hs.live_travel_check(on.db, eid, CUR, "Anna", now=NOW, post=p)
+    assert [x["apartment_id"] for x in out["listed"]] == [5] and out["check"]["stages"] == 2 and len(p.bodies) == 40
+
+
+def test_the_time_budget_covers_every_stage_of_one_check(on, monkeypatch):
+    eid = _five_buildings(on, monkeypatch)
+    del eid
+    inv = hs.inventory_rows(on.db)
+    e = hs._capture(on.db, 1)
+    est = routing.LiveEstimates(hs._requirements(on.db, e, CUR), inv, max_requests=100, now=None, post=Provider())
+    sent = []
+    est.before_send = sent.append
+    assert est.prepare([1]) == 8 and sent == [8] and est.stages == 1
+    assert est.prepare([1]) == 0 and sent == [8]                    # already measured: nothing is requested twice
+    est.deadline_sec = 0                                            # the budget is spent
+    assert est.prepare([2]) == 0 and sent == [8] and est.calls == 8 and est.skipped == 8
+    assert all(v is tv.UNMEASURED for v in est(2, 1, "primary").values())   # not measured: reads as needing confirmation

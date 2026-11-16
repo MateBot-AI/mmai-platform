@@ -32,14 +32,31 @@ def _packet_from(prompt):
     return json.loads(prompt.split("GOOGLE MAPS JOURNEY ESTIMATES (source: Google Maps;", 1)[1].split(")\n\n", 1)[1])
 
 
+def _counted(o):
+    """The option as the model sees it, with the counts a careful reader would make."""
+    who = lambda kind: [p["person"] for p in o["people"] if p.get("own_limit") == kind]   # noqa: E731
+    return dict(o, counts={"within_own_limit": len(who("within")), "over_own_limit": len(who("over")), "not_known": len(who("not_known"))})
+
+
+def cautious(o):
+    """A plain, valid judgement for a stand-in model: the first rating and advice that fit, and only what must be flagged."""
+    f = _counted(o)
+    weak = tr._must_flag(f)
+    return {"travel_rating": tr._ratings_allowed(f)[0], "strengths": [], "weaknesses": weak, "advice": tr._advice_allowed(f, weak)[0]}
+
+
+def _order(options):
+    return [o["apartment_id"] for o in sorted(options, key=lambda o: (o.get("apartment") or {}).get("kind", tr.FULL) != tr.FULL)]
+
+
 def faithful(options):
     out = []
     for o in options:
         who = lambda kind: [p["person"] for p in o["people"] if p.get("own_limit") == kind]   # noqa: E731
         out.append({"apartment_id": o["apartment_id"], "within_own_limit": len(who("within")), "over_own_limit": len(who("over")),
                     "not_known": len(who("not_known")), "people_over_own_limit": who("over"), "people_not_known": who("not_known"),
-                    "group_result": o["group"]["result"]})
-    return {"options": out}
+                    "group_result": o["group"]["result"], **cautious(o)})
+    return {"options": out, "preferred_order": _order(options)}
 
 
 class Model:
@@ -122,7 +139,7 @@ def test_reply_is_returned_once_and_nothing_is_stored(grounded, caplog):
     reply, shown = out["ai_reply"], everything(out)
     assert reply["state"] == "ready" and reply["saved"] is False and reply["model"] == "claude-sonnet-5-5" and reply["plain"] == tr.READY_TEXT
     assert len(model.prompts) == 1                                           # one model call for the whole check
-    assert [o["apartment_id"] for o in reply["options"]] == [x["apartment_id"] for x in out["listed"] + out["alternatives"] + out["unresolved"]]
+    assert [o["apartment_id"] for o in reply["options"]] == [x["apartment_id"] for x in out["listed"] + out["alternatives"]]
     for o in reply["options"]:
         # three people in the party: each journey by public transport is 10 minutes, inside the 30-minute limit
         assert (o["within_own_limit"], o["over_own_limit"], o["not_known"], o["no_destination"]) == (3, 0, 0, 0)
@@ -150,7 +167,9 @@ def test_what_the_model_is_given(grounded):
     given = _packet_from(prompt)
     assert set(given) == {"options"} and given["options"]
     for o in given["options"]:
-        assert set(o) == {"apartment_id", "stated_limit_minutes", "doubled_limit_minutes", "people", "group"}   # the model counts; code checks
+        assert set(o) == {"apartment_id", "stated_limit_minutes", "doubled_limit_minutes", "people", "group", "long_journey", "apartment"}   # the model counts; code checks
+        assert set(o["apartment"]) == {"kind", "total_weekly_rent", "days_from_preferred_dates", "future_empty_days", "open_points", "notes",
+                                       "took_the_place_of_one_that_failed_travel"}
         for person in o["people"]:
             assert set(person) <= {"person", "journey", "minutes", "by", "own_limit"}
             assert person["by"] == ["Public transport"] and person["minutes"] == "10" and person["own_limit"] == "within"
@@ -274,11 +293,11 @@ def test_not_known_is_neither_within_nor_over():
 
 
 # ------------------------------------------------------------------------------------------------------------ validator
-def _reply(pk, **over):
+def _reply(pk, order=None, **over):
     row = {"apartment_id": 7, "within_own_limit": 5, "over_own_limit": 1, "not_known": 0, "people_over_own_limit": [6],
-           "people_not_known": [], "group_result": tr.WITHIN}
+           "people_not_known": [], "group_result": tr.WITHIN, **cautious(pk["options"][0])}
     row.update(over)
-    return json.dumps({"options": [{k: v for k, v in row.items() if v is not ...}]})
+    return json.dumps({"options": [{k: v for k, v in row.items() if v is not ...}], "preferred_order": [7] if order is None else order})
 
 
 def test_a_faithful_reply_is_accepted_and_the_sentence_is_written_by_code():
@@ -286,7 +305,9 @@ def test_a_faithful_reply_is_accepted_and_the_sentence_is_written_by_code():
     (o,) = tr.parse_reply(_reply(pk), pk)
     assert o == {"apartment_id": 7, "within_own_limit": 5, "over_own_limit": 1, "not_known": 0, "no_destination": 0,
                  "stated_limit_minutes": 30, "doubled_limit_minutes": 60, "group_result": tr.WITHIN,
-                 "group_plain": "within the doubled limit", "note": "Over their own limit: person 6."}
+                 "group_plain": "within the doubled limit", "note": "Over their own limit: person 6.",
+                 "travel_rating": "good", "travel_rating_plain": "good", "strengths": [], "weaknesses": [], "strength_codes": [],
+                 "weakness_codes": [], "advice": "offer", "advice_plain": "Suitable to offer.", "preference": 1, "of": 1}
     # five within their own limit and one over it, while the group result is a separate question
     extra = [{"index": 7, "status": tv.PARTIAL, "fastest_minutes": None, "unknown_modes": ["Tram"]},
              {"index": 8, "status": tv.UNMEASURED_PERSON, "fastest_minutes": None}]
@@ -338,13 +359,18 @@ def test_an_unknown_person_cannot_be_reported_as_within_or_over():
 def test_reply_shape_is_exact():
     pk = tr.packet([figures(), {**figures(), "apartment_id": 9}])
     one = json.loads(_reply(pk))["options"][0]
-    good = {"options": [one, {**one, "apartment_id": 9}]}
-    assert len(tr.parse_reply(json.dumps(good), pk)) == 2
-    for bad in ("not json at all", "[]", json.dumps({"options": [one]}), json.dumps({"options": [one, one]}),
-                json.dumps({"options": [{**one, "apartment_id": 9}, one]}), json.dumps({"options": good["options"], "extra": 1}),
-                json.dumps({"options": [one, {**one, "apartment_id": 9, "verdict": "pass"}]}),
-                json.dumps({"options": [one, {k: v for k, v in one.items() if k != "people_not_known"}]}),
-                json.dumps({"options": [one, "9"]}), json.dumps({"options": None})):
+    good = {"options": [one, {**one, "apartment_id": 9}], "preferred_order": [9, 7]}
+    assert [o["preference"] for o in tr.parse_reply(json.dumps(good), pk)] == [2, 1]
+    both = lambda options, **more: json.dumps({"options": options, "preferred_order": [7, 9], **more})   # noqa: E731
+    for bad in ("not json at all", "[]", both([one]), both([one, one]), json.dumps({"options": good["options"]}),
+                both([{**one, "apartment_id": 9}, one]), both(good["options"], extra=1),
+                both([one, {**one, "apartment_id": 9, "verdict": "pass"}]),
+                both([one, {k: v for k, v in one.items() if k != "people_not_known"}]),
+                both([one, {k: v for k, v in one.items() if k != "advice"}]),
+                both([one, "9"]), both(None),
+                json.dumps({**good, "preferred_order": [7]}), json.dumps({**good, "preferred_order": [7, 7]}),
+                json.dumps({**good, "preferred_order": [7, 9, 9]}), json.dumps({**good, "preferred_order": [7, 8]}),
+                json.dumps({**good, "preferred_order": ["7", "9"]}), json.dumps({**good, "preferred_order": None})):
         with pytest.raises(tr.ReplyMismatch):
             tr.parse_reply(bad, pk)
 
@@ -353,13 +379,170 @@ def test_the_model_is_not_asked_for_a_sentence_and_none_of_its_words_can_reach_t
     pk = tr.packet([figures()])
     prompt = tr.build_prompt(pk)
     assert '"note"' not in prompt and "no other fields" in prompt
-    assert set(tr.REPLY_KEYS) == {"apartment_id", "within_own_limit", "over_own_limit", "not_known", "people_over_own_limit", "people_not_known", "group_result"}
+    assert set(tr.REPLY_KEYS) == {"apartment_id", "within_own_limit", "over_own_limit", "not_known", "people_over_own_limit", "people_not_known",
+                                  "group_result", "travel_rating", "strengths", "weaknesses", "advice"}
+    assert "Do not write sentences of your own anywhere" in prompt
+    # a sentence where a code belongs is refused; the page only ever carries the server's own wording for a chosen code
+    for wordy in ({"strengths": ["Everyone is close to work."]}, {"weaknesses": ["A bit far for person 6."]}, {"advice": "Offer it today."},
+                  {"travel_rating": "good, with one long journey"}):
+        with pytest.raises(tr.ReplyMismatch):
+            tr.parse_reply(_reply(pk, **wordy), pk)
     # every value shown for an option comes from the code's figures: change every model-supplied field's type and nothing passes
     (o,) = tr.parse_reply(_reply(pk), pk)
     f = pk["options"][0]
     assert o["note"] == tr._note(f) and all(o[k] == f["counts"][k] for k in f["counts"]) and o["group_result"] == f["group"]["result"]
     for text in (tr._note(f), tr._note(tr.packet([figures(minutes=("10", "12"))])["options"][0])):
         assert not re.search(r"\d+(?:\.\d+)? minutes", text)             # the sentence carries no journey time
+
+
+# ------------------------------------------------------------------------------------------------------- the judgement
+def option(aid=7, klass=None, rent="900.00", distance=0, empty=0, flags=(), reasons=(), **kw):
+    """One shortlisted apartment as the travel check returns it: its journeys and its other points."""
+    from server import homebot_match as hm
+    return {**figures(**kw), "apartment_id": aid, "class": klass or hm.SUITABLE, "flags": list(flags), "confirmation_reasons": list(reasons),
+            "offer": {"total_weekly_rent": rent, "date_distance_days": distance, "future_empty_days": empty}}
+
+
+def _judged(pk, judgements, order=None):
+    rows_ = [{k: v for k, v in faithful([{k: v for k, v in o.items() if k != "counts"}])["options"][0].items()} for o in pk["options"]]
+    for row, j in zip(rows_, judgements):
+        row.update(j)
+    return json.dumps({"options": rows_, "preferred_order": order or [o["apartment_id"] for o in pk["options"]]})
+
+
+def test_the_judgement_is_the_models_own_and_it_is_what_the_page_shows():
+    """Same journeys, same apartments: two different assessments are both accepted, and each is shown as given. The code
+    does not choose the rating, the points, the advice or the order; it only refuses what is untrue."""
+    pk = tr.packet([option(7, rent="900.00"), option(9, rent="950.00", distance=3)])
+    one = tr.parse_reply(_judged(pk, [
+        {"travel_rating": "good", "strengths": ["lowest_rent_of_these", "most_within_own_limit"], "weaknesses": [], "advice": "offer"},
+        {"travel_rating": "acceptable", "strengths": [], "weaknesses": ["dates_differ", "some_over_own_limit"], "advice": "offer_with_caveats"}]), pk)
+    two = tr.parse_reply(_judged(pk, [
+        {"travel_rating": "poor", "strengths": [], "weaknesses": ["some_over_own_limit"], "advice": "offer_with_caveats"},
+        {"travel_rating": "good", "strengths": ["majority_average_within_stated_limit"], "weaknesses": [], "advice": "offer"}], order=[9, 7]), pk)
+    assert [(o["travel_rating"], o["advice"], o["preference"]) for o in one] == [("good", "offer", 1), ("acceptable", "offer_with_caveats", 2)]
+    assert [(o["travel_rating"], o["advice"], o["preference"]) for o in two] == [("poor", "offer_with_caveats", 2), ("good", "offer", 1)]
+    assert one[0]["strengths"] == ["The lowest whole-apartment rent of these options.", "Most people's journeys are within their own stated travel time."]
+    assert one[1]["weaknesses"] == ["The dates differ from the ones the party asked for.", "At least one person's journey is over their own stated travel time."]
+    assert one[1]["advice_plain"] == "Can be offered, with the weaknesses explained to the customer." and one[0]["of"] == 2
+    assert two[1]["strengths"] == ["The closest majority's average journey is within the stated travel time itself, not only double it."]
+    # the figures the two replies report are identical and exact, whatever the judgement
+    for a, b in zip(one, two):
+        assert all(a[k] == b[k] for k in ("within_own_limit", "over_own_limit", "not_known", "group_result", "note"))
+    # no sentence shown states a journey time
+    for o in one + two:
+        assert not re.search(r"\d", " ".join(o["strengths"] + o["weaknesses"] + [o["advice_plain"], o["travel_rating_plain"]]))
+
+
+LONG = dict(minutes=("12", "22.3", "25", "28", "30", "75"))
+
+
+@pytest.mark.parametrize("candidate,judgement", [
+    # a rating that contradicts the result
+    (option(), {"travel_rating": "not_known"}), (option(), {"travel_rating": "fails"}), (option(), {"travel_rating": "excellent"}),
+    (option(), {"travel_rating": None}), (option(minutes=("10", "12")), {"travel_rating": "poor"}),          # everyone within, average within
+    (option(flags=["LONG_JOURNEY"], **LONG), {"travel_rating": "good", "weaknesses": ["long_journey_for_some"], "advice": "offer_with_caveats"}),
+    (option(status=tv.NEEDS_CONFIRMATION, extra=[{"index": 7, "status": tv.UNMEASURED_PERSON, "fastest_minutes": None}]), {"travel_rating": "good"}),
+    (option(status=tv.NEEDS_CONFIRMATION, extra=[{"index": 7, "status": tv.UNMEASURED_PERSON, "fastest_minutes": None}]), {"travel_rating": "acceptable"}),
+    # a point that is not true for this option, is on the wrong side, is not on the list, or is given twice
+    (option(), {"strengths": ["everyone_within_own_limit"]}), (option(), {"strengths": ["lowest_rent_of_these"]}),     # only one option
+    (option(distance=2), {"strengths": ["dates_as_requested"]}), (option(empty=4), {"strengths": ["no_empty_days"]}),
+    (option(), {"weaknesses": ["journeys_not_known"], "advice": "offer_with_caveats"}),
+    (option(), {"weaknesses": ["long_journey_for_some"], "advice": "offer_with_caveats"}),
+    (option(), {"weaknesses": ["alternative_not_full_match"], "advice": "offer_with_caveats"}),
+    (option(), {"weaknesses": ["other_points_to_confirm"], "advice": "offer_with_caveats"}),
+    (option(), {"strengths": ["some_over_own_limit"]}), (option(), {"weaknesses": ["most_within_own_limit"], "advice": "offer_with_caveats"}),
+    (option(), {"strengths": ["close_to_the_tram"]}), (option(), {"strengths": ["most_within_own_limit", "most_within_own_limit"]}),
+    (option(), {"strengths": "most_within_own_limit"}), (option(), {"strengths": None}), (option(), {"weaknesses": [7]}),
+    (option(), {"strengths": ["most_within_own_limit", "majority_average_within_stated_limit", "dates_as_requested", "no_empty_days", "x"]}),
+    # something that must be flagged is left out
+    (option(flags=["LONG_JOURNEY"], **LONG), {"travel_rating": "acceptable", "weaknesses": ["some_over_own_limit"], "advice": "offer_with_caveats"}),
+    (option(status=tv.NEEDS_CONFIRMATION, extra=[{"index": 7, "status": tv.UNMEASURED_PERSON, "fastest_minutes": None}]), {"weaknesses": []}),
+    (option(klass="alternative_area"), {"weaknesses": [], "advice": "discuss_as_alternative"}),
+    # advice that contradicts the option or the model's own weaknesses
+    (option(), {"advice": "offer_with_caveats"}), (option(), {"advice": "confirm_first"}), (option(), {"advice": "discuss_as_alternative"}),
+    (option(), {"weaknesses": ["some_over_own_limit"], "advice": "offer"}), (option(), {"advice": "Offer it."}),
+    (option(klass="alternative_area"), {"advice": "offer_with_caveats"}), (option(klass="alternative_bathroom"), {"advice": "offer"}),
+    (option(reasons=["BEDDING_NEEDS_CONFIRMATION"]), {"advice": "offer"}), (option(reasons=["BEDDING_NEEDS_CONFIRMATION"]), {"advice": "offer_with_caveats"}),
+    (option(status=tv.NEEDS_CONFIRMATION, extra=[{"index": 7, "status": tv.UNMEASURED_PERSON, "fastest_minutes": None}]), {"advice": "offer_with_caveats"}),
+])
+def test_a_judgement_that_is_untrue_hides_a_flag_or_contradicts_itself_is_refused_whole(candidate, judgement):
+    pk = tr.packet([candidate])
+    assert tr.parse_reply(_judged(pk, [{}]), pk)                 # the plain valid judgement for this option is accepted
+    with pytest.raises(tr.ReplyMismatch):
+        tr.parse_reply(_judged(pk, [judgement]), pk)
+
+
+def test_what_must_be_flagged_and_what_may_be_chosen():
+    from server import homebot_match as hm
+    assert hm.ALTERNATIVE_AREA == "alternative_area" and hm.ALTERNATIVE_BATHROOM == "alternative_bathroom" and hm.LONG_JOURNEY == "LONG_JOURNEY"
+    unknown = [{"index": 7, "status": tv.UNMEASURED_PERSON, "fastest_minutes": None}]
+    f = tr.packet([option()])["options"][0]
+    assert tr._ratings_allowed(f) == ("good", "acceptable", "poor") and tr._must_flag(f) == [] and tr._advice_allowed(f, []) == ("offer",)
+    assert tr._advice_allowed(f, ["some_over_own_limit"]) == ("offer_with_caveats",)
+    f = tr.packet([option(minutes=("10", "12"))])["options"][0]
+    assert tr._ratings_allowed(f) == ("good", "acceptable")
+    f = tr.packet([option(flags=["LONG_JOURNEY"], **LONG)])["options"][0]
+    assert tr._ratings_allowed(f) == ("acceptable", "poor") and tr._must_flag(f) == ["long_journey_for_some"]
+    f = tr.packet([option(status=tv.NEEDS_CONFIRMATION, extra=unknown)])["options"][0]
+    assert tr._ratings_allowed(f) == ("not_known",) and tr._must_flag(f) == ["journeys_not_known"] and tr._advice_allowed(f, []) == ("confirm_first",)
+    f = tr.packet([option(status=tv.NO_DESTINATIONS, minutes=())])["options"][0]
+    assert tr._ratings_allowed(f) == ("not_applicable",)
+    f = tr.packet([option(status=tv.EXCEEDS_CEILING)])["options"][0]
+    assert tr._ratings_allowed(f) == ("fails",) and tr._advice_allowed(f, []) == ("confirm_first",)       # never "offer"
+    f = tr.packet([option(klass=hm.ALTERNATIVE_BATHROOM)])["options"][0]
+    assert tr._must_flag(f) == ["alternative_not_full_match"] and tr._advice_allowed(f, []) == ("discuss_as_alternative",)
+    assert f["apartment"]["kind"] == "alternative_one_bathroom"
+    # travel's own needs-confirmation reason is not repeated as an "other point"; anything else open is
+    f = tr.packet([option(reasons=[hm.TRAVEL_NEEDS_CONFIRMATION])])["options"][0]
+    assert f["apartment"]["open_points"] == []
+    f = tr.packet([option(reasons=[hm.BEDDING_NEEDS_CONFIRMATION])])["options"][0]
+    assert f["apartment"]["open_points"] == [hm.PLAIN[hm.BEDDING_NEEDS_CONFIRMATION]] and tr._advice_allowed(f, []) == ("confirm_first",)
+    # every statement has a side and a sentence with no figure in it
+    assert all(side in ("strength", "weakness") and not re.search(r"\d", text) for side, text, _ in tr.POINTS.values())
+    # rent points need a real comparison: at least two options and one clear lowest or highest
+    pk = tr.packet([option(7, rent="900.00"), option(9, rent="900.00"), option(11, rent="990.00")])
+    assert [tr.POINTS["lowest_rent_of_these"][2](o, pk) for o in pk["options"]] == [False, False, False]
+    assert [tr.POINTS["highest_rent_of_these"][2](o, pk) for o in pk["options"]] == [False, False, True]
+
+
+def test_the_order_of_preference_never_puts_an_alternative_before_a_full_match():
+    pk = tr.packet([option(7), option(9, klass="alternative_area"), option(11)])
+    assert [o["preference"] for o in tr.parse_reply(_judged(pk, [{}, {}, {}], order=[11, 7, 9]), pk)] == [2, 3, 1]
+    for order in ([9, 7, 11], [7, 9, 11], [7, 11], [7, 11, 9, 9], [7, 11, 12]):
+        with pytest.raises(tr.ReplyMismatch):
+            tr.parse_reply(_judged(pk, [{}, {}, {}], order=order), pk)
+
+
+def test_only_a_valid_ai_assessment_of_every_apartment_makes_the_travel_checked_shortlist_ai_assessed():
+    """T6: no rules-only way through. Journey figures without an accepted AI assessment are held, with the reason."""
+    shown = [{"apartment_id": 7}, {"apartment_id": 9}]
+    ready = {"state": "ready", "options": [{"apartment_id": 9}, {"apartment_id": 7}]}
+    assert tr.gate(ready, "reviewed", shown) == {"state": "assessed", "held": False, "plain": tr.ASSESSED_TEXT}
+    held = lambda reply, review, options=shown: tr.gate(reply, review, options)   # noqa: E731
+    for reply, review, options, why in (
+            ({"state": "off", "options": []}, "reviewed", shown, "off"), ({"state": "nothing", "options": []}, "reviewed", shown, "nothing"),
+            ({"state": "unavailable", "options": []}, "reviewed", shown, "unavailable"), ({"state": "withheld", "options": []}, "reviewed", shown, "withheld"),
+            ({"state": "something new", "options": []}, "reviewed", shown, "unavailable"), ({}, "reviewed", shown, "unavailable"),
+            ({"state": "ready", "options": [{"apartment_id": 7}]}, "reviewed", shown, "incomplete"),      # a replacement not covered
+            (ready, "queued", shown, "review"), (ready, "held", shown, "review"), (ready, "unreviewed", shown, "review"), (ready, None, shown, "review"),
+            (ready, "reviewed", [], "empty")):
+        out = held(reply, review, options)
+        assert out["state"] == "held" and out["held"] is True and out["reason"] == why and out["plain"] == tr.HELD_PREFIX + tr.HELD_REASON[why]
+    for text in (tr.ASSESSED_TEXT, tr.HELD_PREFIX, *tr.HELD_REASON.values(), *tr.ADVICE_PLAIN.values(), *tr.RATING_PLAIN.values()):
+        assert not re.search(r"\b(?:T|H|GP|I)\d+(?:\([a-z]\))?", text)
+
+
+def test_a_live_check_with_the_assessment_is_still_held_until_the_saved_ai_review_is_complete(grounded):
+    c, eid, model = grounded
+    out = hs.live_travel_check(c.db, eid, CUR, "Anna", now=NOW, post=Provider())
+    assert out["ai_reply"]["state"] == "ready" and len(model.prompts) == 1
+    for o in out["ai_reply"]["options"]:
+        assert o["travel_rating"] == "good" and o["advice"] in ("offer", "confirm_first")
+        assert 1 <= o["preference"] <= o["of"] == len(out["ai_reply"]["options"])
+    assert sorted(o["preference"] for o in out["ai_reply"]["options"]) == list(range(1, len(out["ai_reply"]["options"]) + 1))
+    assert hs._review_state(c.db, current(c, eid))["state"] != "reviewed"
+    assert out["ai_gate"] == {"state": "held", "held": True, "reason": "review", "plain": tr.HELD_PREFIX + tr.HELD_REASON["review"]}
 
 
 # ------------------------------------------------------------------------------------------------------------- the page
@@ -370,7 +553,10 @@ def test_page_shows_the_reply_with_its_sources_straight_after_it():
     assert "const GMAPS_TEXT = '<span class=\"gmaps-text\" translate=\"no\">Google Maps</span>';" in js   # the name, unaltered, never translated
     block = js[js.index("const grounded = x =>"):js.index("const candRows =")]
     note, sources, warning = block.index('data-role="hb-travel-ai-note"'), block.index('data-role="hb-travel-sources"'), block.index('data-role="hb-walk-warning"')
-    assert note < sources < warning                                          # the sources follow the reply directly; then the walking notice
+    assert block.index('data-role="hb-travel-ai-view"') < note < sources < warning   # assessment, its figures, then directly the sources, then the walking notice
+    for words in ("Travel: ${esc(ai.travel_rating_plain)}", "Strengths: ${ai.strengths.map(esc).join(' ')}", "Weaknesses: ${ai.weaknesses.map(esc).join(' ')}",
+                  "Advice: ${esc(ai.advice_plain)}", "its choice ${ai.preference} of ${ai.of}"):
+        assert words in block
     assert "Sources: ${GMAPS_TEXT}" in block and 'target="_blank" rel="noopener noreferrer">${esc(s.title)}</a>' in block
     assert "/^https:\\/\\//.test(s.url || '')" in block and 'href="${esc(s.url)}"' in block
     assert "<details" not in block                                           # visible without a further click
@@ -382,6 +568,8 @@ def test_page_shows_the_reply_with_its_sources_straight_after_it():
     assert "return `${grounded(x)}<details" in figures_block                 # in the same cell as that option's journey figures
     view = js[js.index("const travelView = r =>"):js.index("const travelBlock =")]
     assert "ai.state === 'ready' ? ai.options || [] : []" in view and 'data-role="hb-travel-ai"' in view
+    assert 'data-role="hb-travel-gate"' in view and "gate.held ? 'Held.' : 'AI-assessed.'" in view and "${esc(gate.plain)}" in view
+    assert "fourth" not in view.lower() and "Never more than three." in view
     assert "localStorage" not in block + view and "sessionStorage" not in block + view
     assert not re.search(r"\b(?:T|H|GP|I)\d+(?:\([a-z]\))?", block)
     rule = css[css.index(".gmaps-text {"):].split("}")[0]

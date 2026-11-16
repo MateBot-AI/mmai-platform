@@ -1445,45 +1445,44 @@ def live_travel_check(c, eid: int, scenario: str, staff: str, *, now: Optional[s
         if allowance <= 0:
             return _travel_refusal("limit", "The travel-check allowance for " + ("today" if routing.live_limit("MMAI_ROUTING_LIVE_MONTHLY_REQUESTS") > used_month else "this month")
                                    + " has been used, so travel was not checked. Travel time needs confirmation.", shortlist_id=sl["id"])
-        stored = pj(sl["result_json"]) or {}
-        # the options staff see first are measured first; apartments already ruled out for another reason are not measured at all
-        first = [x["apartment_id"] for key in ("listed", "alternatives", "unresolved") for x in stored.get(key, [])]
-        if stored.get("fourth_option"):
-            first.insert(len(stored.get("listed", [])), stored["fourth_option"]["apartment_id"])
-        order = list(dict.fromkeys(first + [x["apartment_id"] for x in stored.get("candidates", []) if x.get("class") != hm.EXCLUDED]))
         est = routing.LiveEstimates(req, inv, max_requests=allowance, now=when, post=post)
-        est.plan(order)   # how many requests this check will make; nothing has been sent yet
-        if est.calls:
-            # recorded BEFORE the first request leaves, so the allowance is held even if this process stops part-way.
-            # Our own planned request counts only: nothing that depends on what the provider answers.
-            audit(c, str(staff or "").strip()[:homebot.MAX_NAME] or "staff", TRAVEL_CHECK_ACTION, "homebot_enquiry", eid,
-                  j({"scenario": scenario, "shortlist_id": sl["id"], "requests": est.calls, "not_requested": est.skipped}))
-        est.prefetch()   # outside any database lock
-        check = est.display()
+        who = str(staff or "").strip()[:homebot.MAX_NAME] or "staff"
+
+        def record(requests: int) -> None:
+            # recorded BEFORE the first request of each stage leaves, so the allowance is held even if this process stops
+            # part-way. A count of our own requests and nothing else: no journey, apartment, person or result. (A check
+            # that needed a replacement makes a second record, because the allowance has to count those requests too.)
+            audit(c, who, TRAVEL_CHECK_ACTION, "homebot_enquiry", eid,
+                  j({"scenario": scenario, "shortlist_id": sl["id"], "requests": requests, "not_requested": est.skipped}))
+        est.before_send = record
+        # GP6(d): the apartments are chosen on the other points first; journeys are measured last, for the shortlisted ones
+        # only, and for a replacement when one of them fails. build_shortlist asks for each stage through est.prepare.
         exact = {int(a["id"]): exit_exceptions.offers_from_capture(exception_capture, int(a["id"])) for a in inv} if exception_capture else None
         res = hm.build_shortlist(req, inv, date.fromisoformat(sl["today"]), est,
                                  **({"exception_offers_by_apartment": exact} if exact else {})).as_dict()
+        check = est.display()
         now_current = row(c.execute("SELECT id FROM homebot_shortlists WHERE enquiry_id=? AND scenario=? AND is_current=1", (eid, scenario)))
         if not now_current or now_current["id"] != sl["id"]:
             return _travel_refusal("replaced", "The options were replaced while travel was being checked. Open the new options and check travel again.",
                                    shortlist_id=sl["id"])
     finally:
         _travel_lock.release()
-    shown = {x["apartment_id"] for key in ("listed", "alternatives", "unresolved") for x in res.get(key, [])} | (
-        {res["fourth_option"]["apartment_id"]} if res.get("fourth_option") else set())
-    # the options in the order the page shows them; the AI's transient travel reply covers these and nothing else
-    in_order = res.get("listed", []) + ([res["fourth_option"]] if res.get("fourth_option") else []) + res.get("alternatives", []) + res.get("unresolved", [])
+    shown = {x["apartment_id"] for key in ("listed", "alternatives", "unresolved") for x in res.get(key, [])}
+    # the options in the order the page shows them; the AI's transient travel assessment covers the shortlisted ones
+    in_order = res.get("listed", []) + res.get("alternatives", [])
     reply = homebot_travel_reply.travel_reply(in_order)   # outside the lock and any database work; returned once, never stored
+    # T6: travel-checked options are AI-assessed only with the saved review complete and this assessment accepted for all of them
+    ai_gate = homebot_travel_reply.gate(reply, _review_state(c, sl)["state"], in_order)
 
     def with_sources(x):
         # the provider's attribution for this option's journeys, to be shown straight after its figures and the AI's note
         return {**_candidate_out(x), "travel_sources": est.sources_for(x["apartment_id"])}
     return {"ok": True, "state": "checked", "saved": False, "plain": TRAVEL_NOT_SAVED, "shortlist_id": sl["id"], "scenario": scenario,
             "scenario_label": SCENARIO_LABEL.get(scenario, scenario), "check": check, "summary": res.get("summary") or {},
-            "ai_reply": reply,
+            "ai_reply": reply, "ai_gate": ai_gate,
             "listed": [with_sources(x) for x in res.get("listed", [])],
             "alternatives": [with_sources(x) for x in res.get("alternatives", [])],
-            "fourth_option": with_sources(res["fourth_option"]) if res.get("fourth_option") else None,
+            "fourth_option": None,   # retired (GP6(d): at most three); the key stays for older pages
             "unresolved": [with_sources(x) for x in res.get("unresolved", [])],
             "why_not": [_candidate_out(x, brief=True) for x in res.get("candidates", []) if x["apartment_id"] not in shown]}
 

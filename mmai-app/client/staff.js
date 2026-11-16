@@ -478,7 +478,10 @@
         (x.travel.facts.secondary_display || []).some(person => person.status === 'MEASURED'));
       if (!ai && !links.length && !measured) return '';
       return `<div class="small hb-grounded" data-role="hb-grounded">
-        ${ai ? `<p data-role="hb-travel-ai-note"><b>AI travel assessment.</b> ${esc(ai.note)}<br>
+        ${ai ? `<p data-role="hb-travel-ai-view"><b>AI assessment${ai.of > 1 ? ` (its choice ${ai.preference} of ${ai.of})` : ''}.</b> Travel: ${esc(ai.travel_rating_plain)}.
+          ${(ai.strengths || []).length ? `<br>Strengths: ${ai.strengths.map(esc).join(' ')}` : ''}${(ai.weaknesses || []).length ? `<br>Weaknesses: ${ai.weaknesses.map(esc).join(' ')}` : ''}
+          <br>Advice: ${esc(ai.advice_plain)}</p>
+          <p data-role="hb-travel-ai-note"><b>Journey figures the AI reported.</b> ${esc(ai.note)}<br>
           Each person's own limit (${ai.stated_limit_minutes} minutes): ${ai.within_own_limit} within, ${ai.over_own_limit} over, ${ai.not_known} not known${ai.no_destination ? `, ${ai.no_destination} with no destination yet` : ''}.
           Group result (closest majority against the doubled limit of ${ai.doubled_limit_minutes} minutes): ${esc(ai.group_plain)}.</p>` : ''}
         <p data-role="hb-travel-sources">Sources: ${GMAPS_TEXT}${links.length ? ' · ' + links.join(' · ') : ''}</p>
@@ -503,22 +506,24 @@
       const k = r.check || {};
       const missed = (k.failures || 0) + (k.not_requested || 0);
       const counts = r.summary && r.summary.counts ? Object.entries(r.summary.counts).map(([n, v]) => `${v} ${n.replace(/_/g, ' ')}`).join(', ') : '';
-      // the AI's travel reply for this check (never saved): each option's note is shown in its own row, followed by its sources
+      // the AI's assessment for this check (never saved): each option's assessment is shown in its own row, followed by its sources
       const ai = r.ai_reply || {};
       const notes = new Map((ai.state === 'ready' ? ai.options || [] : []).map(o => [o.apartment_id, o]));
-      [...(r.listed || []), ...(r.fourth_option ? [r.fourth_option] : []), ...(r.alternatives || []), ...(r.unresolved || [])].forEach(x => { x.ai_travel = notes.get(x.apartment_id) || null; });
+      [...(r.listed || []), ...(r.alternatives || []), ...(r.unresolved || [])].forEach(x => { x.ai_travel = notes.get(x.apartment_id) || null; });
+      const gate = r.ai_gate || {};
       return `<div data-role="hb-travel-result"><h4>Options with live travel times</h4>
         <p class="small">${GMAPS_ATTR}<br>Journey estimates. ${esc(k.basis || '')}. Checked ${fmtDT(k.checked_at)}.</p>
+        ${gate.plain ? `<p class="${gate.held ? 'msg ' : ''}small" data-role="hb-travel-gate" data-state="${esc(gate.state || '')}"><b>${gate.held ? 'Held.' : 'AI-assessed.'}</b> ${esc(gate.plain)}</p>` : ''}
         ${ai.plain ? `<p class="small${ai.state === 'ready' ? '' : ' muted'}" data-role="hb-travel-ai" data-state="${esc(ai.state || '')}">${esc(ai.plain)}</p>` : ''}
+        <p class="small muted">The apartments are chosen on dates, layout, price and features first. Travel is checked last, for the shortlisted apartments only; one that fails is replaced by the next and the replacement is checked. Never more than three.</p>
         <p class="small muted">${esc(r.plain)}${counts ? ` With these journey times: ${esc(counts)}.` : ''}</p>
         ${missed ? `<p class="msg small">${missed} journey${missed === 1 ? '' : 's'} could not be checked this time; where a time is missing the option reads "Travel time needs confirmation".</p>` : ''}
         ${!k.requests ? '<p class="small muted">No journeys were needed: no one in the party has a place of work or study recorded yet.</p>' : ''}
         ${candRows(r.listed, 'Options to review (up to three)')}
-        ${r.fourth_option ? candRows([r.fourth_option], 'Possible fourth option (provisional — only if staff judge it comparably suitable)') : ''}
         ${candRows(r.alternatives, 'Alternatives the party did not ask for (different area or one bathroom)')}
         ${candRows(r.unresolved, 'Could not be checked automatically — check by hand')}
         ${!(r.listed || []).length && !(r.alternatives || []).length && !(r.unresolved || []).length ? '<p class="small">With these journey times, no apartment is within the party\'s travel limit.</p>' : ''}
-        ${r.why_not && r.why_not.length ? `<details class="small"><summary>Why the other ${r.why_not.length} apartment(s) are not listed with these journey times</summary><ul>${r.why_not.map(x => `<li>${esc(x.address)} (${esc(x.type_code)}): ${esc(x.class_plain)}${x.reasons.length ? ' — ' + x.reasons.map(esc).join('; ') : ''}</li>`).join('')}</ul></details>` : ''}</div>`;
+        ${r.why_not && r.why_not.length ? `<details class="small"><summary>Why the other ${r.why_not.length} apartment(s) are not listed with these journey times</summary><ul>${r.why_not.map(x => `<li>${esc(x.address)} (${esc(x.type_code)}): ${esc(x.class_plain)}${[...x.reasons, ...(x.notes || [])].length ? ' — ' + [...x.reasons, ...(x.notes || [])].map(esc).join('; ') : ''}</li>`).join('')}</ul></details>` : ''}</div>`;
     };
     const travelBlock = (key, cur) => {
       if (!liveTravel.enabled || !cur || cur.stale) return '';
@@ -555,7 +560,7 @@
       const saved = new Set(all.map(x => x.apartment_id));
       // an apartment offered from the live travel view can be declined too; the decline is still recorded against the saved list
       const live = key && liveTravel.enabled ? travelKept(key, cur) : null;
-      if (live && live.reply && live.reply.ok) all.push(...live.reply.listed, ...(live.reply.fourth_option ? [live.reply.fourth_option] : []), ...live.reply.alternatives, ...live.reply.unresolved);
+      if (live && live.reply && live.reply.ok) all.push(...live.reply.listed, ...live.reply.alternatives, ...live.reply.unresolved);
       const seen = new Set();
       return all.filter(x => !seen.has(x.apartment_id) && seen.add(x.apartment_id)).map(x => `<option value="${x.apartment_id}">${esc(x.address)}${saved.has(x.apartment_id) ? '' : ' (from the live travel view)'}</option>`).join('');
     };

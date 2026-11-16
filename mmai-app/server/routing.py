@@ -373,6 +373,10 @@ class LiveEstimates(Estimates):
         self.cache = {}
         self.sources = {}
         self._todo = []
+        self.before_send = None      # called with the number of requests about to leave, before the first of them does
+        self.deadline_sec = LIVE_DEADLINE_SEC
+        self._started = None         # one time budget for the whole check, however many stages it takes
+        self.stages = 0
 
     def _origin(self, apartment):
         building = hm.building_key(apartment.get("address") or "")
@@ -443,6 +447,30 @@ class LiveEstimates(Estimates):
         finally:
             pool.shutdown(wait=False, cancel_futures=True)
 
+    def prepare(self, apartment_ids) -> int:
+        """One stage of a travel-last check (GP6(d)): measure the journeys for these apartments now, and only these. The
+        number of new requests is handed to `before_send` before any of them leaves, so the allowance is held even if this
+        process stops part-way. All stages share one time budget; once it is spent nothing more is requested and those
+        journeys stay not measured (the option reads 'Travel time needs confirmation')."""
+        if self._started is None:
+            self._started = clock.monotonic()
+        left = self.deadline_sec - (clock.monotonic() - self._started)
+        if left <= 0:
+            fresh = [k for aid in apartment_ids for k in self._keys(aid) if k not in self.cache]
+            for key in fresh:
+                self.cache[key] = tv.UNMEASURED
+            self.skipped += len(fresh)
+            return 0
+        before = self.calls
+        self.plan(apartment_ids)
+        new = self.calls - before
+        if new:
+            self.stages += 1
+            if self.before_send is not None:
+                self.before_send(new)
+            self.prefetch(deadline_sec=left)
+        return new
+
     def __call__(self, aid, position, which):
         apartment = self.inventory.get(int(aid))
         person = self.people.get(position)
@@ -472,4 +500,5 @@ class LiveEstimates(Estimates):
         """What the page says about this check. Counts and our own clock only; no journey content."""
         return {"attribution": "Google Maps", "basis": LIVE_BASIS, "checked_at": self.now.isoformat(),
                 "departure": self.departure.isoformat(), "timezone": "Australia/Melbourne",
-                "requests": self.calls, "measured": self.measured, "failures": self.failures, "not_requested": self.skipped}
+                "requests": self.calls, "measured": self.measured, "failures": self.failures, "not_requested": self.skipped,
+                "stages": self.stages}

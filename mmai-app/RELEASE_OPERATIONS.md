@@ -84,12 +84,14 @@ Tools key.
 - Nothing from the service, and nothing worked out from it, is stored, cached between
   requests or logged. The stored options, their history, the saved AI review packet
   and the decline records are unchanged and keep reading "Travel time needs
-  confirmation". The only record is one audit row per check holding this application's
-  own request counts.
+  confirmation". The only record is an audit row holding this application's own
+  request counts, written before each stage of a check is sent: one row normally, a
+  second when a shortlisted apartment failed the travel check and its replacement had
+  to be measured. The row names no apartment, person, journey or result.
 - Sources. Each journey answer carries a source title and link from the service. The
   page shows, for each option, "Sources: Google Maps" followed by those links, straight
-  after the AI's travel reply for that option, without a further click. When there is
-  no AI reply the same sources line still shows with that option's journey figures. "Google Maps" is plain text, never
+  after the AI's assessment for that option, without a further click. When there is
+  no AI assessment the same sources line still shows with that option's journey figures. "Google Maps" is plain text, never
   translated, wrapped or restyled. A link is shown only if it is an https address on a
   Google host; a journey whose link is anything else is treated as not measured, and
   a journey the service sends with no link at all is shown with "Sources: Google Maps"
@@ -127,38 +129,72 @@ Tools key.
   off: they govern stored journey evidence and its use by the saved AI review, and no
   clearance for that exists. That stored path was built for the earlier form choices
   and does not request "Public transport" or "Bicycle" journeys at all.
-- Order of options: unchanged by this build. Which options are measured, and how the
-  listed options are ordered, is exactly as before.
+- Travel is checked last (approved 16 November 2026). Apartments are chosen and
+  ordered on dates, layout, price and features only; a journey time plays no part in
+  that order. Journeys are then measured for the shortlisted apartments only, at most
+  three. One that fails (the closest majority's average is over double the stated
+  time) is replaced by the next apartment in the order and the replacement is
+  measured; the other shortlisted apartments are kept. An unknown journey is not a
+  failure: that apartment stays and reads "Travel time needs confirmation". The list
+  is never longer than three and is not padded; alternatives (different area, one
+  bathroom) appear only when fewer than three full matches remain, inside the same
+  maximum, and are travel-checked the same way. There is no fourth option. Apartments
+  that were not shortlisted are not measured and say so.
+- All stages of one check share one 45-second time budget. A stage that would start
+  after it is spent is not sent; those journeys read as needing confirmation.
+- The saved options use the same order and the same maximum of three. Because nothing
+  measured may be stored, the saved options never show a replacement: they keep
+  reading "Travel time needs confirmation" and the live view shows the travel-checked
+  result. Saved options prepared before this build are marked out of date and
+  have to be prepared again.
 
-### The AI's travel reply
+### The AI's assessment of the travel-checked shortlist
 
-`MMAI_TRAVEL_AI_REPLY=1` (in addition to the switches above) lets the AI write a short
-travel assessment for each option in the check just made. It is off by default.
+`MMAI_TRAVEL_AI_REPLY=1` (in addition to the switches above) has the AI assess each
+apartment in the travel-checked shortlist, using the journey results of the check just
+made. It is off by default.
 
 - It runs only when the call goes to ALM's own Anthropic account
   (`ANTHROPIC_API_KEY`, no proxy) and uses `claude-sonnet-5-5`. On any other route no
   call is made and the page says so.
-- The model is given positions and figures only: person 1, 2, 3; each person's fastest
-  accepted journey in minutes and by which way of travelling; whether that is within
-  that person's stated limit; and the group result. No names, addresses, places of
-  work or study, or apartment details.
-- Every figure is worked out in code first. The model answers in fixed fields only, per
-  option: how many people are within their own limit, how many are over it and how
-  many are not known; which people are over it and which are not known; and the group
-  result. Code checks each of those against its own figures. Any mismatch, any missing
-  field and any extra field withholds the whole reply and the page says so.
-- No sentence written by the model is shown. The short sentence beside the counts
-  ("Over their own limit: person 6.") is written by this application from the fields
-  it has just checked. An independent review of an earlier draft, which let the model
-  add its own note, found wrong sentences that passed the checks; that note was
-  removed.
+- The model is given, for each shortlisted apartment: person 1, 2, 3; each person's
+  fastest accepted journey in minutes and by which way of travelling; whether that is
+  within that person's stated limit; the group result; and the apartment's other
+  points already held with the saved options (full match or alternative, whole rent,
+  days from the requested dates, empty days, what is still open). No names, addresses
+  or places of work or study.
+- Reading check. Every figure is worked out in code first. Per apartment the model
+  reports how many people are within their own limit, over it and not known, which
+  people, and the group result. Code checks each against its own figures.
+- Judgement. Per apartment the model then gives a travel rating (good, acceptable or
+  poor where the group result is within the doubled limit), the strengths and
+  weaknesses it thinks matter most, chosen from a fixed list of statements, and its
+  advice to staff; and one order of preference across the shortlist. These choices are
+  the model's. Code does not make them. It refuses a reply whose choice is untrue for
+  that apartment, leaves out something that must be flagged (an unknown journey, a
+  long journey, an alternative), contradicts the group result, or contradicts itself.
+  The model cannot pass an apartment that failed, rate an unknown journey, or advise
+  offering an apartment that still has open points.
+- No sentence written by the model is shown. Each sentence on the page is this
+  application's own wording for a statement the model chose. An independent review of
+  an earlier draft, which let the model add its own note, found wrong sentences that
+  passed the checks; that note was removed.
+- Any mismatch, missing field or extra field withholds the whole assessment and the
+  page says so.
+- Held unless assessed. The travel-checked shortlist is shown as "AI-assessed" only
+  when the saved AI review of the options is complete and this assessment was
+  produced, accepted and covers every apartment shown, a replacement included. In
+  every other case (switch off, model unavailable, assessment withheld, nothing
+  measured, saved review not complete) the page shows "Held, not a ready shortlist"
+  with the reason. The journey figures stay visible. There is no rules-only result.
 - A person whose journey is not fully measured is "not known": never counted as within
   a limit and never as over it. If no journey in the check is fully measured the model
   is not asked.
 - "Within their own limit" (each person against the stated limit) and the group result
   (the closest majority's average against the doubled limit) are reported separately.
-- The reply is returned to the page once and is not stored, cached or logged. A failure
-  is logged as a category only. The saved AI review never receives journey content.
+- The assessment is returned to the page once and is not stored, cached or logged. A
+  failure is logged as a category only. The saved AI review never receives journey
+  content.
 
 ### Conditions before either switch is set
 
