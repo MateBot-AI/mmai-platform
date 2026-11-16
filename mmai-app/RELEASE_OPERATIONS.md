@@ -330,14 +330,18 @@ Built in this package:
   - A journey is requested only to a destination that was supplied and is an
     address: for a person who is studying, the verified address of the
     institution they chose; for a person who is working or on a working
-    holiday, their place-of-work answer when it is a full street address
-    (number, street name and type, then a suburb, city or postcode), sent as
-    typed. Each person's journeys are requested only by the travel choices
-    given for them.
+    holiday, their place-of-work answer when the whole answer is one full
+    street address and nothing else: an optional unit or level, a street
+    number, a street name and type, a suburb, and a state or a postcode. It is
+    sent exactly as typed (spaces tidied); the stored answer is never changed.
+    Each person's journeys are requested only by the travel choices given for
+    them.
   - A destination that exists and cannot be measured is never completed or
     guessed: no place-of-work answer, "Not yet known", a suburb, an employer's
-    name, a street without a suburb, or a place of study that is not one on
-    file. That person reads "travel time needs confirmation", still counts as a
+    name, an address without a state or postcode, an address with any other
+    words before or after it, a phone number, a second street, or a place of
+    study that is not one on file. The check errs towards refusing: some real
+    addresses with unusual street names are refused too. That person reads "travel time needs confirmation", still counts as a
     person with a destination, and the group result is "needs confirmation".
   - A person who answered "Other" was not asked for a place of study or work,
     and a person in a party who is not the enquirer was never asked for one of
@@ -382,7 +386,9 @@ Not done, and not to be reported as done:
 
 - **Most work destinations will read "needs confirmation".** The MateBot form
   asks for "Suburb or employer, or 'Not yet known'", so a full street address
-  is rarely given. Work journeys are measured only when one is. Asking for a
+  is rarely given. Work journeys are measured only when one is. The form tip
+  and the staff wording about this are engineering copy written to match the
+  code; they are not wording Bill has approved. Asking for a
   work address is a change to the question, which is Bill's to make; it has not
   been made.
 - **Party members** who are not the enquirer have no destination of their own

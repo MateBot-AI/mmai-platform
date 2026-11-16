@@ -9,8 +9,9 @@ What is measured, and for whom (H28 counts PEOPLE, not enquiries):
     exactly as matching counts them (matching.unit_from_row).
   * a journey is measured only to a destination that was actually supplied and is unambiguous: the verified address of the
     institution a person who is studying named (M4, I9), or, for a person who is working or on a working holiday, the
-    "Where will you work?" answer when it is a full street address (a street number, a street and a suburb or postcode),
-    sent as typed. A suburb, an employer's name, "Not yet known", a blank answer or an institution without a verified
+    "Where will you work?" answer when the whole answer is one full street address (a street number, a street, a suburb
+    and a state or postcode, and nothing else: see work_address), sent exactly as typed. A suburb, an employer's name, an
+    address with other words, a phone number or a second street beside it, "Not yet known", a blank answer or an institution without a verified
     address is a destination that exists and cannot be measured: that person reads "travel time needs confirmation" and
     so does the group result (H28(d)/(h)); nothing is guessed, geocoded from a name or filled in. The enquirer's place of
     study or work is the enquirer's alone; another person in the party was never asked for one and has no destination, and
@@ -47,31 +48,46 @@ NO_DESTINATION_WHY = {"not_asked": "no place of study or work was given",
 # a destination that exists and cannot be measured: the person, and so the group, needs confirmation
 UNMEASURABLE_WHY = {"no_institution": "the place of study is not one with a verified address on file",
                     "work_missing": "no place of work has been given",
-                    "work_not_address": "the place of work given is not a full street address, so no journey can be measured to it"}
+                    "work_not_address": "the place of work given is not one full street address with its suburb and state or postcode, so no journey can be measured to it"}
 WORKING = ("Working", "Working holiday")
 WORK_ADDRESS_MAX = 160
-_STREET = re.compile(r"\b\d+[A-Za-z]?(?:\s*[-/]\s*\d+[A-Za-z]?)?\s+(?:[A-Za-z][A-Za-z'.-]*\s+){1,4}?"
-                     r"(?:street|st|road|rd|avenue|ave|lane|ln|drive|dr|place|pl|parade|pde|highway|hwy|boulevard|blvd|court|ct|"
-                     r"crescent|cres|terrace|tce|way|square|sq|quay|esplanade|promenade|close|grove|walk|circuit|parkway)\b\.?(?P<rest>.*)$", re.I | re.S)
-_LOCALITY = re.compile(r"[A-Za-z]{3,}|\b\d{4}\b")
-_NOT_A_STREET_NAME = re.compile(r"\b(?:in|on|at|near|of|and|or|from|to|for|jobs?|days?|hours?|hrs?|minutes?|mins?|km|kms|weeks?|months?|shifts?|nights?)\b", re.I)
+_TYPES = (r"street|st|road|rd|avenue|ave|av|lane|ln|drive|dr|place|pl|parade|pde|highway|hwy|boulevard|blvd|court|ct|"
+          r"crescent|cres|terrace|tce|way|square|sq|quay|esplanade|promenade|close|grove|walk|circuit|parkway")
+_STATES = (r"vic|victoria|nsw|new\s+south\s+wales|qld|queensland|sa|south\s+australia|wa|western\s+australia|tas|tasmania|"
+           r"nt|northern\s+territory|act|australian\s+capital\s+territory")
+# words that make the answer a sentence, a second place or an employer rather than one address
+_NOT_ADDRESS_WORDS = (r"in|on|at|near|by|of|and|or|from|to|for|the\s+corner|corner|cnr|opposite|opp|behind|next|then|also|plus|"
+                      r"jobs?|days?|hours?|hrs?|minutes?|mins?|km|kms|weeks?|months?|shifts?|nights?|eleven|call|phone|mobile|tel|"
+                      r"australia|territory")
+_WORD = r"[A-Za-z][A-Za-z'-]*"
+_PLAIN = rf"(?!(?:{_TYPES}|{_STATES}|{_NOT_ADDRESS_WORDS})\b){_WORD}"
+# One address and nothing else, start to end: an optional unit or level, a street number, a street name, its type, a
+# suburb, then a state or a postcode (or both). Nothing may come before it or after it.
+_FULL_ADDRESS = re.compile(
+    rf"^(?:(?:unit|level|lvl|suite|shop|floor|apartment|apt)\s*\d{{1,4}}[A-Za-z]?\s*[,/]?\s*)?"
+    rf"[1-9]\d{{0,4}}[A-Za-z]?(?:\s*[-/]\s*[1-9]\d{{0,4}}[A-Za-z]?)?\s+"
+    rf"(?:(?:St|Mt)\.?\s+)?(?:{_PLAIN}\s+){{1,3}}"
+    rf"(?:{_TYPES})\b\.?(?:\s+(?:north|south|east|west))?\s*,?\s*"
+    rf"(?:(?:St|Mt|North|South|East|West|Port|Mount|Point|Glen|Box|Upper|Lower)\.?\s+)?(?:{_PLAIN}\s*){{1,2}}"
+    rf"(?:\s+(?:north|south|east|west|upper|lower))?\s*,?\s*"
+    rf"(?:(?:{_STATES})\b(?:\s*,?\s*\d{{4}})?|\d{{4}})"
+    rf"(?:\s*,?\s*Australia)?$", re.I)
 
 
 def work_address(answer) -> Optional[str]:
-    """The "Where will you work?" answer when it is a full street address, as typed (spaces tidied); otherwise None.
-    Full means a street number, a street name with its type, and a suburb, city or postcode after it. A suburb or an
-    employer's name on its own is not an address a journey can be measured to, and is never turned into one."""
+    """The "Where will you work?" answer when it is one full street address and nothing else; otherwise None.
+
+    Full means, from start to end: an optional unit or level, a street number, a street name with its type, a suburb, and
+    a state or a postcode. The whole answer must be that address: words before or after it, a phone number, a second
+    street, a business name, or an address without a state or postcode are all refused. What is returned is exactly the
+    answer as typed (spaces tidied), so nothing is completed, corrected or added. The stored answer is never changed.
+    A refused answer is not a failure: the person reads "travel time needs confirmation" and no request is made for them."""
     if not isinstance(answer, str):
         return None
     text = " ".join(answer.split())
     if not text or len(text) > WORK_ADDRESS_MAX:
         return None
-    m = _STREET.search(text)
-    if not m or not _LOCALITY.search(m.group("rest")):
-        return None
-    if _NOT_A_STREET_NAME.search(m.group(0)[:len(m.group(0)) - len(m.group("rest"))]):
-        return None   # "2 jobs in ... Road": a number followed by ordinary words is a sentence, not an address
-    return text
+    return text if _FULL_ADDRESS.match(text) else None
 OPEN_POINT_PRACTICAL = "an essential practical need recorded for a member is not confirmed for this apartment"
 
 

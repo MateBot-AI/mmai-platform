@@ -24,6 +24,7 @@ STAFF_JS = (Path(__file__).resolve().parents[1] / "client" / "staff.js").read_te
 W, B, PT = mt.MODES
 RMIT = "RMIT University – Melbourne City"
 WHEN = __import__("datetime").datetime.fromisoformat(NOW)
+WORK = "100 Collins Street, Melbourne VIC 3000"
 
 
 class Provider:
@@ -135,15 +136,16 @@ def test_every_person_is_counted_once_with_only_what_was_supplied(group):
         q = ml.group_people(db, gid)[2]
         return q["destination_kind"], q["destination"], q["no_destination_why"], q["unmeasurable_why"]
     # a full street address given as the place of work is used as typed; for a working holiday too
-    assert third(work="  100 Collins Street,   Melbourne ") == ("work", "100 Collins Street, Melbourne", None, None)
-    assert third(doing="Working holiday") == ("work", "100 Collins Street, Melbourne", None, None)
+    assert third(work="  100 Collins Street,   Melbourne  VIC 3000 ") == ("work", WORK, None, None)
+    assert db.execute("SELECT work FROM enquiries WHERE id=?", (b,)).fetchone()[0] == "  100 Collins Street,   Melbourne  VIC 3000 "   # the answer itself is untouched
+    assert third(doing="Working holiday") == ("work", WORK, None, None)
     assert ml.group_people(db, gid)[2]["destination_shown"] == "the work address given on the form"
     # no answer, "Not yet known", an employer's name and a street without a suburb all need confirmation; none is completed
     assert third(work=None) == ("work", None, None, "work_missing") and third(work="   ") == ("work", None, None, "work_missing")
-    for vague in ("Not yet known", "Coles", "Coles Richmond", "200 Queen St", "CBD", "3 days at Chapel Street South Yarra"):
+    for vague in ("Not yet known", "Coles", "Coles Richmond", "200 Queen St", "CBD", "3 days at Chapel Street South Yarra", "100 Collins Street, Melbourne"):
         assert third(work=vague) == ("work", None, None, "work_not_address"), vague
     # "Other": no place of study or work was asked for, so there is no destination at all
-    assert third(doing="Other", work="100 Collins Street, Melbourne") == (None, None, "not_asked", None)
+    assert third(doing="Other", work=WORK) == (None, None, "not_asked", None)
     # a place of study that is not one with a verified address on file is not guessed at: it needs confirmation
     assert third(doing="Studying", school="Somewhere Else College") == ("study", None, None, "no_institution")
     assert [(p["no_destination_why"], p["unmeasurable_why"]) for p in ml.group_people(db, gid)] == [(None, None), ("party_member", None), (None, "no_institution")]
@@ -170,21 +172,67 @@ def test_a_work_answer_that_is_not_an_address_is_never_measured_and_never_left_o
     # the person who works is counted as someone with a destination whose journey is not known: no pass on the other alone
     assert first["result"] == mt.NEEDS_CONFIRMATION and first["travel"]["facts"]["known_destinations"] == 2
     assert first["travel"]["facts"]["no_destination"] == [] and first["travel"]["facts"]["unmeasured"] == [2]
-    assert first["journey_lines"][1].startswith("Person 2") and "travel time needs confirmation: the place of work given is not a full street address" in first["journey_lines"][1]
+    assert first["journey_lines"][1].startswith("Person 2") and "travel time needs confirmation: the place of work given is not one full street address with its suburb and state or postcode" in first["journey_lines"][1]
     assert [x["apartment_id"] for x in r["shortlist"]] == ids[:3] and r["failed"] == []               # kept in place, not failed
     assert [(q["destination_kind"], q["needs_confirmation"], q["no_destination"]) for q in r["people"]] == [
         ("study", None, None), ("work", ml.UNMEASURABLE_WHY["work_not_address"], None)]
+
+
+@pytest.mark.parametrize("typed", [
+    "100 Collins Street, Melbourne VIC 3000", "100 Collins St Melbourne 3000", "100 Collins Street, Melbourne, Victoria",
+    "Level 3, 100 Collins Street, Melbourne VIC 3000", "3/100 Collins St, Melbourne VIC", "12 Acland Street, St Kilda VIC 3182",
+    "450 St Kilda Road, Melbourne VIC 3004", "1-5 Swanston St, Carlton 3053", "22 Chapel Street South Yarra VIC 3141",
+    "5 Toorak Rd, South Yarra, VIC, 3141, Australia", "300 Burwood Hwy, Burwood East VIC 3151", "12 The Avenue, Parkville VIC 3052",
+    "100 collins street melbourne vic 3000", "  100   Collins Street,\n Melbourne   VIC 3000 "])
+def test_one_full_street_address_is_used_exactly_as_typed(typed):
+    assert ml.work_address(typed) == " ".join(typed.split())                             # spaces tidied, nothing else changed
+
+
+@pytest.mark.parametrize("typed", [
+    # no state or postcode, or not a street address at all: nothing is completed
+    "100 Collins Street, Melbourne", "100 Collins Street", "200 Queen St", "Collins Street, Melbourne VIC 3000", "Melbourne VIC 3000",
+    "Richmond", "CBD", "Coles", "Coles Richmond", "Not yet known", "", "   ", None, 12, "12 Smith Richmond VIC 3121",
+    "100 Collins Street, Victoria 3000", "100 Collins Street, South Australia 5000", "100 Collins Street, Australia 3000", "100 Collins Street, Melbourne 30000",
+    # words before or after the address, or a business name with it
+    "Cafe at 12 Smith Street, Richmond VIC 3121", "Cafe at 12 Smith Street, near the station and Richmond VIC 3121", "Coles, 12 Smith Street, Richmond VIC 3121",
+    "12 Smith Street, Richmond VIC 3121 (Coles)", "12 Smith Street near Richmond station VIC", "3 days at 22 Chapel Street South Yarra VIC 3141",
+    "2 jobs in Smith Road Richmond VIC 3121", "100 Collins Street Melbourne VIC 3000 Australia please", "7 Eleven Walk Brunswick VIC 3056", "7 Eleven Walk Brunswick",
+    # a phone number, an email address
+    "call me 0412 345 678 Smith St Richmond", "0412 345 678 Smith St Richmond VIC 3121", "12 Smith Street, Richmond VIC 3121 0412345678",
+    "12 Smith Street\nRichmond VIC 3121\nphone 0400 000 000", "12 Smith St, Richmond VIC 3121 anna@example.com",
+    # a second street or a second address
+    "2 Smith Road and 3 Brown Road Richmond", "2 Smith Road and 3 Brown Road Richmond VIC 3121", "2 Smith Road Brown Road, Richmond VIC 3121",
+    "2 Smith Road, 3 Brown Road, Richmond VIC 3121", "100 Collins Street, Melbourne VIC 3000; 5 Queen St Melbourne 3000", "12 Smith Street, Richmond VIC 3121 or Coles Kew",
+    "12 Smith Street Richmond VIC 3121 3122", "x" * 200])
+def test_anything_but_one_full_street_address_is_refused_not_trimmed_or_completed(typed):
+    assert ml.work_address(typed) is None
+
+
+def test_a_refused_work_answer_sends_nothing_for_that_person(group):
+    db, gid, ids = group
+    a, b = _members(db, gid)
+    _answer(db, gid)
+    typed = "Cafe at 12 Smith Street, Richmond VIC 3121, call 0412 345 678"
+    db.execute("UPDATE enquiries SET doing='Working', work=? WHERE id=?", (typed, b))
+    db.commit()
+    p = Provider()
+    r = _check(db, gid, p)
+    sent = json.dumps(p.bodies)
+    assert len(p.bodies) == 3 and "Smith" not in sent and "0412" not in sent and "Cafe" not in sent      # only the other person's journeys
+    assert r["shortlist"][0]["result"] == mt.NEEDS_CONFIRMATION and r["people"][1]["needs_confirmation"] == ml.UNMEASURABLE_WHY["work_not_address"]
+    assert db.execute("SELECT work FROM enquiries WHERE id=?", (b,)).fetchone()[0] == typed              # kept as the customer wrote it
 
 
 def test_a_full_work_address_is_measured_by_that_persons_own_choices(group):
     db, gid, ids = group
     a, b = _members(db, gid)
     _answer(db, gid, modes=(W, PT), only=[a])
-    db.execute("UPDATE enquiries SET doing='Working', work='100 Collins Street, Melbourne', travel='30 minutes', travel_modes=? WHERE id=?", (j([B]), b))
+    db.execute("UPDATE enquiries SET doing='Working', work=?, travel='30 minutes', travel_modes=? WHERE id=?", (WORK, j([B]), b))
     db.commit()
     p = Provider(minutes=20)
     r = _check(db, gid, p)
-    asked = sorted({(x["destination"]["address"] == "100 Collins Street, Melbourne", x["travelMode"]) for x in p.bodies})
+    assert db.execute("SELECT work FROM enquiries WHERE id=?", (b,)).fetchone()[0] == WORK
+    asked = sorted({(x["destination"]["address"] == WORK, x["travelMode"]) for x in p.bodies})
     assert asked == [(False, "TRANSIT"), (False, "WALK"), (True, "BICYCLE")] and len(p.bodies) == 9   # 3 apartments x (2 + 1)
     first = r["shortlist"][0]
     assert first["result"] == mt.PASS and first["travel"]["facts"]["known_destinations"] == 2 and first["travel"]["facts"]["measured"] == [1, 2]
