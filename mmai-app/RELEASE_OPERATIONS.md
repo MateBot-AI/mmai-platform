@@ -97,8 +97,13 @@ stored options. It is off by default and is not approved for use.
   journey path. A party that accepted Car keeps that answer: it is not swapped for
   another way of travelling, the car journey stays not measured, and every option for
   that party reads "Travel time needs confirmation", whether Car was the only answer or
-  one of several. The HomeBot form still offers Car; removing it, or assessing such a
-  party on its other answers alone, needs Bill's ruling.
+  one of several.
+- The HomeBot form no longer offers Car, and a new enquiry naming it is refused with a
+  plain message. An enquiry sent while Car was offered keeps the answer as given: an
+  unrelated staff change leaves it in place, the "Change the party's requirements" box
+  still shows it, staff may untick it once the applicant has said how they will travel,
+  and it cannot be added to any enquiry. Assessing such a party on its other answers
+  alone, without asking, would need Bill's ruling.
 - A decline recorded for an apartment that was offered from the live view keeps the
   saved details for that apartment (travel time needing confirmation), never the live
   journey times.

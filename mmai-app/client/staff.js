@@ -334,7 +334,8 @@
         <div><div class="field"><span class="small">Bedrooms</span>${checks('bedrooms', ch.bedrooms, e.bedrooms)}</div>
           <div class="field"><span class="small">Bathrooms</span>${checks('bathrooms', ch.bathrooms, e.bathrooms)}</div>
           <div class="field"><label>Area${sel('area', ch.areas, e.area)}</label></div>
-          <div class="field"><span class="small">Transport</span>${checks('transport', ch.transport, e.transport)}</div>
+          <div class="field"><span class="small">Transport</span>${checks('transport', (ch.transport || []).concat((e.transport || []).filter(o => !(ch.transport || []).includes(o))), e.transport)}${
+            (e.transport || []).includes('Car') ? '<p class="small muted">Car is no longer offered on the form and car journeys are not measured, so travel for this party reads “needs confirmation”. Leave Car ticked unless the applicant has told you how they will travel; then untick it and tick what they said.</p>' : ''}</div>
           <div class="field"><label>Longest acceptable travel${sel('max_travel', ch.max_travel, e.max_travel)}</label></div>
           <div class="field"><label>Notes about the apartment<textarea name="apartment_notes" rows="2" maxlength="2000">${esc(e.apartment_notes || '')}</textarea></label></div></div>
       </div>

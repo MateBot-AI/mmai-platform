@@ -653,7 +653,8 @@ def _merge_patch(e: dict, patch: dict, *, today: Optional[date]) -> tuple[dict, 
             a.pop(k, None)
         else:
             a[k] = v
-    clean = homebot.validate(a, today=today)
+    # a way of travelling that is no longer offered stays on an existing record until staff untick it; it cannot be added
+    clean = homebot.validate(a, today=today, keep_transport=tuple(e.get("transport") or ()))
     cols = {k: clean[k] for k in ("move_in", "move_in_flex", "move_in_earliest", "move_in_latest", "move_out", "move_out_flex", "move_out_earliest",
                                   "move_out_latest", "budget_total_weekly", "area", "max_travel", "apartment_notes", "bunk_condition", "headcount_target")}
     cols.update({k: j(clean[k]) for k in ("budget_types", "bedrooms", "bathrooms", "transport", "extras", "extras_top")})

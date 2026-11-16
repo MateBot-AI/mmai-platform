@@ -239,11 +239,64 @@ def test_default_limits_and_what_each_request_asks_for(live):
 
 
 def _party(on, monkeypatch, transport):
+    """An enquiry with this transport answer. Car is no longer offered, so an enquiry holding it is made the way an old one
+    was: with Car among the offered choices at the moment it was sent."""
+    from server import homebot
     _live_env(monkeypatch)
     stock(on)
-    eid = submit(on, transport=transport)
+    with monkeypatch.context() as then:
+        then.setattr(homebot, "TRANSPORT", homebot.TRANSPORT + ["Car"])
+        eid = submit(on, transport=transport)
+    assert "Car" not in homebot.TRANSPORT
     assert hs.run_pending(on.db)
     return eid
+
+
+def test_car_is_no_longer_offered_on_the_form(on):
+    from server import homebot
+    from tests.test_homebot import body as form_body
+    assert homebot.TRANSPORT == ["Walk", "Tram", "Train", "Bus", "Bike or scooter"] and homebot.TRANSPORT_RETIRED == ("Car",)
+    assert sorted(routing.ROUTED_MODES) == sorted(homebot.TRANSPORT)                       # what is offered is what is measured
+    assert set(tv.TRANSPORT) == set(homebot.TRANSPORT) | set(homebot.TRANSPORT_RETIRED)    # old answers can still be read
+    assert on.get("/api/public/homebot/meta").json()["choices"]["transport"] == homebot.TRANSPORT
+    import os
+    root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    page = open(os.path.join(root, "homebot-app", "index.html"), encoding="utf-8").read()
+    import re
+    assert re.findall(r'name="transport" value="([^"]+)"', page) == homebot.TRANSPORT
+    before = on.db.execute("SELECT COUNT(*) AS n FROM homebot_enquiries").fetchone()["n"]
+    for answer in (["Car"], ["Tram", "Car"], "Car"):
+        with pytest.raises(homebot.ValidationError) as err:
+            homebot.validate(form_body(transport=answer, move_out="2027-11-30"))
+        assert err.value.errors == {"transport": "Car is no longer one of the choices. Please choose from walk, tram, train, bus, or bike or scooter."}
+    with pytest.raises(homebot.ValidationError) as err:                                    # any other unknown answer keeps the usual message
+        homebot.validate(form_body(transport=["Teleport"], move_out="2027-11-30"))
+    assert err.value.errors == {"transport": "Not one of the offered choices."}
+    assert on.db.execute("SELECT COUNT(*) AS n FROM homebot_enquiries").fetchone()["n"] == before
+
+
+def test_an_old_car_answer_stays_until_staff_untick_it_and_can_never_be_added(on, monkeypatch):
+    from server import homebot
+    eid = _party(on, monkeypatch, ["Tram", "Car"])
+    # an unrelated change keeps the answer exactly as given
+    hs.update_requirements(on.db, eid, {"budget_total_weekly": 1100}, "Anna")
+    assert homebot.get(on.db, eid)["transport"] == ["Tram", "Car"]
+    r = on.patch(f"/api/homebot/enquiries/{eid}/requirements", json={"transport": ["Tram", "Car", "Bus"]})   # adding beside it is fine
+    assert r.status_code == 200 and r.json()["transport"] == ["Tram", "Car", "Bus"], r.text
+    # staff untick it once the applicant has said how they will travel
+    r = on.patch(f"/api/homebot/enquiries/{eid}/requirements", json={"transport": ["Tram"]})
+    assert r.status_code == 200 and r.json()["transport"] == ["Tram"], r.text
+    # once gone it cannot come back, and it cannot be given to an enquiry that never had it
+    r = on.patch(f"/api/homebot/enquiries/{eid}/requirements", json={"transport": ["Tram", "Car"]})
+    assert r.status_code == 422 and "Car is no longer one of the choices" in r.text
+    assert homebot.get(on.db, eid)["transport"] == ["Tram"]
+    other = submit(on, key="hb-key-0002")
+    r = on.patch(f"/api/homebot/enquiries/{other}/requirements", json={"transport": ["Car"]})
+    assert r.status_code == 422 and "Car is no longer one of the choices" in r.text
+    js = open(__import__("os").path.join(__import__("os").path.dirname(__import__("os").path.dirname(__import__("os").path.abspath(__file__))),
+                                         "client", "staff.js"), encoding="utf-8").read()
+    assert "(ch.transport || []).concat((e.transport || []).filter(o => !(ch.transport || []).includes(o)))" in js   # the box still shows it
+    assert "Leave Car ticked unless the applicant has told you how they will travel" in js
 
 
 def test_car_is_never_requested_and_never_swapped_for_another_way_of_travelling(on, monkeypatch):

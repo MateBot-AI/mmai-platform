@@ -1,6 +1,6 @@
 080bc63d937532e7fdebd4054f0d1c5111fbe59c2547ee8797f19d8e02d990d5  ./.dockerignore
 221abe934d1c64fe01a3f652a36f3f1137742a933dba6bd7896688e1dd8f4f8d  ./Dockerfile
-8aa7b7fefe6db688f1b1bc9e146f8a8eb342f6792e67897e35ea73f3a7564617  ./SOURCE-MANIFEST.json
+5961578db73c7bdcb63621a82c836e0901c244662f13daccc95066a5e42aeace  ./SOURCE-MANIFEST.json
 a9ad1a503d3011dc2a832d89feec0ad4c35857a32698d20ee8969a757717fc54  ./homebot-app/README.md
 9b06d001e20ae9d7f0b2add9a2a207d1fd9cc0521631c9a15f46c5314a7e9477  ./homebot-app/app.js
 8801646d743cc1f98760727547093b8d08c1dfae8467d383242ffd2f471a6d54  ./homebot-app/data/homebot_data.json
@@ -18,7 +18,7 @@ d008c116021947ae862d5eddca45d0668a936306a57baa3cc20770f87641672a  ./homebot-app/
 68eb90dda54374a6ebd1aab9c72cddf0731dc008e850e5ccc3b5759142adf94a  ./homebot-app/img/homebot_tip.png
 cff099a435e6ecf7d590cf7ea3c38994e5e5e1a9116bf139689e1ad38273c4a2  ./homebot-app/img/homebot_tip.webp
 133721b2987b9f1057b05dc69596cfdc3995baa7f84a1ba0399081b38ac88d18  ./homebot-app/img/matebot_landing.webp
-cb7f12134ee1b954a8cdb9154a05da694b7f7bebca630b72c6af6304170afd61  ./homebot-app/index.html
+eaebdf411c0bc1b7c30d6c480d832f1774cc3af68958a3eb97f1546f2ab68846  ./homebot-app/index.html
 f01279b4d0d5a0fafdc6cbe239ae5d56bb742ba94069e733a8943245b4308eb3  ./homebot-app/styles.css
 1f6e587f998d020c26377d7cb1c2a16842a5bb901627a84ef09406dc2cf413af  ./mmai-app/.do/app.yaml
 b08172226caa7d5b4a94b1c6ad95ddb827d8dbf9c3148d82c6a0d5a26bcae583  ./mmai-app/DEPLOY_DIGITALOCEAN.md
@@ -26,7 +26,7 @@ b08172226caa7d5b4a94b1c6ad95ddb827d8dbf9c3148d82c6a0d5a26bcae583  ./mmai-app/DEP
 51f3399c8178cad163971c95313517c138e500ec830807335dd54dfaa73cf805  ./mmai-app/FLOWS.md
 64d2edaf84ca28680f815c043bf37c8c44d3ffb466a2df814bb6e3e614c6b7db  ./mmai-app/NOTIFICATION_OPERATIONS.md
 b65f389470a58ae27b8ed4dba7fea0181c25080561f7a3a9f4cc8361c12a4c29  ./mmai-app/README.md
-7754f7d368a7f913dcb6a33216a94a1c860878df79ea2797bd0c41aca04bf873  ./mmai-app/RELEASE_OPERATIONS.md
+b25f275cbffcee09df079636ffcdce5f937db607e1c00bb63a8108c3cd81ce58  ./mmai-app/RELEASE_OPERATIONS.md
 75d587991a6bb3bf4cd8c7d2311e1dcc9f274e1cc042fcc5a6a2651d55d7303d  ./mmai-app/client/api.js
 f3b70b967371fe7c5d0ea1d35bdd231ff43555808286149a448465930452b2d7  ./mmai-app/client/app.js
 b641ecaaeda27cf0d560bf26058e9bc9997ac7bfdc58414f9df2d4d58a32c34b  ./mmai-app/client/fonts/cabinet-grotesk-500.woff2
@@ -102,7 +102,7 @@ ffacc913835a5cb828108d7b1be1f49fa9452bbe516e96ee4dae34f8813e8882  ./mmai-app/cli
 3d53bc696b011fd9a667d3ad70e952944354bf322b4fa7c9068af82cc44bc3e7  ./mmai-app/client/index.html
 ca08c4ce40c4d374a19a19fafe2cec859dcdcb46de7587549b34294fc46c3edd  ./mmai-app/client/respond.js
 1844755d74c79e7a5d46807e619f16e7eb87c75fd2d0866f03a380b22ab02d23  ./mmai-app/client/staff-exceptions.js
-bd3ed3b97e4cea6284d1ba69f402a5754ec171b06bff610a4810833a1514111f  ./mmai-app/client/staff.js
+34a7d40992dd46a15b9efa690ad4b0683ab48b01621b57bbc668e2addffacbf8  ./mmai-app/client/staff.js
 0ba915788bad62068bc47a6dac95124c3dfe97c40050407ab5e7031450d57631  ./mmai-app/client/styles.css
 75dbe43b7f8553037c97b48b80e59004e0946cb61f4dbea6c62b06b28fb17f5e  ./mmai-app/data/ALM_Apartments_2026-10-23.xlsx
 e47aa5a43d492ac18a0545c6213e73c48e17734246fdc4471201353f3b06debe  ./mmai-app/data/ALM_Apartments_2026-10-23_features_template.xlsx
@@ -129,13 +129,13 @@ b7d5c5755db3264c96b4ac7d329c4dc9ae82ef9fda6561cf1e20bba1e5625ad2  ./mmai-app/ser
 4c78d60576a5d26a5e96b008d738dd36d164a24398d08b63fc7187148e63bc31  ./mmai-app/server/facts.py
 1af76ee845067e9716341a73d6bc9991628ba1dbe4dcd20f5dd21cd742d6f8ac  ./mmai-app/server/geocode_tool.py
 609919581fa8c8af4c58e243e92fb83b45588dfe33cd1cc292bd2a31070864eb  ./mmai-app/server/group_responses.py
-42416cc536546aa75a8561d7280f5bd34391dd5900c4218ca9370e4449e45387  ./mmai-app/server/homebot.py
+9d1b248041511db0f512e3fa267e425bcdef633a517c0686948ede114a25b681  ./mmai-app/server/homebot.py
 6adfb5a10b2055698c3fa2d0a836aed5567dfb5fd4c050a4d9437c5a04672746  ./mmai-app/server/homebot_bedding.py
 29820ac25af0220431c537cd6a7af15cc3721a27855e2cb03fd6afe2a6b0be59  ./mmai-app/server/homebot_handoff.py
 f8a8411fd2dd32acda33ddbc9b6140a67ac348b055f7504d41812e18070d9f15  ./mmai-app/server/homebot_match.py
 bea50827df3049afa94fa8b3706cfa0ca74a981d5e6a5bd72643044da19b7c72  ./mmai-app/server/homebot_receipts.py
 5b55158b146b6a87362bec8e4e608f43de6c2267529407c39d374d8e65eeb5ba  ./mmai-app/server/homebot_review.py
-d26b9c06227fa40451b7944152af4553d9f37ab9b74d33f4be867ea748feed4d  ./mmai-app/server/homebot_shortlist.py
+709051fcf151a03299e662eba55fc33d44aa7e6954f2e5f0b19bf9a584166e7d  ./mmai-app/server/homebot_shortlist.py
 3d4bed983b706f8a6c96498773ad2ff8229e1c2509c865322691cc394f285f89  ./mmai-app/server/homebot_travel.py
 8852e26f9897e6c098d912397b42937f81c26441340a3476f22c4a40c7d86749  ./mmai-app/server/identities.py
 fc95761aff088ed8bb63316bca22f1eefd5d1a4c3d2221be37ac86424c903a24  ./mmai-app/server/importer.py
@@ -219,13 +219,13 @@ fd8fd6f6f518456903013edf38c81bd7cd1ca7fe91ad625052f595f4d8284281  ./mmai-app/tes
 4c266130fe973913fb0dbb4f2f0f109028ed85e2129193d407918ee3c1cb7528  ./mmai-app/tests/test_homebot_review.py
 36efcd8d2193fc87db8992a2de5f5b1f590b7102e4b01a3a9bd2b1039128bcff  ./mmai-app/tests/test_homebot_shortlist.py
 79771aceb49a97066f07a17f25321bbc32ecea94a7f84f153251aa83e6d323ce  ./mmai-app/tests/test_homebot_test_mode.py
-50c18d3fbeebca3c6818bb8cde03ec0082c285772be4107fef7ef54b61be5831  ./mmai-app/tests/test_homebot_travel.py
+2742f7616c34d39186eb3362b8490877f831fa5ad62e101922934e5ab39b1cc2  ./mmai-app/tests/test_homebot_travel.py
 b22f5738bf0e94d458cd97d53965c3032289966ec4acbeed37a3d61ebefd0f4a  ./mmai-app/tests/test_host_retention_recovery.py
 354949ca1d387e26905fe93e7042ed2dc3723b3aa87cf9183edd66cc2699c85c  ./mmai-app/tests/test_institutions.py
 e3d4e4e9feca9424f07500a802f5ae17c4c100666cbcc6bd281b53e34d49fe9d  ./mmai-app/tests/test_intake_smoke_enum.py
 92c9b034762ff40b9a4dc2e93dce07887ad30018974e3528b5ea3970ccb13cce  ./mmai-app/tests/test_intro_profile.py
 66e91c2ed028af8a73d869f0038db8a3eed0c4e75e6fb0a394172c1cdb624776  ./mmai-app/tests/test_launch_neutral.py
-3affb3d4a9f9c254f79773d183eba1cf168533738eb2ce208ce2e897c50b9651  ./mmai-app/tests/test_live_travel.py
+d0686c4e758a2e0c964e3050bed206efcae6ae1f621f31dfaa5e3178c4973019  ./mmai-app/tests/test_live_travel.py
 a9f020183537178be70ca80670c1d8dc9cdacfaf283d3b406050272fd8e6bf74  ./mmai-app/tests/test_mail_graph.py
 15ea24d62582a30a4197d398c3b95a2218625f0945ef5158bc7c9735790b774d  ./mmai-app/tests/test_notes_adversarial_reply.py
 e3976c51e57d624fe907b6ba4cca24fb11688f29e284e92c7b729f32cc9d500b  ./mmai-app/tests/test_notes_cache_lifecycle_v2.py

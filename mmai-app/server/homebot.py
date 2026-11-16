@@ -48,7 +48,11 @@ PRIMARY = ["Study", "Work"]
 BEDROOMS = ["Studio", "1 bedroom", "2 bedrooms", "3 bedrooms"]
 BATHROOMS = ["1 bathroom is fine", "Prefer 2 bathrooms", "Must have 2 bathrooms"]
 AREAS = ["Melbourne CBD", "South Yarra", "Either"]
-TRANSPORT = ["Walk", "Tram", "Train", "Bus", "Bike or scooter", "Car"]
+TRANSPORT = ["Walk", "Tram", "Train", "Bus", "Bike or scooter"]
+# No longer offered (16 Nov 2026): journeys are worked out for the five ways of travelling above only. An enquiry sent
+# while Car was offered keeps that answer exactly as given. It is never read as agreement to another way of travelling;
+# staff may untick it once the applicant has said how they will travel, and it can never be added.
+TRANSPORT_RETIRED = ("Car",)
 MAX_TRAVEL = ["5 minutes — walking distance only", "15 minutes", "30 minutes", "45 minutes", "60 minutes or more"]
 EXTRAS = list(feat.LABELS)   # the 20 approved apartment and building features (8 Nov 2026), one catalogue shared with MateBot and the apartment list
 EXTRAS_MAX_TOP = feat.MAX_TOP   # "Which three matter most to you?": up to three of the ticked extras, optional
@@ -220,9 +224,11 @@ def _flag(errors, a, key):
     return 0
 
 
-def validate(a: dict, *, today: date | None = None) -> dict:
+def validate(a: dict, *, today: date | None = None, keep_transport=()) -> dict:
     """Validate a HomeBot submission. Returns the clean record (top-level fields, `people` list, `flags`, `answers`) or raises
-    ValidationError({field: message}). Nothing about sex, age, nationality or lifestyle is read, derived or stored."""
+    ValidationError({field: message}). Nothing about sex, age, nationality or lifestyle is read, derived or stored.
+    `keep_transport` is the transport answer already on the record when staff change an existing enquiry: a way of travelling
+    that is no longer offered stays valid only if it is already there."""
     if not isinstance(a, dict):
         raise ValidationError({"form": "A JSON object is expected."})
     today = today or datetime.now(timezone.utc).astimezone().date()
@@ -233,12 +239,12 @@ def validate(a: dict, *, today: date | None = None) -> dict:
     if "is_test" in a and not isinstance(a.get("is_test"), bool):
         raise ValidationError({"is_test": "true or false only."})  # strict: the string "false" is not a test flag
     try:
-        return _validate(a, errors, today)
+        return _validate(a, errors, today, keep_transport)
     except ValueError:
         raise ValidationError({"form": "Unexpected value types."})
 
 
-def _validate(a, errors, today) -> dict:
+def _validate(a, errors, today, keep_transport=()) -> dict:
     out: dict = {}
     # ---- party
     need = _choice(errors, a, "need_more", list(PARTY_MODES))
@@ -379,7 +385,12 @@ def _validate(a, errors, today) -> dict:
         errors["bathrooms"] = "“Must have 2 bathrooms” cannot be combined with the other choices."
     out["bathrooms"] = baths
     out["area"] = _choice(errors, a, "area", AREAS)
-    out["transport"] = _multi(errors, a, "transport", TRANSPORT, required=True)
+    kept = [m for m in TRANSPORT_RETIRED if isinstance(keep_transport, (list, tuple)) and m in keep_transport]
+    out["transport"] = _multi(errors, a, "transport", TRANSPORT + kept, required=True)
+    given = a.get("transport")
+    if "transport" in errors and any(m in ([given] if isinstance(given, str) else given if isinstance(given, list) else [])
+                                     for m in TRANSPORT_RETIRED if m not in kept):
+        errors["transport"] = "Car is no longer one of the choices. Please choose from walk, tram, train, bus, or bike or scooter."
     out["max_travel"] = _choice(errors, a, "max_travel", MAX_TRAVEL)
     out["extras"], out["extras_top"] = feat.clean_wanted(a.get("extras"), top=a.get("extras_top"), errors=errors, key="extras", top_key="extras_top")
     notes = _s(a.get("apartment_notes"), MAX_NOTES)

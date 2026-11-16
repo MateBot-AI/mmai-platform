@@ -30,7 +30,8 @@ def party(values, p=None, modes=("Tram",)):
 
 # ------------------------------------------------------------------------------------------------------- vocabulary
 def test_vocabulary_matches_the_form_exactly():
-    assert list(tv.MAX_TRAVEL) == homebot.MAX_TRAVEL and list(tv.TRANSPORT) == homebot.TRANSPORT
+    # the travel helper still reads Car, which the form no longer offers, so an answer given while it was offered stays readable
+    assert list(tv.MAX_TRAVEL) == homebot.MAX_TRAVEL and list(tv.TRANSPORT) == homebot.TRANSPORT + list(homebot.TRANSPORT_RETIRED)
     assert tv.MAX_PEOPLE == homebot.MAX_PEOPLE
 
 
