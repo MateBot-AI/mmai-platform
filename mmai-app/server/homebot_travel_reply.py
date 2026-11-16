@@ -411,8 +411,8 @@ def travel_reply(candidates: list, meter: dict | None = None) -> dict:
 
 
 # ------------------------------------------------------------------------------------------------------------ T6 gate
-ASSESSED_TEXT = ("AI-assessed: the saved AI review of these options is complete and the AI has assessed every apartment in this "
-                 "travel-checked shortlist. Reservations still reviews it before contacting the customer.")
+ASSESSED_TEXT = ("AI-assessed: the saved AI review covered and agreed with every apartment shown here, and the AI has assessed "
+                 "each of them with the journey results of this check. Reservations still reviews it before contacting the customer.")
 HELD_PREFIX = "Held, not a ready shortlist: "
 HELD_REASON = {"off": "the AI travel assessment is switched off, so the journey results have not been assessed by the AI.",
                "nothing": "no journey could be measured, so there was nothing for the AI to assess.",
@@ -420,18 +420,35 @@ HELD_REASON = {"off": "the AI travel assessment is switched off, so the journey 
                "withheld": "the AI travel assessment did not match the journey figures and was withheld.",
                "incomplete": "the AI travel assessment does not cover every apartment shown.",
                "review": "the saved AI review of these options has not completed.",
-               "replacement": "an apartment shown here took the place of one that failed the travel check. It was not part of "
-                              "the saved AI review, so it has not had its own AI review and cannot be treated as reviewed.",
+               "review_hold": "the saved AI review of these options ended in a hold for staff.",
+               "disagreed": "the saved AI review did not agree with an apartment shown here.",
+               "replacement": "an apartment shown here took the place of one that failed the travel check and was not among "
+                              "the apartments the saved AI review covered, so it has not been reviewed.",
                "empty": "no apartment is left to assess."}
 
 
-def gate(reply: dict, saved_review_state: str, shortlisted: list, reviewed_ids) -> dict:
-    """T6 for the travel-checked shortlist: it is AI-assessed only when the saved AI review of the stored options is complete,
-    EVERY apartment shown was one of the apartments that review covered (`reviewed_ids`), AND this check's assessment was
-    produced, accepted and covers every apartment shown. A replacement that stepped in after the travel check was never in
-    the saved review: this check's travel assessment is not a full review of it, so the shortlist is held. Anything else is
-    held too, with the reason; the journey figures stay visible. There is no rules-only way through."""
-    reviewed = {int(i) for i in (reviewed_ids or ())}
+def saved_review(state: dict) -> tuple:
+    """(state, the apartments the saved AI review agreed with, the ones it covered but did not agree with) from the shortlist
+    module's review state. 'reviewed' only when that review finished with the verdict approve; a finished review that ended
+    in a hold is 'review_hold'."""
+    name = state.get("state") if isinstance(state, dict) else None
+    if name != "reviewed":
+        return name, set(), set()
+    detail = state.get("detail")
+    if not isinstance(detail, dict):
+        return None, set(), set()
+    notes = [n for n in detail.get("option_notes") or [] if isinstance(n, dict) and n.get("apartment_id") is not None]
+    agreed = {int(n["apartment_id"]) for n in notes if n.get("agrees") is True}
+    return ("reviewed" if detail.get("verdict") == "approve" else "review_hold"), agreed, {int(n["apartment_id"]) for n in notes} - agreed
+
+
+def gate(reply: dict, saved_review_state: str, shortlisted: list, reviewed_ids, disagreed_ids=()) -> dict:
+    """T6 for the travel-checked shortlist: it is AI-assessed only when the saved AI review finished with the verdict approve,
+    EVERY apartment shown is one that review covered and agreed with (`reviewed_ids`: the saved options and the reserves
+    next in order), AND this check's assessment was produced, accepted and covers every apartment shown. A replacement is
+    reviewed only if it was one of those reserves; this check's travel assessment alone is never a review of an apartment.
+    Anything else is held, with the reason; the journey figures stay visible. There is no rules-only way through."""
+    reviewed, disagreed = {int(i) for i in (reviewed_ids or ())}, {int(i) for i in (disagreed_ids or ())}
     ids = [int(x["apartment_id"]) for x in shortlisted]
     if not ids:
         why = "empty"
@@ -440,7 +457,9 @@ def gate(reply: dict, saved_review_state: str, shortlisted: list, reviewed_ids) 
     elif sorted(o["apartment_id"] for o in reply.get("options") or []) != sorted(ids):
         why = "incomplete"
     elif saved_review_state != "reviewed":
-        why = "review"
+        why = "review_hold" if saved_review_state == "review_hold" else "review"
+    elif any(i in disagreed for i in ids):
+        why = "disagreed"
     elif any(i not in reviewed for i in ids):
         why = "replacement"
     else:

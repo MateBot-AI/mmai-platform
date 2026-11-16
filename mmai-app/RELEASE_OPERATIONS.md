@@ -83,7 +83,7 @@ Tools key.
   party's requirements". Those answers cannot be added to any enquiry.
 - Nothing from the service, and nothing worked out from it, is stored, cached between
   requests or logged. The stored options, their history, the saved AI review packet
-  and the decline records are unchanged and keep reading "Travel time needs
+  and the decline records hold no journey content and keep reading "Travel time needs
   confirmation". The only record is an audit row holding this application's own
   request counts, written before each stage of a check is sent: one row normally, a
   second when a shortlisted apartment failed the travel check and its replacement had
@@ -188,17 +188,31 @@ made. It is off by default.
 - Any mismatch, missing field or extra field withholds the whole assessment and the
   page says so.
 - Held unless assessed. The travel-checked shortlist is shown as "AI-assessed" only
-  when the saved AI review of the options is complete and this assessment was
-  produced, accepted and covers every apartment shown. In every other case (switch
-  off, model unavailable, assessment withheld, nothing measured, saved review not
-  complete) the page shows "Held, not a ready shortlist" with the reason. The journey
-  figures stay visible. There is no rules-only result.
-- A replacement is always held. An apartment that took the place of one that failed
-  the travel check was not among the saved options, so the saved AI review never
-  covered it, and this check's travel assessment is not a full review of it. A
-  shortlist holding a replacement therefore reads "Held" however complete the saved
-  review is. A full AI review of a replacement (its other details together with the
-  journeys of that check) is not built in this package.
+  when the saved AI review finished with the verdict approve, that review covered
+  and agreed with every apartment shown, and this assessment was produced, accepted
+  and covers every apartment shown. In every other case (switch off, model
+  unavailable, assessment withheld, nothing measured, saved review not complete,
+  saved review ended in a hold, saved review did not agree with an apartment shown,
+  an apartment shown that the saved review did not cover) the page shows "Held, not
+  a ready shortlist" with the reason. The journey figures stay visible. There is no
+  rules-only result.
+- How a replacement is reviewed. The saved options now also name the reserves: up to
+  three apartments next in the same order, which are the ones that step in when a
+  shortlisted apartment fails the travel check. They are not shown as options. The
+  saved AI review (review contract "homebot-review-v2") is given each reserve with
+  the same recorded facts as a listed option (offer, cost, dates, bedding, features,
+  open points) and must return a note for it; a reserve's journeys read as an open
+  point because they have not been measured. A reserve does not change the review's
+  verdict; the review records for each reserve whether it agrees. When a reserve
+  steps in, it has therefore had the full review, and that check's assessment adds
+  the journeys measured in that check, which are not stored. The saved review covers
+  the listed options, the alternatives, the unresolved candidates and the reserves;
+  an alternative it reviewed as an alternative counts as reviewed if it steps in.
+- What is still held. A replacement from beyond the reserves (more than three
+  replacements in one check) was not reviewed and holds the result; there is no
+  path in this package that reviews it. Options saved before this package hold no
+  reserves; they are out of date under the new matching version and are rebuilt
+  and reviewed again before use.
 - A person whose journey is not fully measured is "not known": never counted as within
   a limit and never as over it. If no journey in the check is fully measured the model
   is not asked.

@@ -14,7 +14,7 @@ import re
 
 import pytest
 
-from server import ai, homebot_review as hr, homebot_shortlist as hs, homebot_travel as tv, homebot_travel_reply as tr, routing
+from server import ai, homebot_match as hm, homebot_review as hr, homebot_shortlist as hs, homebot_travel as tv, homebot_travel_reply as tr, routing
 from tests.test_homebot_shortlist import CUR, client, current, inventory, on  # noqa: F401  (fixtures + helpers)
 from tests.test_live_travel import NOW, SOURCE, Provider, _party, audits, everything, live, snapshot  # noqa: F401
 
@@ -550,12 +550,33 @@ def test_only_a_valid_ai_assessment_of_every_apartment_makes_the_travel_checked_
             (ready, "reviewed", [], "empty")):
         out = held(reply, review, options)
         assert out["state"] == "held" and out["held"] is True and out["reason"] == why and out["plain"] == tr.HELD_PREFIX + tr.HELD_REASON[why]
-    # a replacement that stepped in after the travel check was never in the saved AI review: its travel assessment is not
-    # a review of it, so the shortlist is held even though the saved review is complete and the assessment covers it
+    # an apartment the saved AI review did not cover (a replacement from beyond the reserves it reviewed): the travel
+    # assessment is not a review of it, so the shortlist is held though the saved review is complete and the assessment covers it
     for reviewed in ((7,), (), None, (9, 11)):
         out = held(ready, "reviewed", shown, reviewed)
         assert out == {"state": "held", "held": True, "reason": "replacement", "plain": tr.HELD_PREFIX + tr.HELD_REASON["replacement"]}
-    assert "not part of the saved AI review" in tr.HELD_REASON["replacement"]
+    assert "was not among the apartments the saved AI review covered" in tr.HELD_REASON["replacement"]
+    # the saved review ended in a hold, or did not agree with an apartment shown: held, each with its own reason
+    out = tr.gate(ready, "review_hold", shown, {7, 9})
+    assert out == {"state": "held", "held": True, "reason": "review_hold", "plain": tr.HELD_PREFIX + tr.HELD_REASON["review_hold"]}
+    out = tr.gate(ready, "reviewed", shown, {7}, {9})
+    assert out == {"state": "held", "held": True, "reason": "disagreed", "plain": tr.HELD_PREFIX + tr.HELD_REASON["disagreed"]}
+    assert tr.gate(ready, "reviewed", shown, {7, 9}, {11})["state"] == "assessed"      # a disagreement about one not shown
+
+
+def test_what_the_saved_review_covered_is_read_from_its_own_notes():
+    """Reviewed means the saved review finished with approve; an apartment counts only if that review holds a note that
+    agrees with it. A finished review with no usable detail is not a review."""
+    note = lambda aid, agrees: {"ref": f"O{aid}", "apartment_id": aid, "agrees": agrees, "note": "x"}   # noqa: E731
+    detail = {"verdict": "approve", "option_notes": [note(1, True), note(2, True), note(4, False), note(5, True)]}
+    assert tr.saved_review({"state": "reviewed", "detail": detail}) == ("reviewed", {1, 2, 5}, {4})
+    assert tr.saved_review({"state": "reviewed", "detail": dict(detail, verdict="hold")}) == ("review_hold", {1, 2, 5}, {4})
+    assert tr.saved_review({"state": "reviewed", "detail": {"verdict": "approve"}}) == ("reviewed", set(), set())
+    assert tr.saved_review({"state": "reviewed", "detail": {"verdict": "approve", "option_notes": [note(1, "yes"), {"agrees": True}, "x"]}}) == ("reviewed", set(), {1})
+    for state in ({"state": "reviewed"}, {"state": "reviewed", "detail": "yes"}, None, {}, "reviewed"):
+        assert tr.saved_review(state) == (None, set(), set())
+    for name in ("queued", "held", "retrying", "unreviewed"):
+        assert tr.saved_review({"state": name, "detail": detail}) == (name, set(), set())
     for text in (tr.ASSESSED_TEXT, tr.HELD_PREFIX, *tr.HELD_REASON.values(), *tr.ADVICE_PLAIN.values(), *tr.RATING_PLAIN.values()):
         assert not re.search(r"\b(?:T|H|GP|I)\d+(?:\([a-z]\))?", text)
 
@@ -572,24 +593,93 @@ def test_a_live_check_with_the_assessment_is_still_held_until_the_saved_ai_revie
     assert out["ai_gate"] == {"state": "held", "held": True, "reason": "review", "plain": tr.HELD_PREFIX + tr.HELD_REASON["review"]}
 
 
-def test_a_replacement_never_inherits_the_saved_ai_review(on, monkeypatch):
-    """The saved AI review covered the saved options. An apartment that steps in after the travel check was not among them:
-    the travel assessment of it is not a review of it, so that shortlist is held however complete the saved review is."""
-    from tests.test_live_travel import ByBuilding, _five_buildings
+def _both_calls(monkeypatch, review=None):
+    """ai._ask stand-in for both calls: the saved review (answered from its own packet, kept in `packets`) and this check's
+    travel assessment (the usual Model)."""
+    from tests.test_homebot_review import _good_reply
+    travel_model, packets = Model(), []
+
+    def ask(prompt, model=None, max_tokens=1500, system=""):
+        if "GOOGLE MAPS JOURNEY ESTIMATES" not in prompt:
+            packets.append(json.loads(prompt[prompt.index("\n\nPacket:\n\n") + len("\n\nPacket:\n\n"):]))
+            return (review or _good_reply)(packets[-1])
+        return travel_model(prompt, model, max_tokens, system)
+    monkeypatch.setattr(ai, "_ask", ask)
+    return travel_model, packets
+
+
+def _reviewed_five(on, monkeypatch, review=None):
+    """Five matching apartments; the real saved AI review is run through its queue with a stand-in model."""
+    from tests.test_live_travel import _five_buildings
     eid = _five_buildings(on, monkeypatch)
     _ai_env(monkeypatch)
-    model = Model()
-    monkeypatch.setattr(ai, "_ask", model)
-    monkeypatch.setattr(hs, "_review_state", lambda c, sl: {"state": "reviewed"})      # the saved review is complete
-    saved = [x["apartment_id"] for x in json.loads(current(on, eid)["result_json"])["listed"]]
-    assert saved == [1, 2, 3]
+    travel_model, packets = _both_calls(monkeypatch, review)
+    assert hr.process_pending(on.db)["reviewed"] == 1 and len(packets) == 1
+    return eid, travel_model, packets
+
+
+def test_a_replacement_the_saved_review_covered_is_reviewed_and_one_it_did_not_cover_is_held(on, monkeypatch):
+    """GP6(d) with T6: the saved AI review covers the three options and the reserves next in order, on the same facts. A
+    reserve that steps in after the travel check has therefore had its full review, and this check's assessment adds the
+    journeys: that shortlist is AI-assessed. The travel assessment alone is never a review of an apartment."""
+    from tests.test_live_travel import ByBuilding
+    eid, travel_model, packets = _reviewed_five(on, monkeypatch)
+    assert [(o["apartment_id"], o["listed_as"]) for o in packets[0]["options"]] == [(1, "listed"), (2, "listed"), (3, "listed"), (4, "reserve"), (5, "reserve")]
+    assert hs._review_state(on.db, current(on, eid))["state"] == "reviewed"
     out = hs.live_travel_check(on.db, eid, CUR, "Anna", now=NOW, post=Provider())      # nothing fails: the same three
-    assert [x["apartment_id"] for x in out["listed"]] == saved and out["ai_reply"]["state"] == "ready"
+    assert [x["apartment_id"] for x in out["listed"]] == [1, 2, 3] and out["ai_reply"]["state"] == "ready"
     assert out["ai_gate"] == {"state": "assessed", "held": False, "plain": tr.ASSESSED_TEXT}
     out = hs.live_travel_check(on.db, eid, CUR, "Anna", now=NOW, post=ByBuilding(far=["20 Stage Street"]))
-    assert [x["apartment_id"] for x in out["listed"]] == [1, 3, 4]                     # 4 was never in the saved review
+    assert [x["apartment_id"] for x in out["listed"]] == [1, 3, 4]                     # 4 was reviewed as a reserve
     assert out["ai_reply"]["state"] == "ready" and sorted(o["apartment_id"] for o in out["ai_reply"]["options"]) == [1, 3, 4]
+    assert out["ai_gate"] == {"state": "assessed", "held": False, "plain": tr.ASSESSED_TEXT}
+    assert len(packets) == 1 and len(travel_model.prompts) == 2                        # one saved review; one assessment per check
+    # the saved review is untouched by the checks, and nothing about the journeys or the replacement was stored
+    assert json.loads(current(on, eid)["result_json"])["listed"][1]["apartment_id"] == 2
+    # the travel assessment is still required: without it the reviewed replacement is held
+    monkeypatch.setenv(tr.REPLY_ENV, "0")
+    out = hs.live_travel_check(on.db, eid, CUR, "Anna", now=NOW, post=ByBuilding(far=["20 Stage Street"]))
+    assert [x["apartment_id"] for x in out["listed"]] == [1, 3, 4] and out["ai_gate"]["held"] is True and out["ai_gate"]["reason"] == "off"
+
+
+def test_a_replacement_from_beyond_the_reviewed_reserves_is_held(on, monkeypatch):
+    from tests.test_live_travel import ByBuilding
+    monkeypatch.setattr(hm, "MAX_RESERVES", 1)                                         # the saved review covers 1, 2, 3 and 4 only
+    eid, travel_model, packets = _reviewed_five(on, monkeypatch)
+    assert [o["apartment_id"] for o in packets[0]["options"]] == [1, 2, 3, 4]
+    out = hs.live_travel_check(on.db, eid, CUR, "Anna", now=NOW, post=ByBuilding(far=["20 Stage Street"]))
+    assert [x["apartment_id"] for x in out["listed"]] == [1, 3, 4] and out["ai_gate"]["state"] == "assessed"
+    out = hs.live_travel_check(on.db, eid, CUR, "Anna", now=NOW, post=ByBuilding(far=["20 Stage Street", "30 Stage Street"]))
+    assert [x["apartment_id"] for x in out["listed"]] == [1, 4, 5]                     # 5 was never reviewed
+    assert out["ai_reply"]["state"] == "ready" and sorted(o["apartment_id"] for o in out["ai_reply"]["options"]) == [1, 4, 5]
     assert out["ai_gate"] == {"state": "held", "held": True, "reason": "replacement", "plain": tr.HELD_PREFIX + tr.HELD_REASON["replacement"]}
+
+
+def test_a_reserve_the_saved_review_did_not_agree_with_is_held_when_it_steps_in(on, monkeypatch):
+    from tests.test_homebot_review import _good_reply
+    from tests.test_live_travel import ByBuilding
+
+    def doubts_the_reserve(pk):
+        doc = json.loads(_good_reply(pk))
+        for n in doc["option_notes"]:
+            if n["ref"] == "O4":
+                n["agrees"], n["note"] = False, "The recorded offer conflicts with the recorded budget."
+        return json.dumps(doc)
+    eid, travel_model, packets = _reviewed_five(on, monkeypatch, doubts_the_reserve)
+    out = hs.live_travel_check(on.db, eid, CUR, "Anna", now=NOW, post=Provider())      # the reserve is not shown: no effect
+    assert [x["apartment_id"] for x in out["listed"]] == [1, 2, 3] and out["ai_gate"]["state"] == "assessed"
+    out = hs.live_travel_check(on.db, eid, CUR, "Anna", now=NOW, post=ByBuilding(far=["20 Stage Street"]))
+    assert [x["apartment_id"] for x in out["listed"]] == [1, 3, 4]
+    assert out["ai_gate"] == {"state": "held", "held": True, "reason": "disagreed", "plain": tr.HELD_PREFIX + tr.HELD_REASON["disagreed"]}
+
+
+def test_a_saved_review_that_ended_in_a_hold_never_reads_as_ai_assessed(on, monkeypatch):
+    from tests.test_homebot_review import _good_reply
+    eid, travel_model, packets = _reviewed_five(on, monkeypatch, lambda pk: _good_reply(pk, verdict="hold"))
+    assert hs._review_state(on.db, current(on, eid))["state"] == "reviewed"            # finished, with the verdict hold
+    out = hs.live_travel_check(on.db, eid, CUR, "Anna", now=NOW, post=Provider())
+    assert out["ai_reply"]["state"] == "ready"
+    assert out["ai_gate"] == {"state": "held", "held": True, "reason": "review_hold", "plain": tr.HELD_PREFIX + tr.HELD_REASON["review_hold"]}
 
 
 # ------------------------------------------------------------------------------------------------------------- the page

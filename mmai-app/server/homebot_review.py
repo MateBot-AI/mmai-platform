@@ -86,7 +86,7 @@ PENDING, RUNNING, REVIEWED, INVALID, FAILED, STALE = "pending", "running", "revi
 STATES = frozenset((PENDING, RUNNING, REVIEWED, INVALID, FAILED, STALE))
 APPROVE, HOLD = "approve", "hold"
 VERDICTS = frozenset((APPROVE, HOLD))
-REVIEW_CONTRACT = "homebot-review-v1"
+REVIEW_CONTRACT = "homebot-review-v2"   # v2 (16 Nov 2026): the next candidates in order ("reserve") are reviewed too
 MAX_ATTEMPTS = 3
 FINDINGS_MAX = 10
 NOTE_MAX, RATIONALE_MAX = 300, 600
@@ -221,7 +221,7 @@ def shortlist_version(sl: dict) -> str:
     (apartment, class, offered dates and total weekly rent, open points). Any change makes a stored review STALE."""
     res = pj(sl.get("result_json"), {}) or {}
     offers = []
-    for key in ("listed", "alternatives", "unresolved"):
+    for key in ("listed", "alternatives", "unresolved", "reserves"):
         for x in res.get(key) or []:
             o = x.get("offer") or {}
             offers.append([key, x.get("apartment_id"), x.get("class"), o.get("start"), o.get("end"), o.get("total_weekly_rent"),
@@ -360,6 +360,8 @@ def packet(c, sl: dict) -> dict:
         ref = f"O{len(options) + 1}"
         codes = list(x.get("confirmation_reasons") or []) + (["DATE_SEARCH_UNRESOLVED"] if x.get("date_search_unresolved") else [])
         from . import homebot_match as hm
+        if listed_as == "reserve" and hm.TRAVEL_NOT_CHECKED in (x.get("flags") or []) and hm.TRAVEL_NEEDS_CONFIRMATION not in codes:
+            codes.append(hm.TRAVEL_NEEDS_CONFIRMATION)   # its journeys are measured only if it steps in: an open point until then
         o = {"ref": ref, "listed_as": listed_as, "apartment_id": x.get("apartment_id"), "class": x.get("class"), "type_code": x.get("type_code"),
              "bathrooms": x.get("bathrooms"), "suburb": x.get("suburb"), "offer": x.get("offer"), "cheapest_offer": x.get("cheapest_offer"),
              "travel": x.get("travel"), "bedding": x.get("bedding"), "features": x.get("features"), "bunk_comparison": x.get("bunk_comparison"),
@@ -379,6 +381,12 @@ def packet(c, sl: dict) -> dict:
         _opt(x, "alternative")
     for x in res.get("unresolved") or []:
         _opt(x, "unresolved")
+    # the next in order: not offered now; one takes the place of a listed option only if that option later fails the travel
+    # check, which is made last. Reviewed here on the same facts as the listed options, so that a replacement has been reviewed.
+    present = {o["apartment_id"] for o in options}
+    for x in res.get("reserves") or []:
+        if x.get("apartment_id") not in present:
+            _opt(x, "reserve")
     return {"shortlist_id": sl["id"], "scenario": sl["scenario"], "status": sl["status"], "contract": REVIEW_CONTRACT,
             "requirements": {k: v for k, v in facts.items() if k.startswith("R.")}, "options": options, "fact_ids": sorted(facts),
             "open_point_codes": list(OPEN_POINT_CODES)}
@@ -392,12 +400,14 @@ SYSTEM = ("You are HomeBot AI, Apartment Living Melbourne's apartment-matching r
 def build_prompt(pk: dict, compact: bool = False) -> str:
     rulesx = [
         "Review the shortlist AS COMPUTED. You cannot change an apartment's class, add or remove an option, or close an open point.",
+        "An option with listed_as 'reserve' is not offered now. It is next in the same order and takes the place of a listed option only if that option later fails the travel check, which is made last. Review each reserve against the recorded facts exactly as you review a listed option.",
         "Every open point listed under an option stays open: do not say travel, dates, cost, bedding or an essential need is verified, suitable, fine or within limits for that option. You may say it needs confirming.",
         "Cite fact ids from fact_ids for every finding. A finding without a cited fact is invalid.",
         f"Return ONE JSON object only: {{\"verdict\": \"approve\" | \"hold\", \"rationale\": string (<= {RATIONALE_MAX} chars), "
         f"\"findings\": [{{\"fact_ids\": [string, ...], \"note\": string (<= {NOTE_MAX} chars)}}] (at most {FINDINGS_MAX}), "
         "\"option_notes\": [{\"ref\": string, \"agrees\": true | false, \"note\": string}] (one per option in the packet)}.",
         "'approve' = the listed options and their order are consistent with the recorded facts and the stated open points; 'hold' = a listed option, its order or its stated reasons conflict with a recorded fact (cite it).",
+        "A reserve does not change the verdict. If a reserve, its place in the order or its stated reasons conflict with a recorded fact, set agrees to false in its option note and cite the fact in a finding.",
         "Plain words, no rule codes, no names, no nationality or ethnicity, no gendered pronouns.",
     ]
     if compact:

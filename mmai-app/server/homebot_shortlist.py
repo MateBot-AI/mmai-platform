@@ -1418,8 +1418,9 @@ def live_travel_check(c, eid: int, scenario: str, staff: str, *, now: Optional[s
     """Work out the current options again with live journey estimates and return them for display. The stored options must be
     current and not out of date; the same enquiry, apartment list, business date and booking authority are used. The result
     differs from the stored options in the journey times and, when a shortlisted apartment fails the travel check, in the
-    apartment that takes its place (GP6(d)); a replacement was not part of the saved AI review, so a result holding one is
-    held, never AI-assessed. Nothing is stored except count-only audit records (one per stage of requests)."""
+    apartment that takes its place (GP6(d)). The saved AI review covers the saved options and the reserves next in order;
+    a replacement from among those reserves has been reviewed, one from beyond them has not and holds the result.
+    Nothing is stored except count-only audit records (one per stage of requests)."""
     from . import exit_exceptions, homebot_travel_reply, routing
     _require_on()
     if scenario not in SCENARIOS:
@@ -1487,11 +1488,11 @@ def live_travel_check(c, eid: int, scenario: str, staff: str, *, now: Optional[s
     # the options in the order the page shows them; the AI's transient travel assessment covers the shortlisted ones
     in_order = listed + alts
     reply = homebot_travel_reply.travel_reply(in_order)   # outside the lock and any database work; returned once, never stored
-    # T6: AI-assessed only when the saved review is complete, covered every apartment shown here, and this assessment was
-    # accepted for all of them. The saved review covered the saved options and no others, so a replacement holds the result.
-    saved = pj(sl["result_json"]) or {}
-    reviewed_ids = {int(x["apartment_id"]) for key in ("listed", "alternatives", "unresolved") for x in saved.get(key) or []}
-    ai_gate = homebot_travel_reply.gate(reply, _review_state(c, sl)["state"], in_order, reviewed_ids)
+    # T6: AI-assessed only when the saved review finished with approve, covered and agreed with every apartment shown here,
+    # and this assessment was accepted for all of them. The saved review covers the saved options and the reserves next in
+    # order; a replacement from beyond them has not been reviewed and holds the result.
+    review_state, agreed_ids, disagreed_ids = homebot_travel_reply.saved_review(_review_state(c, sl))
+    ai_gate = homebot_travel_reply.gate(reply, review_state, in_order, agreed_ids, disagreed_ids)
 
     def with_sources(x):
         # the provider's attribution for this option's journeys, to be shown straight after its figures and the AI's note

@@ -103,6 +103,49 @@ def test_packet_carries_cited_facts_open_points_and_no_names(on):
             assert op["plain"] == hm.PLAIN[op["code"]]                        # the rules' plain words, never codes alone
 
 
+def _with_reserves(on, monkeypatch):
+    """Five apartments that all match: three are listed and the next two are the reserves."""
+    from tests.test_live_travel import _five_buildings
+    eid = _five_buildings(on, monkeypatch)
+    sl = current(on, eid)
+    res = json.loads(sl["result_json"])
+    assert [x["apartment_id"] for x in res["listed"]] == [1, 2, 3] and [x["apartment_id"] for x in res["reserves"]] == [4, 5]
+    return eid, sl
+
+
+def test_the_review_covers_the_reserves_that_would_replace_a_failed_travel_check(on, monkeypatch):
+    """T6 with travel last: the apartments next in order are reviewed on the same facts as the listed ones, so one that
+    steps in after the travel check has been reviewed. A reserve is not an option: it does not make a listed option, a
+    readiness condition or a staff-side open point."""
+    eid, sl = _with_reserves(on, monkeypatch)
+    pk = hr.packet(on.db, sl)
+    assert [(o["apartment_id"], o["listed_as"]) for o in pk["options"]] == [(1, "listed"), (2, "listed"), (3, "listed"), (4, "reserve"), (5, "reserve")]
+    assert pk["contract"] == hr.REVIEW_CONTRACT == "homebot-review-v2"
+    listed, reserve = pk["options"][0], pk["options"][3]
+    assert set(reserve) == set(listed) and all(f"O4.{k}" in pk["fact_ids"] for k in ("offer", "bedding", "features", "open_points", "notes"))
+    assert reserve["offer"] and reserve["offer"]["total_weekly_rent"]                       # the same non-travel facts
+    assert "TRAVEL_NEEDS_CONFIRMATION" in [p["code"] for p in reserve["open_points"]]       # its journeys are not measured yet
+    assert hm.PLAIN[hm.TRAVEL_NOT_CHECKED] in reserve["notes"]
+    prompt = hr.build_prompt(pk)
+    assert "listed_as 'reserve'" in prompt and "A reserve does not change the verdict" in prompt
+    # the reserves are part of what the review is bound to: a different reserve is a different version
+    moved = dict(sl, result_json=json.dumps(dict(json.loads(sl["result_json"]), reserves=json.loads(sl["result_json"])["reserves"][:1])))
+    assert hr.shortlist_version(moved) != hr.shortlist_version(sl)
+    # the staff-side open points and readiness are about the listed options only
+    assert {p["apartment_id"] for p in hr._open_points(sl)} == {1, 2, 3}
+    # a reply must carry a note for every reserve too, and may not call a reserve's unmeasured journey settled
+    monkeypatch.setattr(ai, "_ask", _ask_double(lambda pk: _good_reply(pk)))
+    assert hr.process_pending(on.db)["reviewed"] == 1
+    notes = ai_queue.homebot_review_state(on.db, sl["id"])["reviewed"]["option_notes"]
+    assert [(n["apartment_id"], n["agrees"]) for n in notes] == [(1, True), (2, True), (3, True), (4, True), (5, True)]
+    short = json.loads(_good_reply(pk))
+    short["option_notes"] = short["option_notes"][:3]
+    with pytest.raises(hr.UnusableReview):
+        hr.parse_review(json.dumps(short), pk)
+    with pytest.raises(hr.UnusableReview):
+        hr.parse_review(_good_reply(pk, note_for={"O4": "The journey is confirmed within the stated limit."}), pk)
+
+
 def test_valid_reply_is_stored_bound_to_the_version_and_read_back_without_ready(on, monkeypatch):
     eid, sl = _prepared(on)
     monkeypatch.setattr(ai, "_ask", _ask_double(lambda pk: _good_reply(pk)))

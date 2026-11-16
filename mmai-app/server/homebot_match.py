@@ -83,7 +83,8 @@ FOURTH_OPTION_PROVISIONAL = "FOURTH_OPTION_PROVISIONAL"  # RETIRED 16 Nov 2026 (
 TRAVEL_NOT_CHECKED = "TRAVEL_NOT_CHECKED"           # GP6(d): travel is checked last, on the shortlisted apartments only
 REPLACED_AFTER_TRAVEL = "REPLACED_AFTER_TRAVEL"     # GP6(d): shortlisted on the other points, failed the travel check, replaced
 REPLACEMENT_AFTER_TRAVEL = "REPLACEMENT_AFTER_TRAVEL"   # GP6(d): took the place of an apartment that failed the travel check
-MAX_SHORTLIST = 3                                   # GP6(d)/H25/O4(d): never more, and never padded to reach it
+MAX_SHORTLIST = 3
+MAX_RESERVES = 3      # how many of the next candidates the saved AI review also covers, in case one has to step in                                   # GP6(d)/H25/O4(d): never more, and never padded to reach it
 BUNK_CHEAPER_OTHER_DATES = "BUNK_CHEAPER_OTHER_DATES"  # H21: not cheaper at the offered dates, cheaper at other accepted dates
 
 PLAIN = {
@@ -851,6 +852,7 @@ class Shortlist:
     fourth_option_reason: Optional[str] = None
     unresolved: list = field(default_factory=list)   # candidates whose dates/cost could not be enumerated (explicit unknown)
     notes_review: bool = False
+    reserves: list = field(default_factory=list)     # next in order, not shown: would replace a shortlisted one that fails travel
 
     @property
     def has_shortlist(self) -> bool:
@@ -865,12 +867,14 @@ class Shortlist:
                 "unresolved": [c.apartment_id for c in self.unresolved], "notes_review": self.notes_review, "has_shortlist": self.has_shortlist,
                 # counted in `counts` under their class on the other points, but their journeys were never measured
                 "travel_not_checked": sum(1 for c in self.candidates if TRAVEL_NOT_CHECKED in c.flags),
+                "reserves": [c.apartment_id for c in self.reserves],
                 "nothing_suitable_yet": not any(c.klass == SUITABLE for c in self.listed)}
 
     def as_dict(self) -> dict:
         return {"summary": self.summary(), "listed": [c.as_dict() for c in self.listed], "alternatives": [c.as_dict() for c in self.alternatives],
                 "fourth_option": self.fourth_option.as_dict() if self.fourth_option else None,
-                "unresolved": [c.as_dict() for c in self.unresolved], "candidates": [c.as_dict() for c in self.candidates]}
+                "unresolved": [c.as_dict() for c in self.unresolved], "reserves": [c.as_dict() for c in self.reserves],
+                "candidates": [c.as_dict() for c in self.candidates]}
 
 
 def _prepare(estimates, apartment_ids) -> None:
@@ -881,11 +885,11 @@ def _prepare(estimates, apartment_ids) -> None:
         prepare(list(apartment_ids))
 
 
-def _travel_last(req: Requirements, ordered: list, by_id: dict, estimates, room: int) -> list:
+def _travel_last(req: Requirements, ordered: list, by_id: dict, estimates, room: int) -> tuple:
     """GP6(d): take the candidates in their non-travel order, check travel for as many as there is room for, replace any
     that fail (over the doubled limit) with the next candidate and check that one, and stop when the room is filled or the
     candidates run out. An unknown journey is not a failure: that apartment stays, reading 'needs confirmation'. Journeys
-    are measured for the apartments reached here and for no others."""
+    are measured for the apartments reached here and for no others. Returns (kept, the candidates not reached, in order)."""
     kept, queue, replacing = [], list(ordered), False
     while len(kept) < room and queue:
         batch, queue = queue[:room - len(kept)], queue[room - len(kept):]
@@ -901,7 +905,7 @@ def _travel_last(req: Requirements, ordered: list, by_id: dict, estimates, room:
             else:
                 kept.append(c)
         replacing = replacing or failed
-    return kept
+    return kept, queue
 
 
 def build_shortlist(req: Requirements, apartments: list, today: date, estimates: Optional[TravelEstimates] = None, progress=None, *,
@@ -920,12 +924,16 @@ def build_shortlist(req: Requirements, apartments: list, today: date, estimates:
     apply_bunk_condition(req, cands)
     rank(cands, req)
     # GP6(d): travel last. Full matches first, up to three; a failed one is replaced by the next and the replacement checked.
-    listed = _travel_last(req, sorted([c for c in cands if c.listed], key=lambda c: c.order), by_id, estimates, MAX_SHORTLIST)
+    listed, next_full = _travel_last(req, sorted([c for c in cands if c.listed], key=lambda c: c.order), by_id, estimates, MAX_SHORTLIST)
     # H27/H25: alternatives only when fewer than three full matches remain, and only inside the same maximum of three
     alts: list = []
+    next_alts = sorted([c for c in cands if c.alternative and c.offer is not None], key=lambda c: (c.klass, c.order))
     if len(listed) < MAX_SHORTLIST:
-        alts = _travel_last(req, sorted([c for c in cands if c.alternative and c.offer is not None], key=lambda c: (c.klass, c.order)),
-                            by_id, estimates, MAX_SHORTLIST - len(listed))
+        alts, next_alts = _travel_last(req, next_alts, by_id, estimates, MAX_SHORTLIST - len(listed))
+    # the next in the same order: the ones that would step in if a shortlisted apartment later failed the travel check. They
+    # are not shown as options. They are named so that the saved AI review covers them on the same footing as the three
+    # (T6): a replacement the review never saw cannot be treated as reviewed.
+    reserves = (next_full + next_alts)[:MAX_RESERVES]
     # everything else was not shortlisted, so its journeys are not measured: it reads 'not checked', never a pass
     for c in cands:
         if c.travel is None and req.known_people:
@@ -934,4 +942,4 @@ def build_shortlist(req: Requirements, apartments: list, today: date, estimates:
                 c.flags.append(TRAVEL_NOT_CHECKED)
     for i, c in enumerate(listed, start=1):
         c.order = i
-    return Shortlist(req.scenario, listed, alts, cands, None, None, [c for c in cands if c.unresolved], req.notes_review)
+    return Shortlist(req.scenario, listed, alts, cands, None, None, [c for c in cands if c.unresolved], req.notes_review, reserves)
