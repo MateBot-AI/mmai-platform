@@ -13,7 +13,7 @@ from datetime import date, datetime, timedelta, timezone
 import pytest
 
 from server import homebot_match as hm, homebot_review as hr, homebot_shortlist as hs, homebot_travel as tv, routing
-from server.db import rows
+from server.db import rows, table_names
 from tests.test_homebot_shortlist import CUR, client, current, inventory, on, submit  # noqa: F401  (fixtures + helpers)
 
 NOW = "2026-11-10T02:00:00+00:00"          # Tuesday 13:00 Melbourne -> departure Wednesday 11 Nov 08:00 (+11:00)
@@ -84,7 +84,7 @@ def stock(c):
 
 def snapshot(c, skip=("audit_log",)):
     """Every row of every table except the audit log, as text."""
-    names = [r["name"] for r in rows(c.db.execute("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name"))]
+    names = table_names(c.db)   # the application's own table list: the same on SQLite and PostgreSQL
     return {n: json.dumps(rows(c.db.execute(f"SELECT * FROM {n} ORDER BY 1")), sort_keys=True, default=str) for n in names if n not in skip}
 
 

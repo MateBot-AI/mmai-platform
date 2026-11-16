@@ -15,7 +15,7 @@ import pytest
 
 from server import ai, app, homebot_shortlist as hs, homebot_travel_reply as tr, matching, matebot_live as ml, matebot_travel as mt
 from server import matebot_travel_reply as mr, routing
-from server.db import j, row, rows
+from server.db import j, row, rows, table_names
 from tests.test_data_and_api import client  # noqa: F401  (fixture)
 from tests.test_live_travel import NOW, SOURCE, _live_env
 from tests.test_matebot_shortlist_three import _six, _view
@@ -69,7 +69,7 @@ def _audits(db):
 
 
 def _snapshot(db):
-    names = [r["name"] for r in rows(db.execute("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name"))]
+    names = table_names(db)   # the application's own table list: the same on SQLite and PostgreSQL
     return {n: json.dumps(rows(db.execute(f"SELECT * FROM {n} ORDER BY 1")), sort_keys=True, default=str) for n in names if n != "audit_log"}
 
 
