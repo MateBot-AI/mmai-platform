@@ -1474,8 +1474,10 @@ def test_staff_accounts_seeded_idempotently_and_passwords_never_reset(tmp_path, 
     appmod, c = _fresh_app(tmp_path, monkeypatch)
     users = {u["username"]: u for u in accounts.list_users(appmod.db)}
     assert set(users) == {"bill", "anna", "elaisa", "mylene", "keithley", "jordan"}
-    assert users["bill"]["role"] == "owner" and users["bill"]["display_name"] == "Bill Pana"
-    for u, dn in (("anna", "Anna Chan"), ("elaisa", "Elaisa Doctolero"), ("mylene", "Mylene Diamas"), ("keithley", "Keithley Benito"), ("jordan", "Jordan Groth")):
+    # two managers on a fresh database: Bill, and Anna with the same access (Bill's ruling of 17 November 2026)
+    for u, dn in (("bill", "Bill Pana"), ("anna", "Anna Chan")):
+        assert users[u]["role"] == "owner" and users[u]["display_name"] == dn and not users[u]["disabled"]
+    for u, dn in (("elaisa", "Elaisa Doctolero"), ("mylene", "Mylene Diamas"), ("keithley", "Keithley Benito"), ("jordan", "Jordan Groth")):
         assert users[u]["role"] == "staff" and users[u]["display_name"] == dn and not users[u]["disabled"]
     # every seeded account can sign in; accounts without an env password hold only the hash of a discarded random value (E7: never logged;
     # the manager sets a first password via the reset route). generate_password() still shapes the Word-Word-4digits reset passwords.
@@ -1525,42 +1527,45 @@ def test_shared_alm_staff_account_is_disabled_but_kept_for_audit(tmp_path, monke
 
 
 def test_change_my_password_and_audit_who(tmp_path, monkeypatch):
+    # the ordinary staff member here is Elaisa (Anna is a manager on a fresh database); her test-only first password is set explicitly
+    first = "Test-Elaisa-0003"
+    monkeypatch.setenv("MMAI_INITIAL_PASSWORD_ELAISA", first)
     appmod, c = _fresh_app(tmp_path, monkeypatch)
-    r = c.post("/api/auth/login", json={"username": "anna", "password": TEST_PW["anna"]})
+    r = c.post("/api/auth/login", json={"username": "elaisa", "password": first})
     tok = r.json()["token"]
     h = {"Authorization": "Bearer " + tok}
-    # a second remembered device for Anna (its own cookie jar)
+    # a second remembered device for Elaisa (its own cookie jar)
     from fastapi.testclient import TestClient
     dev2 = TestClient(appmod.app, base_url="https://mmai.test")
-    other = dev2.post("/api/auth/login", json={"username": "anna", "password": TEST_PW["anna"]}).json()["token"]
+    other = dev2.post("/api/auth/login", json={"username": "elaisa", "password": first}).json()["token"]
     # validation
     assert c.post("/api/auth/password", json={"current_password": "nope", "new_password": "Long-Enough-Pass-1"}, headers=h).status_code == 422
-    r = c.post("/api/auth/password", json={"current_password": TEST_PW["anna"], "new_password": "Short-1"}, headers=h)
+    r = c.post("/api/auth/password", json={"current_password": first, "new_password": "Short-1"}, headers=h)
     assert r.status_code == 422 and "10 characters" in r.json()["detail"]
-    assert c.post("/api/auth/password", json={"current_password": TEST_PW["anna"], "new_password": TEST_PW["anna"]}, headers=h).status_code == 422
-    assert c.post("/api/auth/password", json={"current_password": TEST_PW["anna"], "new_password": "Exactly10!"}, headers=h).status_code == 200
+    assert c.post("/api/auth/password", json={"current_password": first, "new_password": first}, headers=h).status_code == 422
+    assert c.post("/api/auth/password", json={"current_password": first, "new_password": "Exactly10!"}, headers=h).status_code == 200
     # old password refused, new accepted; this device stays signed in, the other device is signed out
-    assert c.post("/api/auth/login", json={"username": "anna", "password": TEST_PW["anna"]}).status_code == 401
-    assert c.post("/api/auth/login", json={"username": "anna", "password": "Exactly10!"}).status_code == 200
+    assert c.post("/api/auth/login", json={"username": "elaisa", "password": first}).status_code == 401
+    assert c.post("/api/auth/login", json={"username": "elaisa", "password": "Exactly10!"}).status_code == 200
     assert c.get("/api/auth/me", headers=h).status_code == 200
     assert dev2.get("/api/auth/me").status_code == 401 and dev2.get("/api/auth/me", headers={"Authorization": "Bearer " + other}).status_code == 401
     # the audit log names the person, never the password
     a = rows(appmod.db.execute("SELECT * FROM audit_log WHERE action='change_password'"))
-    assert len(a) == 1 and a[0]["staff_member"] == "Anna Chan" and "Exactly10" not in str(a[0])
+    assert len(a) == 1 and a[0]["staff_member"] == "Elaisa Doctolero" and "Exactly10" not in str(a[0])
     # a staff action is recorded under the individual's name
     c.post("/api/apartments", json={"address": "Unit 1/1 Who St", "type_code": "1BR", "rent_12m": 700, "rent_6m": 750, "available_from": "2027-02-01", "bedroom1": "1 king or 2 singles"}, headers=h)
-    assert rows(appmod.db.execute("SELECT staff_member FROM audit_log WHERE action LIKE '%apartment%' ORDER BY id DESC LIMIT 1"))[0]["staff_member"] == "Anna Chan"
+    assert rows(appmod.db.execute("SELECT staff_member FROM audit_log WHERE action LIKE '%apartment%' ORDER BY id DESC LIMIT 1"))[0]["staff_member"] == "Elaisa Doctolero"
     # manager-only: list users and reset a team member's password; staff get 403
     assert c.get("/api/auth/users", headers=h).status_code == 403
     bill = {"Authorization": "Bearer " + c.post("/api/auth/login", json={"username": "bill", "password": TEST_PW["bill"]}).json()["token"]}
-    assert {u["username"] for u in c.get("/api/auth/users", headers=bill).json()} >= {"bill", "anna"}
-    r = c.post("/api/auth/users/anna/reset-password", json={}, headers=bill)
+    assert {u["username"] for u in c.get("/api/auth/users", headers=bill).json()} >= {"bill", "elaisa"}
+    r = c.post("/api/auth/users/elaisa/reset-password", json={}, headers=bill)
     assert r.status_code == 200 and re.fullmatch(r"[A-Z][a-z]+-[A-Z][a-z]+-\d{4}", r.json()["temporary_password"])
     c.cookies.clear()
-    assert c.get("/api/auth/me", headers=h).status_code == 401, "reset signs Anna's devices out"
-    assert dev2.post("/api/auth/login", json={"username": "anna", "password": r.json()["temporary_password"]}).status_code == 200
+    assert c.get("/api/auth/me", headers=h).status_code == 401, "reset signs Elaisa's devices out"
+    assert dev2.post("/api/auth/login", json={"username": "elaisa", "password": r.json()["temporary_password"]}).status_code == 200
     assert c.post("/api/auth/users/alm-staff/reset-password", json={}, headers=bill).status_code == 404
-    assert rows(appmod.db.execute("SELECT staff_member, entity_id FROM audit_log WHERE action='reset_password'"))[0] == {"staff_member": "Bill Pana", "entity_id": "anna"}
+    assert rows(appmod.db.execute("SELECT staff_member, entity_id FROM audit_log WHERE action='reset_password'"))[0] == {"staff_member": "Bill Pana", "entity_id": "elaisa"}
 
 
 def test_session_cookie_is_host_prefixed_and_visitor_id_off_by_default(tmp_path, monkeypatch):

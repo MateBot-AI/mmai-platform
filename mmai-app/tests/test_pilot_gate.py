@@ -18,6 +18,10 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 PILOT_DIR = os.path.join(ROOT, "server", "pilot")
 COOKIE = "__Host-mmai_session"
 
+# The ordinary reservations-team example. Anna used to be it; since Bill's ruling of 17 November 2026 a fresh database makes
+# Anna a manager like Bill, so the "other staff" cases name Elaisa, whose test-only first password is set by the fixture.
+STAFF, STAFF_PW = "elaisa", "Test-Elaisa-0003"
+
 
 def _client(tmp_path, monkeypatch, gate):
     monkeypatch.setenv("MMAI_DB", str(tmp_path / "pilot.db"))
@@ -26,6 +30,7 @@ def _client(tmp_path, monkeypatch, gate):
     else:
         monkeypatch.setenv("MMAI_PILOT_GATE", gate)
     monkeypatch.delenv("MMAI_PILOT_USERS", raising=False)
+    monkeypatch.setenv("MMAI_INITIAL_PASSWORD_" + STAFF.upper(), STAFF_PW)   # read once, when the fresh database is seeded
     import server.db as dbmod
     dbmod._conn = None
     import server.app as appmod
@@ -53,7 +58,7 @@ def ungated(tmp_path, monkeypatch):
 
 
 def _login(c, user="bill"):
-    return c.post("/api/auth/login", json={"username": user, "password": TEST_PW[user]})
+    return c.post("/api/auth/login", json={"username": user, "password": STAFF_PW if user == STAFF else TEST_PW[user]})
 
 
 def _counts(appmod):
@@ -178,16 +183,25 @@ def test_manager_bearer_token_also_passes(gated):
 def test_other_staff_are_refused_and_get_no_session(gated):
     c, appmod, _ = gated
     before = appmod.db.execute("SELECT COUNT(*) FROM sessions").fetchone()[0]
-    r = _login(c, "anna")
+    r = _login(c, STAFF)
     assert r.status_code == 403 and "token" not in r.json() and COOKIE not in r.headers.get("set-cookie", "")
     assert appmod.db.execute("SELECT COUNT(*) FROM sessions").fetchone()[0] == before
     assert c.get("/api/apartments").status_code == 401
 
 
+def test_both_managers_pass_by_default_on_a_fresh_database(gated):
+    """With no names listed, the gate admits the manager role: on a fresh database that is Bill and Anna, nobody else."""
+    c, appmod, _ = gated
+    roles = {u["username"]: u["role"] for u in appmod.accounts.list_users(appmod.db)}
+    assert roles == {"bill": "owner", "anna": "owner", "elaisa": "staff", "mylene": "staff", "keithley": "staff", "jordan": "staff"}
+    assert _login(c, "anna").status_code == 200
+    assert c.get("/api/apartments").status_code == 200 and c.get("/api/auth/users").status_code == 200
+
+
 def test_staff_session_made_before_the_gate_does_not_pass(gated, monkeypatch):
     c, appmod, _ = gated
     monkeypatch.delenv("MMAI_PILOT_GATE")
-    tok = _login(c, "anna").json()["token"]           # signed in while the gate was off
+    tok = _login(c, STAFF).json()["token"]            # signed in while the gate was off
     assert c.get("/api/enquiries").status_code == 200
     monkeypatch.setenv("MMAI_PILOT_GATE", "1")
     assert c.get("/api/enquiries").status_code == 401
@@ -203,9 +217,9 @@ def test_staff_session_made_before_the_gate_does_not_pass(gated, monkeypatch):
 
 def test_named_pilot_users_replace_the_default(gated, monkeypatch):
     c, _, _ = gated
-    monkeypatch.setenv("MMAI_PILOT_USERS", "anna")
-    assert _login(c, "bill").status_code == 403
-    assert _login(c, "anna").status_code == 200
+    monkeypatch.setenv("MMAI_PILOT_USERS", STAFF)
+    assert _login(c, "bill").status_code == 403 and _login(c, "anna").status_code == 403   # a manager not named is refused too
+    assert _login(c, STAFF).status_code == 200
     assert c.get("/api/apartments").status_code == 200
 
 
@@ -393,7 +407,7 @@ def test_second_check_refuses_other_staff_even_if_the_gate_step_is_skipped(gated
     """The staff check behind every staff address refuses a non-pilot sign-in on its own, without relying on the gate in front."""
     c, appmod, _ = gated
     monkeypatch.delenv("MMAI_PILOT_GATE")
-    tok = _login(c, "anna").json()["token"]           # signed in while the gate was off
+    tok = _login(c, STAFF).json()["token"]            # signed in while the gate was off
     monkeypatch.setenv("MMAI_PILOT_GATE", "1")
     monkeypatch.setattr(appmod, "_pilot_gate", lambda request: None)   # the front gate lets everything through
     c.cookies.clear()
@@ -487,7 +501,7 @@ def test_gate_off_keeps_the_existing_behaviour(ungated):
     h = c.get("/api/health")
     assert "apartments" in h.json() and "strict-transport-security" not in h.headers
     assert c.get("/api/apartments").status_code == 401            # staff-only, as before
-    assert _login(c, "anna").status_code == 200                   # every staff member signs in as before
+    assert _login(c, STAFF).status_code == 200                    # every staff member signs in as before
     assert c.get("/api/enquiries").status_code == 200
     r = c.post("/api/public/enquiries", json=good_answers())
     assert r.status_code == 201

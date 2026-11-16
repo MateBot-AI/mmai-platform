@@ -20,10 +20,12 @@ from .db import now_iso, row, rows
 
 MIN_PASSWORD_LENGTH = 10
 
-# username, display name, role.  'owner' = manager (Bill); 'staff' = reservations team.
+# username, display name, role.  'owner' = manager (Bill and Anna: Bill's ruling of 17 November 2026 gives Anna the same access
+# as his own); 'staff' = reservations team. This list only decides the role of an account that does not exist yet: seeding
+# never changes the role of an existing account.
 STAFF_ACCOUNTS = [
     ("bill", "Bill Pana", "owner"),
-    ("anna", "Anna Chan", "staff"),
+    ("anna", "Anna Chan", "owner"),
     ("elaisa", "Elaisa Doctolero", "staff"),
     ("mylene", "Mylene Diamas", "staff"),
     ("keithley", "Keithley Benito", "staff"),

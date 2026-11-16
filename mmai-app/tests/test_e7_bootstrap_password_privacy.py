@@ -20,7 +20,7 @@ from tests.conftest import TEST_PW
 from server import accounts
 from server.db import rows
 
-SEEDED = [("bill", "Bill Pana", "owner"), ("anna", "Anna Chan", "staff"), ("elaisa", "Elaisa Doctolero", "staff"),
+SEEDED = [("bill", "Bill Pana", "owner"), ("anna", "Anna Chan", "owner"), ("elaisa", "Elaisa Doctolero", "staff"),
           ("mylene", "Mylene Diamas", "staff"), ("keithley", "Keithley Benito", "staff"), ("jordan", "Jordan Groth", "staff")]
 READABLE_PASSWORD = re.compile(r"[A-Z][a-z]+-[A-Z][a-z]+-\d{4}")   # the Word-Word-4digits shape of generate_password()
 

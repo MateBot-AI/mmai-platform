@@ -215,9 +215,17 @@ def test_l5_session_tokens_hashed(app_client):
 # ---------------- L7: phone enquiries are attributed to the signed-in person ----------------
 def test_l7_staff_enquiry_attribution(app_client):
     c, _, _ = app_client
-    anna = _staff(c, "anna")
-    r = c.post("/api/enquiries", json={**good_answers(), "channel": "Phone", "staff_member": "Someone Else"}, headers=anna)
-    assert r.status_code == 201 and r.json()["staff_member"] == "Anna Chan"
+    reset = c.post("/api/auth/users/elaisa/reset-password", json={}, headers=_staff(c, "bill"))   # an ordinary staff sign-in
+    token = c.post("/api/auth/login", json={"username": "elaisa", "password": reset.json()["temporary_password"]}).json()["token"]
+    c.cookies.clear()
+    elaisa = {"Authorization": "Bearer " + token}
+    r = c.post("/api/enquiries", json={**good_answers(), "channel": "Phone", "staff_member": "Someone Else"}, headers=elaisa)
+    assert r.status_code == 201 and r.json()["staff_member"] == "Elaisa Doctolero"
+    c.cookies.clear()
+    anna = _staff(c, "anna")   # Anna is a manager like Bill (ruling of 17 November 2026)
+    r = c.post("/api/enquiries", json={**good_answers(email="a@example.com"), "channel": "Phone", "staff_member": "Someone Else"}, headers=anna)
+    assert r.status_code == 201 and r.json()["staff_member"] == "Someone Else"
+    c.cookies.clear()
     bill = _staff(c, "bill")
     r = c.post("/api/enquiries", json={**good_answers(email="b@example.com"), "channel": "Phone", "staff_member": "Someone Else"}, headers=bill)
     assert r.status_code == 201 and r.json()["staff_member"] == "Someone Else"
