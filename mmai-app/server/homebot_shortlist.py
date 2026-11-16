@@ -1447,13 +1447,14 @@ def live_travel_check(c, eid: int, scenario: str, staff: str, *, now: Optional[s
             first.insert(len(stored.get("listed", [])), stored["fourth_option"]["apartment_id"])
         order = list(dict.fromkeys(first + [x["apartment_id"] for x in stored.get("candidates", []) if x.get("class") != hm.EXCLUDED]))
         est = routing.LiveEstimates(req, inv, max_requests=allowance, now=when, post=post)
-        est.prefetch(order)   # outside any database lock
-        check = est.display()
+        est.plan(order)   # how many requests this check will make; nothing has been sent yet
         if est.calls:
-            # recorded before the options are worked out, so the allowance is held even if a later step fails. Our own
-            # request counts only: nothing that depends on what the provider answered (not even how many journeys it found).
+            # recorded BEFORE the first request leaves, so the allowance is held even if this process stops part-way.
+            # Our own planned request counts only: nothing that depends on what the provider answers.
             audit(c, str(staff or "").strip()[:homebot.MAX_NAME] or "staff", TRAVEL_CHECK_ACTION, "homebot_enquiry", eid,
                   j({"scenario": scenario, "shortlist_id": sl["id"], "requests": est.calls, "not_requested": est.skipped}))
+        est.prefetch()   # outside any database lock
+        check = est.display()
         exact = {int(a["id"]): exit_exceptions.offers_from_capture(exception_capture, int(a["id"])) for a in inv} if exception_capture else None
         res = hm.build_shortlist(req, inv, date.fromisoformat(sl["today"]), est,
                                  **({"exception_offers_by_apartment": exact} if exact else {})).as_dict()

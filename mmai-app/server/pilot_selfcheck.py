@@ -40,6 +40,9 @@ PROBES = (
     ("health", "GET", "/api/health", {}, None, 200, "minimal_health"),
     ("sign-in page", "GET", "/pilot/", HTML, None, 200, "page_headers"),
     ("sign-in page script", "GET", "/pilot/pilot.js", {}, None, 200, "fixed_script"),
+    ("Terms of Use without sign-in", "GET", "/terms", HTML, None, 200, "terms_notice"),
+    ("Privacy Policy without sign-in", "GET", "/privacy", HTML, None, 200, "privacy_notice"),
+    ("a page beside the notices", "GET", "/terms/", HTML, None, 303, "to_sign_in_only"),
 )
 
 
@@ -58,6 +61,12 @@ def _check(name, status, headers, body) -> bool:
             return False
     if name == "page_headers":
         return "no-store" in h.get("cache-control", "") and h.get("strict-transport-security") == "max-age=31536000"
+    if name == "terms_notice":
+        return b"<h1>Terms of Use</h1>" in body and b"Google Maps/Google Earth Additional Terms of Service" in body and "no-store" in h.get("cache-control", "")
+    if name == "privacy_notice":
+        return b"<h1>Privacy Policy</h1>" in body and b"Google Privacy Policy" in body and "no-store" in h.get("cache-control", "")
+    if name == "to_sign_in_only":
+        return (h.get("location") or "").startswith("/pilot/")
     if name == "fixed_script":
         return b"location.origin + path" in body and b"location.assign(next)" in body
     return True

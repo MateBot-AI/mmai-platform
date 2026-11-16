@@ -16,7 +16,8 @@ Environment variables (all optional):
   MMAI_PUBLIC_BASE_URL          public address of the app for generated links (e.g. https://app.matebot.com.au); empty = page address
   MMAI_TRUST_PROXY_IP=0         ignore X-Forwarded-For (default 1: the hosting proxy sets it; the first address is the visitor)
   MMAI_PILOT_GATE=1             controlled pilot: every page, file and API call needs an allowed signed-in pilot user, except the
-                                pilot sign-in page, the sign-in call itself and a minimal health reply; all new enquiries are
+                                pilot sign-in page, the sign-in call itself, a minimal health reply and the two public notices
+                                (/terms and /privacy); all new enquiries are
                                 saved as TEST. Unset/0/off/false/no = off (normal behaviour). Any other value turns it ON, so a
                                 mistyped value fails closed.
   MMAI_PILOT_USERS              comma-separated usernames allowed through the pilot gate (default: the manager account only)
@@ -87,6 +88,9 @@ SECURITY_HEADERS = {
 # ---------------------------------------------------------------------------
 _PILOT_OFF = ("", "0", "off", "false", "no")
 PILOT_PAGE_PATHS = ("/pilot", "/pilot/", "/pilot/pilot.js", "/pilot/pilot.css")
+# The two public notices (Terms of Use and Privacy Policy). They are fixed pages holding no enquiry, staff or apartment
+# information, and anyone may read them whether the gate is on or off.
+PUBLIC_NOTICE_PATHS = ("/terms", "/privacy")
 # (method, exact path) pairs that answer without a pilot session while the gate is on. Nothing else does.
 PILOT_OPEN_API = (("POST", "/api/auth/login"), ("GET", "/api/auth/session"), ("GET", "/api/health"))
 PILOT_HSTS = "max-age=31536000"
@@ -112,9 +116,10 @@ def pilot_user_allowed(user: dict | None) -> bool:
 
 
 def pilot_open_path(method: str, path: str) -> bool:
-    """Exact-match allow-list for requests that need no pilot session (sign-in page and its two files, sign-in, health)."""
+    """Exact-match allow-list for requests that need no pilot session (sign-in page and its two files, the two public
+    notices, sign-in, health)."""
     m = (method or "").upper()
-    if path in PILOT_PAGE_PATHS:
+    if path in PILOT_PAGE_PATHS or path in PUBLIC_NOTICE_PATHS:
         return m in ("GET", "HEAD")
     return (m, path) in PILOT_OPEN_API
 

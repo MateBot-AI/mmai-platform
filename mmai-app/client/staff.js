@@ -418,19 +418,17 @@
      The reply is shown on this page only and is not saved anywhere; this small in-page note only stops the page asking again
      every time it redraws, and is cleared after 30 minutes or when the page is closed. */
   const hbTravelShown = new Map();
-  // the provider's name, exactly as it asks to be shown beside its journey figures: plain text, never translated or reworded
-  const GMAPS_ATTR = '<span class="gmaps-attr" translate="no">Google Maps</span>';
+  // the provider's own logo, unaltered, beside its journey figures (its name is the label, and is what shows if the image cannot load)
+  const GMAPS_ATTR = '<img class="gmaps-attr" src="/img/google_maps_logo.svg" alt="Google Maps" translate="no" width="98" height="18">';
   const HB_TRAVEL_KEEP_MS = 30 * 60 * 1000;
   async function homebotOptions(box, id, e) {
     const ov = await api.get(`/api/homebot/enquiries/${id}/options`);
     if (!ov.enabled) { box.innerHTML = `<p class="small muted">${esc(ov.plain)}</p>`; return; }
     const liveTravel = ov.live_travel || {};
     const travelKey = (key, cur) => `${id}:${key}:${cur.id}`;
-    const travelKept = (key, cur) => {
-      const kept = hbTravelShown.get(travelKey(key, cur));
-      if (kept && kept.reply && Date.now() - kept.at > HB_TRAVEL_KEEP_MS) kept.reply = null;   // old journey times are dropped, not shown as current
-      return kept;
-    };
+    // old journey times are dropped for every enquiry, not only the one on screen, and never shown as current
+    hbTravelShown.forEach(kept => { if (kept.reply && Date.now() - kept.at > HB_TRAVEL_KEEP_MS) kept.reply = null; });
+    const travelKept = (key, cur) => hbTravelShown.get(travelKey(key, cur));
     const offer = o => o ? `${o.start} → ${o.end} · ${money(o.total_weekly_rent)}/week${o.months ? ` · ${o.months} months` : ''}` : '—';
     const routeMinutes = value => {
       if (value == null) return '';
@@ -478,7 +476,7 @@
       const missed = (k.failures || 0) + (k.not_requested || 0);
       const counts = r.summary && r.summary.counts ? Object.entries(r.summary.counts).map(([n, v]) => `${v} ${n.replace(/_/g, ' ')}`).join(', ') : '';
       return `<div data-role="hb-travel-result"><h4>Options with live travel times</h4>
-        <p class="small">Journey estimates: ${GMAPS_ATTR}. ${esc(k.basis || '')}. Checked ${fmtDT(k.checked_at)}.</p>
+        <p class="small">${GMAPS_ATTR}<br>Journey estimates. ${esc(k.basis || '')}. Checked ${fmtDT(k.checked_at)}.</p>
         <p class="small muted">${esc(r.plain)}${counts ? ` With these journey times: ${esc(counts)}.` : ''}</p>
         ${missed ? `<p class="msg small">${missed} journey${missed === 1 ? '' : 's'} could not be checked this time; where a time is missing the option reads "Travel time needs confirmation".</p>` : ''}
         ${!k.requests ? '<p class="small muted">No journeys were needed: no one in the party has a place of work or study recorded yet.</p>' : ''}
@@ -512,7 +510,7 @@
           ${candRows(cur.unresolved, 'Could not be checked automatically — check by hand')}
           ${cur.why_not && cur.why_not.length ? `<details class="small"><summary>Why the other ${cur.why_not.length} apartment(s) are not listed</summary><ul>${cur.why_not.map(x => `<li>${esc(x.address)} (${esc(x.type_code)}): ${esc(x.class_plain)}${x.reasons.length ? ' — ' + x.reasons.map(esc).join('; ') : ''}</li>`).join('')}</ul></details>` : ''}` : ''}
         ${cur && !cur.stale && declineOptions(cur, key) ? `<details class="small mt"><summary>Record that the applicant declined one of these options</summary>
-          <p class="small muted">Recorded against this list exactly as shown here (${esc(sc.label.toLowerCase())}, prepared ${fmtDT(cur.created_at)}). If the list has been replaced since this page loaded, nothing is recorded and the page refreshes.</p>
+          <p class="small muted">Recorded against this list exactly as shown here (${esc(sc.label.toLowerCase())}, prepared ${fmtDT(cur.created_at)}). If the list has been replaced since this page loaded, nothing is recorded and the page refreshes.${liveTravel.enabled ? ' Live journey times are never saved: a decline of an apartment from the live travel view is recorded with the saved details for that apartment, where travel time still reads as needing confirmation.' : ''}</p>
           <div class="field"><label>Apartment<select name="hb-rej-apt-${key}"><option value="">Choose the apartment…</option>${declineOptions(cur, key)}</select></label></div>
           <div class="field"><label>Scope<select name="hb-rej-scope-${key}"><option value="apartment">This apartment only</option><option value="building">The whole building</option></select></label></div>
           <div class="field"><label>Applicant's reason (optional)<input name="hb-rej-reason-${key}" maxlength="1000"></label></div>
@@ -521,11 +519,12 @@
     };
     const declineOptions = (cur, key) => {
       const all = [...cur.listed, ...(cur.fourth_option ? [cur.fourth_option] : []), ...cur.alternatives, ...cur.unresolved];
-      // an apartment offered from the live travel view can be declined too; the decline is still recorded against the stored list
+      const saved = new Set(all.map(x => x.apartment_id));
+      // an apartment offered from the live travel view can be declined too; the decline is still recorded against the saved list
       const live = key && liveTravel.enabled ? travelKept(key, cur) : null;
       if (live && live.reply && live.reply.ok) all.push(...live.reply.listed, ...(live.reply.fourth_option ? [live.reply.fourth_option] : []), ...live.reply.alternatives, ...live.reply.unresolved);
       const seen = new Set();
-      return all.filter(x => !seen.has(x.apartment_id) && seen.add(x.apartment_id)).map(x => `<option value="${x.apartment_id}">${esc(x.address)}</option>`).join('');
+      return all.filter(x => !seen.has(x.apartment_id) && seen.add(x.apartment_id)).map(x => `<option value="${x.apartment_id}">${esc(x.address)}${saved.has(x.apartment_id) ? '' : ' (from the live travel view)'}</option>`).join('');
     };
     const planning = ov.planning;
     const rejections = ov.rejections || [];
@@ -558,6 +557,13 @@
         kept.reply = await api.post(`/api/homebot/enquiries/${id}/options/travel-check`, { scenario: key });
         kept.at = Date.now();
         if (kept.reply.state === 'replaced' || kept.reply.state === 'out_of_date') { kept.reply = null; msg(m, 'The options changed, so travel was not checked. The page is refreshing.', false); setTimeout(render, 1200); return; }
+        // dropped after 30 minutes even if this page is never opened or redrawn again
+        const shownAt = kept.at;
+        setTimeout(() => {
+          if (kept.at !== shownAt) return;
+          kept.reply = null;
+          if (out.isConnected) { out.innerHTML = '<p class="small muted">The journey times shown earlier have been cleared. Check travel times again to see current ones.</p>'; btn.textContent = 'Check travel times now'; }
+        }, HB_TRAVEL_KEEP_MS);
         if (!box.isConnected) return;
         out.innerHTML = travelView(kept.reply);
         btn.textContent = 'Check travel times again';

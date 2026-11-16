@@ -240,9 +240,14 @@ def stale_evidence(evidence, now=None):
 LIVE_ENV = "MMAI_ROUTING_LIVE"
 LIVE_BASIS = "Estimated weekday departure at 08:00 Melbourne; not a guaranteed journey time"
 LIVE_OFF = "Live travel checks are switched off."
+# Request limits: (default, lowest, highest). The provider bills each successful request under one price tier chosen by
+# the features asked for. What this module asks for (request_body + FIELD_MASK) is in the lowest tier for walking, cycling
+# and public transport, and in the middle tier for car journeys (traffic-aware routing); it asks for nothing in the highest
+# tier (no two-wheeler mode, tolls, traffic on polylines or large-vehicle routing). The monthly default is kept below the
+# middle tier's monthly free allowance (5,000 requests), so the default cannot run past it whatever mix of modes is used.
 LIVE_LIMITS = {"MMAI_ROUTING_LIVE_MAX_REQUESTS": (200, 1, 500),          # one check
-               "MMAI_ROUTING_LIVE_DAILY_REQUESTS": (2000, 1, 20000),     # all checks in one UTC day
-               "MMAI_ROUTING_LIVE_MONTHLY_REQUESTS": (10000, 1, 50000)}  # all checks in one UTC month (H28 allowance)
+               "MMAI_ROUTING_LIVE_DAILY_REQUESTS": (1000, 1, 20000),     # all checks in one UTC day
+               "MMAI_ROUTING_LIVE_MONTHLY_REQUESTS": (4000, 1, 50000)}   # all checks in one UTC month
 LIVE_DEADLINE_SEC = 45
 LIVE_WORKERS = 6
 
@@ -267,8 +272,9 @@ def live_limit(name: str) -> int:
 
 class LiveEstimates(Estimates):
     """In-memory journey estimates for one staff travel check. `prefetch` makes every provider request (bounded by the
-    request allowance and a deadline, no retries); afterwards the object only answers from what was measured, so the
-    number of requests is known before the options are worked out. Anything not measured stays UNMEASURED and the
+    request allowance and a deadline, no retries); afterwards the object only answers from what was measured. `plan`
+    settles how many requests will be made without contacting the provider, so that number can be recorded before the
+    first request leaves. Anything not measured stays UNMEASURED and the
     option reads 'Travel time needs confirmation'. Origins are the building, so apartments in one building share a journey."""
 
     def __init__(self, req, inventory, *, max_requests, now=None, post=None):
@@ -281,6 +287,7 @@ class LiveEstimates(Estimates):
         self.max_requests = int(max_requests)
         self.calls = self.measured = self.failures = self.skipped = 0
         self.cache = {}
+        self._todo = []
 
     def _origin(self, apartment):
         building = hm.building_key(apartment.get("address") or "")
@@ -309,19 +316,29 @@ class LiveEstimates(Estimates):
         except Exception:   # noqa: BLE001 - counted only; never provider text or addresses
             return tv.UNMEASURED, True
 
-    def prefetch(self, apartment_ids, *, deadline_sec=LIVE_DEADLINE_SEC):
-        """Request journeys for these apartments in the order given (the options staff see first come first)."""
-        from concurrent.futures import ThreadPoolExecutor, wait
+    def plan(self, apartment_ids) -> int:
+        """Settle which journeys will be requested for these apartments, in the order given (the options staff see first
+        come first), and return how many requests that is. Nothing is sent to the provider here."""
         wanted = []
         for aid in apartment_ids:
             for key in self._keys(aid):
                 if key not in self.cache:
                     self.cache[key] = tv.UNMEASURED
                     wanted.append(key)
-        todo, self.skipped = wanted[:self.max_requests], max(0, len(wanted) - self.max_requests)
+        room = max(0, self.max_requests - self.calls)
+        self._todo += wanted[:room]
+        self.skipped += max(0, len(wanted) - room)
+        self.calls += len(wanted[:room])   # requests that will be attempted, including any that fail; no retry
+        return self.calls
+
+    def prefetch(self, apartment_ids=None, *, deadline_sec=LIVE_DEADLINE_SEC):
+        """Make the planned requests (planning these apartments first when they are given)."""
+        from concurrent.futures import ThreadPoolExecutor, wait
+        if apartment_ids is not None:
+            self.plan(apartment_ids)
+        todo, self._todo = self._todo, []
         if not todo:
             return
-        self.calls = len(todo)   # attempted requests, including failures; no retry
         pool = ThreadPoolExecutor(max_workers=LIVE_WORKERS, thread_name_prefix="mmai-travel")
         try:
             futures = {pool.submit(self._measure, key): key for key in todo}

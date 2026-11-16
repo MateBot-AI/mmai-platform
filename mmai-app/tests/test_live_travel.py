@@ -6,7 +6,8 @@ wrong vehicle) are applied to the live view; the request allowances; out-of-date
 staff-only address.
 """
 import json
-from datetime import date, timedelta
+import re
+from datetime import date, datetime, timedelta, timezone
 
 import pytest
 
@@ -126,6 +127,8 @@ def test_check_shows_journeys_and_stores_nothing_from_the_provider(live):
     assert detail == {"scenario": CUR, "shortlist_id": out["shortlist_id"], "requests": 16, "not_requested": 0}
     assert a["staff_member"] == "Anna" and a["entity"] == "homebot_enquiry" and a["entity_id"] == str(eid)
     everywhere = json.dumps(rows(c.db.execute("SELECT * FROM audit_log")), default=str) + json.dumps(snapshot(c))
+    # random password and session digests can spell any short number by chance; they are not provider content
+    everywhere = re.sub(r"[0-9a-f]{16,}", "", everywhere)
     for leaked in ("601", "10.0166", "1500s", "fastest_minutes\": \"", "google-routes"):
         assert leaked not in everywhere, leaked
 
@@ -206,9 +209,41 @@ def test_request_allowances(live, monkeypatch):
 def test_limit_settings_fall_back_to_safe_defaults(monkeypatch):
     for bad in ("0", "-5", "abc", "999999999", "1.5"):
         monkeypatch.setenv("MMAI_ROUTING_LIVE_MONTHLY_REQUESTS", bad)
-        assert routing.live_limit("MMAI_ROUTING_LIVE_MONTHLY_REQUESTS") == 10000, bad
+        assert routing.live_limit("MMAI_ROUTING_LIVE_MONTHLY_REQUESTS") == 4000, bad
     monkeypatch.setenv("MMAI_ROUTING_LIVE_MONTHLY_REQUESTS", "2500")
     assert routing.live_limit("MMAI_ROUTING_LIVE_MONTHLY_REQUESTS") == 2500
+
+
+def test_default_limits_and_what_each_request_asks_for(live):
+    """The default monthly limit stays under the provider's free monthly allowance for the dearest kind of request this
+    module can make, and no request asks for a feature from the provider's highest price tier."""
+    assert {k: v[0] for k, v in routing.LIVE_LIMITS.items()} == {
+        "MMAI_ROUTING_LIVE_MAX_REQUESTS": 200, "MMAI_ROUTING_LIVE_DAILY_REQUESTS": 1000, "MMAI_ROUTING_LIVE_MONTHLY_REQUESTS": 4000}
+    assert routing.live_limit("MMAI_ROUTING_LIVE_MONTHLY_REQUESTS") < 5000
+    mask = routing.FIELD_MASK.lower()
+    assert not any(word in mask for word in ("polyline", "toll", "traveladvisory", "speedreading"))
+    when = routing.departure_at(datetime(2026, 11, 10, 2, 0, tzinfo=timezone.utc))
+    for mode in ("Walk", "Bike or scooter", "Tram", "Train", "Bus", "Car"):
+        body = routing.request_body("1 Test Street, Melbourne", "2 Test Street, Melbourne", mode, when)
+        assert body["travelMode"] in ("WALK", "BICYCLE", "TRANSIT", "DRIVE"), mode          # never the two-wheeler mode
+        assert set(body) <= {"origin", "destination", "travelMode", "computeAlternativeRoutes", "transitPreferences",
+                             "departureTime", "routingPreference", "languageCode", "units", "regionCode"}, (mode, sorted(body))
+        assert ("routingPreference" in body) == (body["travelMode"] == "DRIVE"), mode       # traffic-aware routing for car only
+
+
+def test_the_request_count_is_on_record_before_the_first_request_leaves(live, monkeypatch):
+    c, eid = live
+    seen = {}
+
+    def stopped(self, *a, **k):
+        seen["rows"] = [json.loads(r["detail"]) for r in audits(c)]
+        raise RuntimeError("the process stopped while journeys were being requested")
+
+    monkeypatch.setattr(routing.LiveEstimates, "prefetch", stopped)
+    with pytest.raises(RuntimeError):
+        hs.live_travel_check(c.db, eid, CUR, "Anna", now=NOW, post=Provider())
+    assert [r["requests"] for r in seen["rows"]] == [16]                  # already recorded when the requests were about to start
+    assert [json.loads(r["detail"])["requests"] for r in audits(c)] == [16]   # and still held afterwards
 
 
 def test_an_unreadable_usage_record_tightens_the_allowance(live):
@@ -258,7 +293,7 @@ def test_a_slow_provider_is_cut_off_and_counted(live, monkeypatch):
         raise RuntimeError("late")
     monkeypatch.setattr(routing, "LIVE_DEADLINE_SEC", 0.2)
     req_est = routing.LiveEstimates.prefetch
-    monkeypatch.setattr(routing.LiveEstimates, "prefetch", lambda self, ids: req_est(self, ids, deadline_sec=0.2))
+    monkeypatch.setattr(routing.LiveEstimates, "prefetch", lambda self, ids=None: req_est(self, ids, deadline_sec=0.2))
     try:
         out = hs.live_travel_check(c.db, eid, CUR, "Anna", now=NOW, post=slow)
     finally:
@@ -301,9 +336,12 @@ def test_page_wording_and_attribution():
     js = open(os.path.join(root, "client", "staff.js"), encoding="utf-8").read()
     start = js.index("const travelView = r =>")
     block = js[start:js.index("const scenario = (key, sc) =>", start)]
-    attr = '<span class="gmaps-attr" translate="no">Google Maps</span>'
-    assert f"const GMAPS_ATTR = '{attr}';" in js                           # the provider's name, untranslated and unaltered
-    assert "Journey estimates: ${GMAPS_ATTR}." in block                    # at the head of the live options
+    attr = '<img class="gmaps-attr" src="/img/google_maps_logo.svg" alt="Google Maps" translate="no" width="98" height="18">'
+    assert f"const GMAPS_ATTR = '{attr}';" in js                           # the provider's logo, labelled with its untranslated name
+    assert '<p class="small">${GMAPS_ATTR}<br>Journey estimates.' in block  # at the head of the live options
+    import hashlib
+    logo = open(os.path.join(root, "client", "img", "google_maps_logo.svg"), "rb").read()   # the provider's own file, byte for byte
+    assert hashlib.sha256(logo).hexdigest() == "62c52df68d8f450c860d5d65068fc96d63c2dfaec849b91ac64b3256a898936e"
     figures = js[js.index("const journeys = x =>"):js.index("const candRows =")]
     assert "${shown ? '<br>' + GMAPS_ATTR : ''}" in figures                # and beside each apartment's journey figures
     assert "person.fastest_minutes != null" in figures.split("const shown =")[1] and "f.majority" in figures.split("const shown =")[1]
@@ -311,7 +349,12 @@ def test_page_wording_and_attribution():
     assert not re.search(r"\b(?:T|H|GP|I)\d+(?:\([a-z]\))?", block)       # plain staff language, no register codes
     css = open(os.path.join(root, "client", "styles.css"), encoding="utf-8").read()
     rule = css[css.index(".gmaps-attr {"):].split("}")[0]
-    assert "font-size: 14px" in rule and "color: #1F1F1F" in rule and "Roboto" in rule
+    assert "font-size: 14px" in rule and "color: #1F1F1F" in rule and "Roboto" in rule and "font-weight: 400" in rule
+    assert "height: 18px" in rule and "margin: 10px 10px 5px" in rule       # logo size and the clear space around it
+    # journey times are dropped from the page's memory after 30 minutes whether or not the page is opened again
+    assert "hbTravelShown.forEach(kept => { if (kept.reply && Date.now() - kept.at > HB_TRAVEL_KEEP_MS) kept.reply = null; });" in js
+    assert "setTimeout(() => {\n          if (kept.at !== shownAt) return;\n          kept.reply = null;" in js
+    assert "recorded with the saved details for that apartment, where travel time still reads as needing confirmation" in js
     assert "localStorage" not in js[js.index("const hbTravelShown"):js.index("const hbTravelShown") + 400]
     for text in (hs.TRAVEL_NOT_SAVED, routing.LIVE_BASIS, routing.LIVE_OFF):
         assert not re.search(r"\b(?:T|H|GP|I)\d+(?:\([a-z]\))?", text)

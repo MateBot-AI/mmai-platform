@@ -65,20 +65,39 @@ stored options. It is off by default and is not approved for use.
   review packet and the decline records are unchanged and keep reading "Travel time
   needs confirmation". The only record is one audit row per check holding this
   application's own request counts.
-- The page shows the provider's name, "Google Maps", untranslated, at the head of the
-  live options and beside each apartment's journey figures, with the label "Estimated
-  weekday departure at 08:00 Melbourne; not a guaranteed journey time". No map is shown.
+- The page shows the provider's own Google Maps logo (the unaltered dark-grey file from
+  its [attribution assets](https://developers.google.com/maps/documentation/routes/policies),
+  18px high, labelled "Google Maps") at the head of the live options and beside each
+  apartment's journey figures, with the label "Estimated weekday departure at 08:00
+  Melbourne; not a guaranteed journey time". No map is shown.
 - Request limits (each has a safe default and falls back to it if unreadable):
   `MMAI_ROUTING_LIVE_MAX_REQUESTS` per check (200), `MMAI_ROUTING_LIVE_DAILY_REQUESTS`
-  per UTC day (2000), `MMAI_ROUTING_LIVE_MONTHLY_REQUESTS` per UTC month (10000). When
+  per UTC day (1000), `MMAI_ROUTING_LIVE_MONTHLY_REQUESTS` per UTC month (4000). When
   a limit is reached no request is made and travel reads as needing confirmation.
-  The limits are enforced by this application from its audit records; the provider
-  account has a budget alert only, so also set a daily quota for the Routes API in the
-  provider console as a second stop.
-- `MMAI_ROUTING_LIVE_AUTO=0` keeps the button but stops the check running by itself
-  when the options are opened.
-- Car journeys use traffic-aware routing, which the provider bills at a higher rate
-  than the other modes ([pricing](https://developers.google.com/maps/billing-and-pricing/pricing)).
+  The count for a check is recorded before its first request is sent. The limits are
+  enforced by this application from its audit records; the provider account has a
+  budget alert only, so also set a daily quota for the Routes API in the provider
+  console as a second stop.
+- The check runs by itself when the options are opened, once per list per page; a
+  page reload runs it again. `MMAI_ROUTING_LIVE_AUTO=0` keeps the button but stops the
+  check running by itself.
+- Cost basis, from the provider's published
+  [price tiers](https://developers.google.com/maps/billing-and-pricing/sku-details/routes)
+  and [price list](https://developers.google.com/maps/billing-and-pricing/pricing)
+  (read 16 November 2026): each successful request is billed under one tier. Walking,
+  cycling and public-transport requests as sent here use no listed higher-tier feature
+  (lowest tier, 10,000 free requests a month). Car requests set traffic-aware routing
+  (middle tier, 5,000 free a month). Nothing sent here is a listed highest-tier
+  feature. The monthly default of 4,000 is below the middle tier's free allowance, so
+  at the published prices the default should cost nothing in any mix of modes, provided
+  nothing else on the same billing account uses these tiers. This reading has not been
+  confirmed against a billing report; check the first month's report before raising
+  the limit.
+- A decline recorded for an apartment that was offered from the live view keeps the
+  saved details for that apartment (travel time needing confirmation), never the live
+  journey times.
+- Journey times held in the open page are dropped after 30 minutes, whether or not
+  the page is opened again.
 - This switch is independent of `MMAI_ROUTING` and the rights file above, which stay
   off: they govern stored journey evidence and its use by the AI review, and no
   clearance for that exists.

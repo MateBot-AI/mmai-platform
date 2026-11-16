@@ -59,15 +59,24 @@ Set `MMAI_PUBLIC_BASE_URL` to the actual approved HTTPS origin. `app.matebot.com
 
 Set `MMAI_PILOT_GATE=1` before the service is given any public address. While it is set:
 
-- Every page, file and API call needs an allowed signed-in staff user. Without one, only these answer: the sign-in page `/pilot/` with its two files, the sign-in call `POST /api/auth/login`, the session check `GET /api/auth/session`, and `GET /api/health`, which replies only `{"ok": true}`.
+- Every page, file and API call needs an allowed signed-in staff user. Without one, only these answer: the sign-in page `/pilot/` with its two files, the sign-in call `POST /api/auth/login`, the session check `GET /api/auth/session`, `GET /api/health`, which replies only `{"ok": true}`, and the two public notices `GET /terms` and `GET /privacy` (see below).
 - Allowed users are the manager account by default. To allow named others, set `MMAI_PILOT_USERS` to a comma-separated list of usernames; that list then replaces the default, so include the manager if he should keep access. Other staff are refused at sign-in and their earlier sessions do not pass.
-- To confirm the gate from the runtime log before any public address is opened, set `MMAI_PILOT_SELFCHECK=1` and deploy. Once the server is listening, the container asks its own address for a fixed list of pages and API addresses without any sign-in and prints one `pilot self-check:` line for each, then a single `pilot self-check: PASS 16/16 ...` or `FAIL` line. Open the public address only after a `PASS` line. Nothing is written to the database and no secret is printed. Remove the setting afterwards if the lines are not wanted on every start.
+- To confirm the gate from the runtime log before any public address is opened, set `MMAI_PILOT_SELFCHECK=1` and deploy. Once the server is listening, the container asks its own address for a fixed list of pages and API addresses without any sign-in and prints one `pilot self-check:` line for each, then a single `pilot self-check: PASS 19/19 ...` or `FAIL` line. Open the public address only after a `PASS` line. Nothing is written to the database and no secret is printed. Remove the setting afterwards if the lines are not wanted on every start.
 - Refused requests are decided before any handler, scheduler check or sweep runs, and write nothing. The preview-only visitor header is ignored.
 - Every new enquiry, HomeBot enquiry and saved form is stored as TEST, whatever the page sent.
 - Every reply carries `Cache-Control: private, no-store` and `Strict-Transport-Security`, so the host's edge cache holds nothing.
 - Any value other than unset, empty, `0`, `off`, `false` or `no` turns the gate on, so a mistyped value closes the site rather than opening it.
 
 Order of work on the host: (1) add `MMAI_PILOT_GATE=1` and `MMAI_PUBLIC_BASE_URL`, deploy, and confirm from the container console that `/` and `/api/apartments` are refused without sign-in and `/api/health` returns only `{"ok":true}`; (2) only then add the public HTTP route (`http_port: 8080` and an ingress rule for `/`) so the domain certificate can be issued; (3) check the public address the same way before anyone signs in. Removing the variable restores ordinary behaviour and is a release decision for Bill, not a configuration tidy-up.
+
+## Public notices (Terms of Use and Privacy Policy)
+
+- `/terms` and `/privacy` are two fixed pages in `mmai-app/server/legal/`. They answer `GET` and `HEAD` without sign-in whether the pilot gate is on or off, on every hostname the service answers on. Nothing else opens with them: `/terms/`, `/terms.html` and anything under either path stay behind the gate.
+- They are linked from the sign-in page, under the MateBot and HomeBot forms and under the staff workspace. The links are site-relative, so they work only where this service is the site.
+- The wording is the text Bill approved on 16 November 2026. Change it only on a new approval, and change the "Last updated" line to the Melbourne date on which the change is actually deployed.
+- The pages hold no script, form, image or outside file. Each carries `noindex, nofollow` for the pilot; they are still readable by anyone with the address. Removing that line is a publication decision, not a tidy-up.
+- The Terms carry the Google Maps notice and its two links. Keep them reachable for as long as journey estimates from Google may be shown; the notice describes that use even while routing is switched off, when nothing is sent to Google.
+- The self-check asks for both pages and for `/terms/`, and expects the two pages to answer and the third to be sent to sign-in.
 
 Known limit while testing: repeated wrong passwords for a username pause sign-in for that username for 15 minutes, which an outsider who knows the username can trigger; this is a nuisance, not an entry.
 

@@ -197,7 +197,8 @@ def _pilot_session(req: Request) -> Optional[dict]:
 
 def _pilot_gate(request: Request) -> Optional[Response]:
     """Controlled pilot gate. Returns None to let the request through, or the refusal to send instead. Open without a session:
-    only the exact paths in security.pilot_open_path (sign-in page and its two files, the sign-in call, session check, health)."""
+    only the exact paths in security.pilot_open_path (sign-in page and its two files, the two public notices, the sign-in call,
+    session check, health)."""
     path, method = request.scope.get("path") or "", request.method.upper()   # the exact path the router will match
     try:
         s = _pilot_session(request)
@@ -2891,6 +2892,21 @@ class _HomeBotStatic(StaticFiles):
         html = re.sub(r'(<meta name="homebot-review-build" content=")[^"]*(")',
                       lambda m: m[1] + review + m[2], html)
         return Response(html, media_type="text/html", headers={"Cache-Control": "no-store"})
+
+
+LEGAL_DIR = os.path.join(HERE, "legal")
+
+
+@app.api_route("/terms", methods=["GET", "HEAD"], include_in_schema=False)
+def terms_of_use_page():
+    """Public notice: Terms of Use. A fixed page, readable without sign-in whether the pilot gate is on or off."""
+    return FileResponse(os.path.join(LEGAL_DIR, "terms.html"), media_type="text/html")
+
+
+@app.api_route("/privacy", methods=["GET", "HEAD"], include_in_schema=False)
+def privacy_policy_page():
+    """Public notice: Privacy Policy. A fixed page, readable without sign-in whether the pilot gate is on or off."""
+    return FileResponse(os.path.join(LEGAL_DIR, "privacy.html"), media_type="text/html")
 
 
 PILOT_DIR = os.path.join(HERE, "pilot")

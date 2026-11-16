@@ -37,3 +37,6 @@ button.quiet:hover { background: #f6f1ea; }
   border: 1px solid #e3d9cc; border-radius: 10px; background: #fbf8f4;
 }
 .links a:hover { border-color: #2b1d2e; }
+.legal { margin: 20px 0 0; padding-top: 14px; border-top: 1px solid #e3d9cc; font-size: 13px; text-align: center; color: #6b5a6e; }
+.legal a { display: inline-block; padding: 6px 4px; color: #6b5a6e; }
+.legal a:hover { color: #2b1d2e; }
