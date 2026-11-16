@@ -139,7 +139,10 @@ Tools key.
   is never longer than three and is not padded; alternatives (different area, one
   bathroom) appear only when fewer than three full matches remain, inside the same
   maximum, and are travel-checked the same way. There is no fourth option. Apartments
-  that were not shortlisted are not measured and say so.
+  that were not shortlisted are not measured and say so. Apartments that could not be
+  checked automatically are shown only into whatever room is left under the same
+  maximum of three rows; any others are in the list of other apartments with the
+  reason.
 - All stages of one check share one 45-second time budget. A stage that would start
   after it is spent is not sent; those journeys read as needing confirmation.
 - The saved options use the same order and the same maximum of three. Because nothing
@@ -172,7 +175,10 @@ made. It is off by default.
   advice to staff; and one order of preference across the shortlist. These choices are
   the model's. Code does not make them. It refuses a reply whose choice is untrue for
   that apartment, leaves out something that must be flagged (an unknown journey, a
-  long journey, an alternative), contradicts the group result, or contradicts itself.
+  person over their own limit, a majority average over the stated time, a long
+  journey, an alternative), contradicts the group result, or contradicts itself. The
+  advice line follows from what is listed and from the open points; an apartment with
+  anyone over their own limit can never read "Suitable to offer".
   The model cannot pass an apartment that failed, rate an unknown journey, or advise
   offering an apartment that still has open points.
 - No sentence written by the model is shown. Each sentence on the page is this
@@ -183,10 +189,16 @@ made. It is off by default.
   page says so.
 - Held unless assessed. The travel-checked shortlist is shown as "AI-assessed" only
   when the saved AI review of the options is complete and this assessment was
-  produced, accepted and covers every apartment shown, a replacement included. In
-  every other case (switch off, model unavailable, assessment withheld, nothing
-  measured, saved review not complete) the page shows "Held, not a ready shortlist"
-  with the reason. The journey figures stay visible. There is no rules-only result.
+  produced, accepted and covers every apartment shown. In every other case (switch
+  off, model unavailable, assessment withheld, nothing measured, saved review not
+  complete) the page shows "Held, not a ready shortlist" with the reason. The journey
+  figures stay visible. There is no rules-only result.
+- A replacement is always held. An apartment that took the place of one that failed
+  the travel check was not among the saved options, so the saved AI review never
+  covered it, and this check's travel assessment is not a full review of it. A
+  shortlist holding a replacement therefore reads "Held" however complete the saved
+  review is. A full AI review of a replacement (its other details together with the
+  journeys of that check) is not built in this package.
 - A person whose journey is not fully measured is "not known": never counted as within
   a limit and never as over it. If no journey in the check is fully measured the model
   is not asked.

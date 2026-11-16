@@ -863,6 +863,8 @@ class Shortlist:
         return {"scenario": self.scenario, "counts": n, "listed": len(self.listed), "alternatives": len(self.alternatives),
                 "fourth_option": self.fourth_option.apartment_id if self.fourth_option else None, "fourth_option_reason": self.fourth_option_reason,
                 "unresolved": [c.apartment_id for c in self.unresolved], "notes_review": self.notes_review, "has_shortlist": self.has_shortlist,
+                # counted in `counts` under their class on the other points, but their journeys were never measured
+                "travel_not_checked": sum(1 for c in self.candidates if TRAVEL_NOT_CHECKED in c.flags),
                 "nothing_suitable_yet": not any(c.klass == SUITABLE for c in self.listed)}
 
     def as_dict(self) -> dict:

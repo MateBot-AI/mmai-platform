@@ -640,7 +640,7 @@ def test_travel_is_measured_last_and_only_for_the_three_shortlisted(on, monkeypa
     (a,) = audits(on)
     assert json.loads(a["detail"]) == {"scenario": CUR, "shortlist_id": out["shortlist_id"], "requests": 24, "not_requested": 0}
     left = {x["apartment_id"]: x for x in out["why_not"]}
-    assert set(left) == {4, 5}
+    assert set(left) == {4, 5} and out["summary"]["travel_not_checked"] == 2 and out["unresolved_not_shown"] == 0
     for x in left.values():   # not shortlisted, so not measured: says so, and is never shown as meeting the travel limit
         assert x["class"] == hm.NEEDS_CONFIRMATION and hm.PLAIN[hm.TRAVEL_NOT_CHECKED] in x["notes"]
     # no AI assessment was made (its switch is off), so this is held: journey figures alone are not a ready shortlist
@@ -669,6 +669,20 @@ def test_a_shortlisted_apartment_that_fails_travel_is_replaced_and_the_replaceme
     p = ByBuilding(far=["10 Stage Street", "20 Stage Street", "30 Stage Street", "40 Stage Street"])
     out = hs.live_travel_check(on.db, eid, CUR, "Anna", now=NOW, post=p)
     assert [x["apartment_id"] for x in out["listed"]] == [5] and out["check"]["stages"] == 2 and len(p.bodies) == 40
+
+
+def test_never_more_than_three_rows_are_shown_whichever_heading_they_sit_under():
+    """Options first, then permitted alternatives, then apartments that could not be checked automatically, into the room
+    left. The rest stay in the list of other apartments; nothing leaves the saved result."""
+    row = lambda i: {"apartment_id": i}   # noqa: E731
+    ids = lambda parts: [[x["apartment_id"] for x in part] for part in parts]   # noqa: E731
+    res = {"listed": [row(1), row(2), row(3)], "alternatives": [row(4)], "unresolved": [row(5), row(6)]}
+    assert ids(hs._three_rows(res)) == [[1, 2, 3], [], []]
+    assert ids(hs._three_rows({"listed": [row(1)], "alternatives": [row(4)], "unresolved": [row(5), row(6)]})) == [[1], [4], [5]]
+    assert ids(hs._three_rows({"listed": [], "alternatives": [], "unresolved": [row(5), row(6), row(7), row(8)]})) == [[], [], [5, 6, 7]]
+    assert ids(hs._three_rows({"listed": [row(1), row(2), row(3), row(9)], "alternatives": [], "unresolved": []})) == [[1, 2, 3], [], []]
+    assert ids(hs._three_rows({})) == [[], [], []]
+    assert len(res["unresolved"]) == 2 and len(res["alternatives"]) == 1          # the result itself is not changed
 
 
 def test_the_time_budget_covers_every_stage_of_one_check(on, monkeypatch):

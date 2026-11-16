@@ -306,8 +306,11 @@ def test_a_faithful_reply_is_accepted_and_the_sentence_is_written_by_code():
     assert o == {"apartment_id": 7, "within_own_limit": 5, "over_own_limit": 1, "not_known": 0, "no_destination": 0,
                  "stated_limit_minutes": 30, "doubled_limit_minutes": 60, "group_result": tr.WITHIN,
                  "group_plain": "within the doubled limit", "note": "Over their own limit: person 6.",
-                 "travel_rating": "good", "travel_rating_plain": "good", "strengths": [], "weaknesses": [], "strength_codes": [],
-                 "weakness_codes": [], "advice": "offer", "advice_plain": "Suitable to offer.", "preference": 1, "of": 1}
+                 "travel_rating": "good", "travel_rating_plain": "good", "strengths": [], "strength_codes": [],
+                 # one person is over their own limit: that must be listed, so the advice can never read "Suitable to offer"
+                 "weaknesses": ["At least one person's journey is over their own stated travel time."],
+                 "weakness_codes": ["some_over_own_limit"], "advice": "offer_with_caveats",
+                 "advice_plain": "Can be offered, with the weaknesses explained to the customer.", "preference": 1, "of": 1}
     # five within their own limit and one over it, while the group result is a separate question
     extra = [{"index": 7, "status": tv.PARTIAL, "fastest_minutes": None, "unknown_modes": ["Tram"]},
              {"index": 8, "status": tv.UNMEASURED_PERSON, "fastest_minutes": None}]
@@ -413,19 +416,21 @@ def _judged(pk, judgements, order=None):
 def test_the_judgement_is_the_models_own_and_it_is_what_the_page_shows():
     """Same journeys, same apartments: two different assessments are both accepted, and each is shown as given. The code
     does not choose the rating, the points, the advice or the order; it only refuses what is untrue."""
-    pk = tr.packet([option(7, rent="900.00"), option(9, rent="950.00", distance=3)])
+    pk = tr.packet([option(7, rent="900.00", minutes=("12", "22.3", "25")), option(9, rent="950.00", distance=3)])   # in 9, one person is over
     one = tr.parse_reply(_judged(pk, [
-        {"travel_rating": "good", "strengths": ["lowest_rent_of_these", "most_within_own_limit"], "weaknesses": [], "advice": "offer"},
+        {"travel_rating": "good", "strengths": ["lowest_rent_of_these", "everyone_within_own_limit"], "weaknesses": [], "advice": "offer"},
         {"travel_rating": "acceptable", "strengths": [], "weaknesses": ["dates_differ", "some_over_own_limit"], "advice": "offer_with_caveats"}]), pk)
     two = tr.parse_reply(_judged(pk, [
-        {"travel_rating": "poor", "strengths": [], "weaknesses": ["some_over_own_limit"], "advice": "offer_with_caveats"},
-        {"travel_rating": "good", "strengths": ["majority_average_within_stated_limit"], "weaknesses": [], "advice": "offer"}], order=[9, 7]), pk)
+        {"travel_rating": "acceptable", "strengths": [], "weaknesses": [], "advice": "offer"},
+        {"travel_rating": "poor", "strengths": ["most_within_own_limit", "majority_average_within_stated_limit"], "weaknesses": ["some_over_own_limit"],
+         "advice": "offer_with_caveats"}], order=[9, 7]), pk)
     assert [(o["travel_rating"], o["advice"], o["preference"]) for o in one] == [("good", "offer", 1), ("acceptable", "offer_with_caveats", 2)]
-    assert [(o["travel_rating"], o["advice"], o["preference"]) for o in two] == [("poor", "offer_with_caveats", 2), ("good", "offer", 1)]
-    assert one[0]["strengths"] == ["The lowest whole-apartment rent of these options.", "Most people's journeys are within their own stated travel time."]
+    assert [(o["travel_rating"], o["advice"], o["preference"]) for o in two] == [("acceptable", "offer", 2), ("poor", "offer_with_caveats", 1)]
+    assert one[0]["strengths"] == ["The lowest whole-apartment rent of these options.", "Everyone's journey is within their own stated travel time."]
     assert one[1]["weaknesses"] == ["The dates differ from the ones the party asked for.", "At least one person's journey is over their own stated travel time."]
     assert one[1]["advice_plain"] == "Can be offered, with the weaknesses explained to the customer." and one[0]["of"] == 2
-    assert two[1]["strengths"] == ["The closest majority's average journey is within the stated travel time itself, not only double it."]
+    assert two[1]["strengths"] == ["Most people's journeys are within their own stated travel time.",
+                                   "The closest majority's average journey is within the stated travel time itself, not only double it."]
     # the figures the two replies report are identical and exact, whatever the judgement
     for a, b in zip(one, two):
         assert all(a[k] == b[k] for k in ("within_own_limit", "over_own_limit", "not_known", "group_result", "note"))
@@ -460,7 +465,8 @@ LONG = dict(minutes=("12", "22.3", "25", "28", "30", "75"))
     (option(status=tv.NEEDS_CONFIRMATION, extra=[{"index": 7, "status": tv.UNMEASURED_PERSON, "fastest_minutes": None}]), {"weaknesses": []}),
     (option(klass="alternative_area"), {"weaknesses": [], "advice": "discuss_as_alternative"}),
     # advice that contradicts the option or the model's own weaknesses
-    (option(), {"advice": "offer_with_caveats"}), (option(), {"advice": "confirm_first"}), (option(), {"advice": "discuss_as_alternative"}),
+    (option(), {"weaknesses": [], "advice": "offer"}),            # one person is over their own limit: that may not be left out
+    (option(minutes=("10", "12")), {"advice": "offer_with_caveats"}), (option(), {"advice": "confirm_first"}), (option(), {"advice": "discuss_as_alternative"}),
     (option(), {"weaknesses": ["some_over_own_limit"], "advice": "offer"}), (option(), {"advice": "Offer it."}),
     (option(klass="alternative_area"), {"advice": "offer_with_caveats"}), (option(klass="alternative_bathroom"), {"advice": "offer"}),
     (option(reasons=["BEDDING_NEEDS_CONFIRMATION"]), {"advice": "offer"}), (option(reasons=["BEDDING_NEEDS_CONFIRMATION"]), {"advice": "offer_with_caveats"}),
@@ -478,20 +484,35 @@ def test_what_must_be_flagged_and_what_may_be_chosen():
     assert hm.ALTERNATIVE_AREA == "alternative_area" and hm.ALTERNATIVE_BATHROOM == "alternative_bathroom" and hm.LONG_JOURNEY == "LONG_JOURNEY"
     unknown = [{"index": 7, "status": tv.UNMEASURED_PERSON, "fastest_minutes": None}]
     f = tr.packet([option()])["options"][0]
-    assert tr._ratings_allowed(f) == ("good", "acceptable", "poor") and tr._must_flag(f) == [] and tr._advice_allowed(f, []) == ("offer",)
-    assert tr._advice_allowed(f, ["some_over_own_limit"]) == ("offer_with_caveats",)
+    # a person over their own limit must always be listed, so that option can never read "Suitable to offer"
+    assert tr._ratings_allowed(f) == ("good", "acceptable", "poor") and tr._must_flag(f) == ["some_over_own_limit"]
+    assert tr._advice_allowed(f, tr._must_flag(f)) == ("offer_with_caveats",)
     f = tr.packet([option(minutes=("10", "12"))])["options"][0]
-    assert tr._ratings_allowed(f) == ("good", "acceptable")
+    assert tr._ratings_allowed(f) == ("good", "acceptable") and tr._must_flag(f) == [] and tr._advice_allowed(f, []) == ("offer",)
+    assert tr.POINTS["everyone_within_own_limit"][2](f, None) and not tr.POINTS["most_within_own_limit"][2](f, None)
+    # ... and so must a closest-majority average that is over the stated time, though within double it
+    over_stated = option(minutes=("10", "12"))
+    over_stated["travel"]["facts"]["meets_stated_limit"] = False
+    f = tr.packet([over_stated])["options"][0]
+    assert tr._must_flag(f) == ["majority_average_over_stated_limit"] and tr._ratings_allowed(f) == ("acceptable", "poor")
+    # "everyone" and "most people" count a person with no place of work or study yet, and a journey that is not known
+    f = tr.packet([option(minutes=("10", "12"), extra=[{"index": 3, "status": tv.NO_DEST_PERSON}])])["options"][0]
+    assert f["counts"] == {"within_own_limit": 2, "over_own_limit": 0, "not_known": 0, "no_destination": 1}
+    assert not tr.POINTS["everyone_within_own_limit"][2](f, None) and tr.POINTS["most_within_own_limit"][2](f, None)
+    f = tr.packet([option(minutes=("10",), extra=[{"index": 2, "status": tv.NO_DEST_PERSON}, {"index": 3, "status": tv.NO_DEST_PERSON}])])["options"][0]
+    assert not tr.POINTS["everyone_within_own_limit"][2](f, None) and not tr.POINTS["most_within_own_limit"][2](f, None)
+    # every weakness that must be listed fits in the list at once
+    assert tr.MAX_POINTS >= 5
     f = tr.packet([option(flags=["LONG_JOURNEY"], **LONG)])["options"][0]
-    assert tr._ratings_allowed(f) == ("acceptable", "poor") and tr._must_flag(f) == ["long_journey_for_some"]
+    assert tr._ratings_allowed(f) == ("acceptable", "poor") and tr._must_flag(f) == ["some_over_own_limit", "long_journey_for_some"]
     f = tr.packet([option(status=tv.NEEDS_CONFIRMATION, extra=unknown)])["options"][0]
-    assert tr._ratings_allowed(f) == ("not_known",) and tr._must_flag(f) == ["journeys_not_known"] and tr._advice_allowed(f, []) == ("confirm_first",)
+    assert tr._ratings_allowed(f) == ("not_known",) and tr._must_flag(f) == ["journeys_not_known", "some_over_own_limit"] and tr._advice_allowed(f, []) == ("confirm_first",)
     f = tr.packet([option(status=tv.NO_DESTINATIONS, minutes=())])["options"][0]
     assert tr._ratings_allowed(f) == ("not_applicable",)
     f = tr.packet([option(status=tv.EXCEEDS_CEILING)])["options"][0]
     assert tr._ratings_allowed(f) == ("fails",) and tr._advice_allowed(f, []) == ("confirm_first",)       # never "offer"
     f = tr.packet([option(klass=hm.ALTERNATIVE_BATHROOM)])["options"][0]
-    assert tr._must_flag(f) == ["alternative_not_full_match"] and tr._advice_allowed(f, []) == ("discuss_as_alternative",)
+    assert tr._must_flag(f) == ["some_over_own_limit", "alternative_not_full_match"] and tr._advice_allowed(f, []) == ("discuss_as_alternative",)
     assert f["apartment"]["kind"] == "alternative_one_bathroom"
     # travel's own needs-confirmation reason is not repeated as an "other point"; anything else open is
     f = tr.packet([option(reasons=[hm.TRAVEL_NEEDS_CONFIRMATION])])["options"][0]
@@ -518,17 +539,23 @@ def test_only_a_valid_ai_assessment_of_every_apartment_makes_the_travel_checked_
     """T6: no rules-only way through. Journey figures without an accepted AI assessment are held, with the reason."""
     shown = [{"apartment_id": 7}, {"apartment_id": 9}]
     ready = {"state": "ready", "options": [{"apartment_id": 9}, {"apartment_id": 7}]}
-    assert tr.gate(ready, "reviewed", shown) == {"state": "assessed", "held": False, "plain": tr.ASSESSED_TEXT}
-    held = lambda reply, review, options=shown: tr.gate(reply, review, options)   # noqa: E731
+    assert tr.gate(ready, "reviewed", shown, {7, 9, 11}) == {"state": "assessed", "held": False, "plain": tr.ASSESSED_TEXT}
+    held = lambda reply, review, options=shown, reviewed=(7, 9): tr.gate(reply, review, options, reviewed)   # noqa: E731
     for reply, review, options, why in (
             ({"state": "off", "options": []}, "reviewed", shown, "off"), ({"state": "nothing", "options": []}, "reviewed", shown, "nothing"),
             ({"state": "unavailable", "options": []}, "reviewed", shown, "unavailable"), ({"state": "withheld", "options": []}, "reviewed", shown, "withheld"),
             ({"state": "something new", "options": []}, "reviewed", shown, "unavailable"), ({}, "reviewed", shown, "unavailable"),
-            ({"state": "ready", "options": [{"apartment_id": 7}]}, "reviewed", shown, "incomplete"),      # a replacement not covered
+            ({"state": "ready", "options": [{"apartment_id": 7}]}, "reviewed", shown, "incomplete"),      # one apartment not assessed
             (ready, "queued", shown, "review"), (ready, "held", shown, "review"), (ready, "unreviewed", shown, "review"), (ready, None, shown, "review"),
             (ready, "reviewed", [], "empty")):
         out = held(reply, review, options)
         assert out["state"] == "held" and out["held"] is True and out["reason"] == why and out["plain"] == tr.HELD_PREFIX + tr.HELD_REASON[why]
+    # a replacement that stepped in after the travel check was never in the saved AI review: its travel assessment is not
+    # a review of it, so the shortlist is held even though the saved review is complete and the assessment covers it
+    for reviewed in ((7,), (), None, (9, 11)):
+        out = held(ready, "reviewed", shown, reviewed)
+        assert out == {"state": "held", "held": True, "reason": "replacement", "plain": tr.HELD_PREFIX + tr.HELD_REASON["replacement"]}
+    assert "not part of the saved AI review" in tr.HELD_REASON["replacement"]
     for text in (tr.ASSESSED_TEXT, tr.HELD_PREFIX, *tr.HELD_REASON.values(), *tr.ADVICE_PLAIN.values(), *tr.RATING_PLAIN.values()):
         assert not re.search(r"\b(?:T|H|GP|I)\d+(?:\([a-z]\))?", text)
 
@@ -543,6 +570,26 @@ def test_a_live_check_with_the_assessment_is_still_held_until_the_saved_ai_revie
     assert sorted(o["preference"] for o in out["ai_reply"]["options"]) == list(range(1, len(out["ai_reply"]["options"]) + 1))
     assert hs._review_state(c.db, current(c, eid))["state"] != "reviewed"
     assert out["ai_gate"] == {"state": "held", "held": True, "reason": "review", "plain": tr.HELD_PREFIX + tr.HELD_REASON["review"]}
+
+
+def test_a_replacement_never_inherits_the_saved_ai_review(on, monkeypatch):
+    """The saved AI review covered the saved options. An apartment that steps in after the travel check was not among them:
+    the travel assessment of it is not a review of it, so that shortlist is held however complete the saved review is."""
+    from tests.test_live_travel import ByBuilding, _five_buildings
+    eid = _five_buildings(on, monkeypatch)
+    _ai_env(monkeypatch)
+    model = Model()
+    monkeypatch.setattr(ai, "_ask", model)
+    monkeypatch.setattr(hs, "_review_state", lambda c, sl: {"state": "reviewed"})      # the saved review is complete
+    saved = [x["apartment_id"] for x in json.loads(current(on, eid)["result_json"])["listed"]]
+    assert saved == [1, 2, 3]
+    out = hs.live_travel_check(on.db, eid, CUR, "Anna", now=NOW, post=Provider())      # nothing fails: the same three
+    assert [x["apartment_id"] for x in out["listed"]] == saved and out["ai_reply"]["state"] == "ready"
+    assert out["ai_gate"] == {"state": "assessed", "held": False, "plain": tr.ASSESSED_TEXT}
+    out = hs.live_travel_check(on.db, eid, CUR, "Anna", now=NOW, post=ByBuilding(far=["20 Stage Street"]))
+    assert [x["apartment_id"] for x in out["listed"]] == [1, 3, 4]                     # 4 was never in the saved review
+    assert out["ai_reply"]["state"] == "ready" and sorted(o["apartment_id"] for o in out["ai_reply"]["options"]) == [1, 3, 4]
+    assert out["ai_gate"] == {"state": "held", "held": True, "reason": "replacement", "plain": tr.HELD_PREFIX + tr.HELD_REASON["replacement"]}
 
 
 # ------------------------------------------------------------------------------------------------------------- the page
@@ -569,7 +616,8 @@ def test_page_shows_the_reply_with_its_sources_straight_after_it():
     view = js[js.index("const travelView = r =>"):js.index("const travelBlock =")]
     assert "ai.state === 'ready' ? ai.options || [] : []" in view and 'data-role="hb-travel-ai"' in view
     assert 'data-role="hb-travel-gate"' in view and "gate.held ? 'Held.' : 'AI-assessed.'" in view and "${esc(gate.plain)}" in view
-    assert "fourth" not in view.lower() and "Never more than three." in view
+    assert "fourth" not in js.lower() and "Never more than three apartments are shown here in all." in view
+    assert "unresolved_not_shown" in view and "travel_not_checked" in view
     assert "localStorage" not in block + view and "sessionStorage" not in block + view
     assert not re.search(r"\b(?:T|H|GP|I)\d+(?:\([a-z]\))?", block)
     rule = css[css.index(".gmaps-text {"):].split("}")[0]

@@ -515,13 +515,14 @@
         <p class="small">${GMAPS_ATTR}<br>Journey estimates. ${esc(k.basis || '')}. Checked ${fmtDT(k.checked_at)}.</p>
         ${gate.plain ? `<p class="${gate.held ? 'msg ' : ''}small" data-role="hb-travel-gate" data-state="${esc(gate.state || '')}"><b>${gate.held ? 'Held.' : 'AI-assessed.'}</b> ${esc(gate.plain)}</p>` : ''}
         ${ai.plain ? `<p class="small${ai.state === 'ready' ? '' : ' muted'}" data-role="hb-travel-ai" data-state="${esc(ai.state || '')}">${esc(ai.plain)}</p>` : ''}
-        <p class="small muted">The apartments are chosen on dates, layout, price and features first. Travel is checked last, for the shortlisted apartments only; one that fails is replaced by the next and the replacement is checked. Never more than three.</p>
-        <p class="small muted">${esc(r.plain)}${counts ? ` With these journey times: ${esc(counts)}.` : ''}</p>
+        <p class="small muted">The apartments are chosen on dates, layout, price and features first. Travel is checked last, for the shortlisted apartments only; one that fails is replaced by the next and the replacement is checked. Never more than three apartments are shown here in all.</p>
+        <p class="small muted">${esc(r.plain)}${counts ? ` All apartments, by result: ${esc(counts)}.` : ''}${r.summary && r.summary.travel_not_checked ? ` ${r.summary.travel_not_checked} of these were not shortlisted, so travel was not checked for them.` : ''}</p>
         ${missed ? `<p class="msg small">${missed} journey${missed === 1 ? '' : 's'} could not be checked this time; where a time is missing the option reads "Travel time needs confirmation".</p>` : ''}
         ${!k.requests ? '<p class="small muted">No journeys were needed: no one in the party has a place of work or study recorded yet.</p>' : ''}
         ${candRows(r.listed, 'Options to review (up to three)')}
         ${candRows(r.alternatives, 'Alternatives the party did not ask for (different area or one bathroom)')}
         ${candRows(r.unresolved, 'Could not be checked automatically — check by hand')}
+        ${r.unresolved_not_shown ? `<p class="small muted">${r.unresolved_not_shown} more could not be checked automatically; they are in the list of other apartments below.</p>` : ''}
         ${!(r.listed || []).length && !(r.alternatives || []).length && !(r.unresolved || []).length ? '<p class="small">With these journey times, no apartment is within the party\'s travel limit.</p>' : ''}
         ${r.why_not && r.why_not.length ? `<details class="small"><summary>Why the other ${r.why_not.length} apartment(s) are not listed with these journey times</summary><ul>${r.why_not.map(x => `<li>${esc(x.address)} (${esc(x.type_code)}): ${esc(x.class_plain)}${[...x.reasons, ...(x.notes || [])].length ? ' — ' + [...x.reasons, ...(x.notes || [])].map(esc).join('; ') : ''}</li>`).join('')}</ul></details>` : ''}</div>`;
     };
@@ -543,9 +544,9 @@
         ${travelBlock(key, cur)}
         ${cur ? `<p class="small muted">Prepared ${fmtDT(cur.created_at)} for business date ${cur.today}${cur.summary && cur.summary.counts ? ` · ${Object.entries(cur.summary.counts).map(([k, v]) => `${v} ${k.replace(/_/g, ' ')}`).join(', ')}` : ''}</p>
           ${candRows(cur.listed, 'Options to review (up to three)')}
-          ${cur.fourth_option ? candRows([cur.fourth_option], 'Possible fourth option (provisional — only if staff judge it comparably suitable)') : ''}
           ${candRows(cur.alternatives, 'Alternatives the party did not ask for (different area or one bathroom)')}
           ${candRows(cur.unresolved, 'Could not be checked automatically — check by hand')}
+          ${cur.unresolved_not_shown ? `<p class="small muted">${cur.unresolved_not_shown} more could not be checked automatically; they are in the list of other apartments below.</p>` : ''}
           ${cur.why_not && cur.why_not.length ? `<details class="small"><summary>Why the other ${cur.why_not.length} apartment(s) are not listed</summary><ul>${cur.why_not.map(x => `<li>${esc(x.address)} (${esc(x.type_code)}): ${esc(x.class_plain)}${x.reasons.length ? ' — ' + x.reasons.map(esc).join('; ') : ''}</li>`).join('')}</ul></details>` : ''}` : ''}
         ${cur && !cur.stale && declineOptions(cur, key) ? `<details class="small mt"><summary>Record that the applicant declined one of these options</summary>
           <p class="small muted">Recorded against this list exactly as shown here (${esc(sc.label.toLowerCase())}, prepared ${fmtDT(cur.created_at)}). If the list has been replaced since this page loaded, nothing is recorded and the page refreshes.${liveTravel.enabled ? ' Live journey times are never saved: a decline of an apartment from the live travel view is recorded with the saved details for that apartment, where travel time still reads as needing confirmation.' : ''}</p>
@@ -556,7 +557,7 @@
         <div class="actions"><button class="btn btn--ghost btn--sm" type="button" data-action="hb-rerun" data-scenario="${key}">Run again</button></div></div>`;
     };
     const declineOptions = (cur, key) => {
-      const all = [...cur.listed, ...(cur.fourth_option ? [cur.fourth_option] : []), ...cur.alternatives, ...cur.unresolved];
+      const all = [...cur.listed, ...cur.alternatives, ...cur.unresolved];
       const saved = new Set(all.map(x => x.apartment_id));
       // an apartment offered from the live travel view can be declined too; the decline is still recorded against the saved list
       const live = key && liveTravel.enabled ? travelKept(key, cur) : null;

@@ -58,9 +58,10 @@ NOTHING_TEXT = "No journey could be measured in this check, so there is nothing 
 UNAVAILABLE_TEXT = "The AI travel assessment could not be produced for this check. The journey figures are unaffected."
 WITHHELD_TEXT = ("The AI travel assessment was withheld because what it said did not match the journey figures. "
                  "The journey figures are unaffected.")
-READY_TEXT = ("The AI assessed these apartments using the Google Maps journey estimates in this check. The rating, strengths, "
-              "weaknesses, advice and order of preference are its own judgement; every figure it relied on was checked against "
-              "the journey figures. Shown on this page only; not saved.")
+READY_TEXT = ("The AI assessed these apartments using the Google Maps journey estimates in this check. The travel rating, the "
+              "strengths and weaknesses it picked out and the order of preference are its choices, limited to statements that "
+              "are true of the figures; some weaknesses must always be listed, and the advice line follows from what is listed "
+              "and from the open points. Shown on this page only; not saved.")
 
 # ----------------------------------------------------------------------------------------------------- the judgement
 GOOD, ACCEPTABLE, POOR, NOT_KNOWN, NOT_APPLICABLE, FAILS = "good", "acceptable", "poor", "not_known", "not_applicable", "fails"
@@ -71,7 +72,7 @@ OFFER, OFFER_CAVEATS, CONFIRM_FIRST, DISCUSS_ALT = "offer", "offer_with_caveats"
 ADVICE_PLAIN = {OFFER: "Suitable to offer.", OFFER_CAVEATS: "Can be offered, with the weaknesses explained to the customer.",
                 CONFIRM_FIRST: "Confirm the open points before offering; it is not yet a fully suitable option.",
                 DISCUSS_ALT: "An alternative the party did not ask for: discuss it, do not present it as a match."}
-MAX_POINTS = 4
+MAX_POINTS = 5
 
 
 def _apartment(f):
@@ -87,20 +88,30 @@ def _rent_is(f, pk, pick):
     return mine is not None and len(rents) > 1 and Decimal(mine) == pick(rents) and rents.count(Decimal(mine)) == 1
 
 
+def _others(f) -> int:
+    """People who are NOT within their own limit: over it, not known, or with no place of work or study recorded yet. A
+    statement about 'everyone' or 'most people' counts all of them."""
+    n = f["counts"]
+    return n["over_own_limit"] + n["not_known"] + n.get("no_destination", 0)
+
+
+def _average_over_stated(f, pk=None) -> bool:
+    return f["group"]["result"] == WITHIN and f["group"]["closest_majority_average_within_stated_limit"] is False
+
+
 # code -> (side, the sentence shown, when it is true). The model chooses among the true ones; it cannot word its own.
 POINTS = {
     "everyone_within_own_limit": ("strength", "Everyone's journey is within their own stated travel time.",
-                                  lambda f, pk: f["counts"]["within_own_limit"] > 0 and not f["counts"]["over_own_limit"] and not f["counts"]["not_known"]),
+                                  lambda f, pk: f["counts"]["within_own_limit"] > 0 and not _others(f)),
     "most_within_own_limit": ("strength", "Most people's journeys are within their own stated travel time.",
-                              lambda f, pk: f["counts"]["within_own_limit"] > f["counts"]["over_own_limit"] + f["counts"]["not_known"]
-                              and f["counts"]["over_own_limit"] + f["counts"]["not_known"] > 0),
+                              lambda f, pk: f["counts"]["within_own_limit"] > _others(f) > 0),
     "majority_average_within_stated_limit": ("strength", "The closest majority's average journey is within the stated travel time itself, not only double it.",
                                              lambda f, pk: f["group"]["result"] == WITHIN and f["group"]["closest_majority_average_within_stated_limit"] is True),
     "dates_as_requested": ("strength", "Available for the dates the party asked for.", lambda f, pk: _apartment(f).get("days_from_preferred_dates") == 0),
     "no_empty_days": ("strength", "Leaves no empty days after the stay.", lambda f, pk: _apartment(f).get("future_empty_days") == 0),
     "lowest_rent_of_these": ("strength", "The lowest whole-apartment rent of these options.", lambda f, pk: _rent_is(f, pk, min)),
     "majority_average_over_stated_limit": ("weakness", "The closest majority's average journey is over the stated travel time, though within double it.",
-                                           lambda f, pk: f["group"]["result"] == WITHIN and f["group"]["closest_majority_average_within_stated_limit"] is False),
+                                           _average_over_stated),
     "some_over_own_limit": ("weakness", "At least one person's journey is over their own stated travel time.", lambda f, pk: f["counts"]["over_own_limit"] > 0),
     "long_journey_for_some": ("weakness", "At least one person has a long journey, over double the stated travel time.", lambda f, pk: bool(f.get("long_journey"))),
     "journeys_not_known": ("weakness", "At least one journey is not known, so travel cannot be confirmed yet.", lambda f, pk: f["counts"]["not_known"] > 0),
@@ -116,6 +127,10 @@ def _must_flag(f) -> list:
     need = []
     if f["counts"]["not_known"]:
         need.append("journeys_not_known")
+    if f["counts"]["over_own_limit"]:
+        need.append("some_over_own_limit")           # so "Suitable to offer" can never sit beside a person over their limit
+    if _average_over_stated(f):
+        need.append("majority_average_over_stated_limit")
     if f.get("long_journey"):
         need.append("long_journey_for_some")
     if _apartment(f).get("kind", FULL) != FULL:
@@ -259,8 +274,9 @@ def build_prompt(pk: dict, compact: bool = False) -> str:
         + str(MAX_POINTS) + " in each list, using only these codes and only where true for the option. Strengths: "
         + "; ".join(f"{k} ({v[1]})" for k, v in POINTS.items() if v[0] == "strength") + ". Weaknesses: "
         + "; ".join(f"{k} ({v[1]})" for k, v in POINTS.items() if v[0] == "weakness") + ".",
-        "Always include journeys_not_known when a journey is not known, long_journey_for_some when long_journey is true, and "
-        "alternative_not_full_match when the apartment is an alternative.",
+        "Always include journeys_not_known when a journey is not known, some_over_own_limit when anyone is over their own "
+        "limit, majority_average_over_stated_limit when the closest majority's average is over the stated time, "
+        "long_journey_for_some when long_journey is true, and alternative_not_full_match when the apartment is an alternative.",
         "advice: discuss_as_alternative for an alternative; otherwise confirm_first when group_result is needs_confirmation or "
         "the apartment has open_points; otherwise offer when you list no weaknesses and offer_with_caveats when you list any.",
         "preferred_order: every apartment_id once, the one you judge most suitable for this party first. Full matches come "
@@ -404,13 +420,18 @@ HELD_REASON = {"off": "the AI travel assessment is switched off, so the journey 
                "withheld": "the AI travel assessment did not match the journey figures and was withheld.",
                "incomplete": "the AI travel assessment does not cover every apartment shown.",
                "review": "the saved AI review of these options has not completed.",
+               "replacement": "an apartment shown here took the place of one that failed the travel check. It was not part of "
+                              "the saved AI review, so it has not had its own AI review and cannot be treated as reviewed.",
                "empty": "no apartment is left to assess."}
 
 
-def gate(reply: dict, saved_review_state: str, shortlisted: list) -> dict:
-    """T6 for the travel-checked shortlist: it is AI-assessed only when the saved AI review of the stored options is complete
-    AND this check's assessment was produced, accepted and covers every apartment shown (a replacement included). Anything
-    else is held, with the reason; the journey figures stay visible. There is no rules-only way through."""
+def gate(reply: dict, saved_review_state: str, shortlisted: list, reviewed_ids) -> dict:
+    """T6 for the travel-checked shortlist: it is AI-assessed only when the saved AI review of the stored options is complete,
+    EVERY apartment shown was one of the apartments that review covered (`reviewed_ids`), AND this check's assessment was
+    produced, accepted and covers every apartment shown. A replacement that stepped in after the travel check was never in
+    the saved review: this check's travel assessment is not a full review of it, so the shortlist is held. Anything else is
+    held too, with the reason; the journey figures stay visible. There is no rules-only way through."""
+    reviewed = {int(i) for i in (reviewed_ids or ())}
     ids = [int(x["apartment_id"]) for x in shortlisted]
     if not ids:
         why = "empty"
@@ -420,6 +441,8 @@ def gate(reply: dict, saved_review_state: str, shortlisted: list) -> dict:
         why = "incomplete"
     elif saved_review_state != "reviewed":
         why = "review"
+    elif any(i not in reviewed for i in ids):
+        why = "replacement"
     else:
         return {"state": "assessed", "held": False, "plain": ASSESSED_TEXT}
     return {"state": "held", "held": True, "reason": why, "plain": HELD_PREFIX + HELD_REASON[why]}
