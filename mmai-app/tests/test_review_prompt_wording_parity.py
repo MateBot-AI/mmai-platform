@@ -195,7 +195,7 @@ def test_review_repair_head_says_every_rule_still_applies_in_fixed_words(monkeyp
 
 
 def test_contract_moved_with_the_prompt_wording():
-    assert ai.REVIEW_CONTRACT == "2026-11-11.step-free-payload"
+    assert ai.REVIEW_CONTRACT == "2026-11-16.no-distance"
     assert ai.REVIEW_CONTRACT > "2026-11-10.c4-native-groups-wrapper" and re.match(r"^\d{4}-\d{2}-\d{2}\.", ai.REVIEW_CONTRACT)
 
 

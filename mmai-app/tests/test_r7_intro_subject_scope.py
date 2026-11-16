@@ -216,7 +216,8 @@ def test_brief_prompt_partitions_missing_ids_and_states_where_gaps_go(monkeypatc
     desc = json.loads(payload)
     assert set(desc["missing_fact_ids_by_ref"]) == {"U1", "U2"}
     assert "U1.tidy" in desc["missing_fact_ids_by_ref"]["U1"] and "U2.school" in desc["missing_fact_ids_by_ref"]["U2"]
-    assert "A981.campus_km" in desc["apartment_missing_fact_ids"] and "A981.feature.gym" in desc["apartment_missing_fact_ids"]
+    assert "A981.feature.gym" in desc["apartment_missing_fact_ids"]
+    assert "A981.campus_km" not in desc["missing_fact_ids"] and "campus_km" not in payload   # M4: an unsupplied distance is not a "missing" detail
     assert not any(k.startswith("A") for v in desc["missing_fact_ids_by_ref"].values() for k in v)
     assert sorted(set(desc["apartment_missing_fact_ids"]) | {k for v in desc["missing_fact_ids_by_ref"].values() for k in v}) == desc["missing_fact_ids"]
     low = head.lower()
@@ -245,6 +246,6 @@ def test_brief_validator_still_rejects_the_two_live_shapes():
     with pytest.raises(ai.AIUnavailable, match="what_could_cause_issues\\[0\\]: a gap item cannot stand as evidence"):
         ai.parse_staff_briefs(bad, refs, packet)
     bad = json.loads(json.dumps(good))
-    bad["members"][0]["missing_facts"] = [{"fact_ids": ["A981.campus_km", "A981.feature.gym"], "note": "apartment details unknown", "kind": "gap"}]
+    bad["members"][0]["missing_facts"] = [{"fact_ids": ["A981.feature.gym"], "note": "apartment details unknown", "kind": "gap"}]
     with pytest.raises(ai.AIUnavailable, match="U1.missing_facts"):
         ai.parse_staff_briefs(bad, refs, packet)

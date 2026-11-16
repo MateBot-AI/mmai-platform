@@ -393,13 +393,14 @@ def test_apartment_only_notes_are_checked_against_the_exact_current_offer(db, mo
     p = ai_queue._payload(db, g)
     cat = facts.catalogue(p)
     A = f"A{a['id']}"
+    assert f"{A}.campus_km" not in cat and "campus_km" not in json.dumps(p) and "campus_distance" not in json.dumps(p)   # M4: no distance in the packet
     refs = json.loads(_group_brief(db, g["id"])["refs_json"])
     # the packet only carries features somebody asked for; cite the recorded balcony through the same catalogue
     feat_key = f"{A}.feature.balcony"
     cat[feat_key] = facts.catalogue({"apartments": [{"apartment_id": a["id"], "features": [{"key": "balcony", "label": "Balcony", "recorded": "available"}]}]})[feat_key]
     assert cat[feat_key]["status"] == "recorded"
     notes = [{"fact_ids": [f"{A}.suburb"], "note": "the suburb suits"}, {"fact_ids": [feat_key], "note": "a recorded feature"},
-             {"fact_ids": [f"{A}.campus_km"], "note": "campus distance"}, {"fact_ids": [f"R.{A}.budget"], "note": "budget rule"},
+             {"fact_ids": [f"{A}.available_from"], "note": "available from"}, {"fact_ids": [f"R.{A}.budget"], "note": "budget rule"},
              {"fact_ids": [f"{A}.total_weekly"], "note": "the weekly total"}, {"fact_ids": [f"{A}.stay_days"], "note": "stay length"}]
     for n in notes:
         n["meta"] = ai_queue.basis_note_meta(n, cat, refs)
@@ -407,7 +408,7 @@ def test_apartment_only_notes_are_checked_against_the_exact_current_offer(db, mo
     _set_group_notes(db, g["id"], notes)
     db.execute("UPDATE groups SET evidence_hash=? WHERE id=?", (g["evidence_hash"], g["id"])); db.commit()
     items = ai_queue.intro_basis_items(db, g["id"], a["id"])
-    assert [x["text"] for x in items] == ["the suburb suits", "a recorded feature", "the weekly total", "stay length"], "campus_km and rule results are not shown by the introduction: omitted"
+    assert [x["text"] for x in items] == ["the suburb suits", "a recorded feature", "the weekly total", "stay length"], "available_from and rule results are not shown by the introduction: omitted"
     assert all(x["subjects"] == [] for x in items)
     # the cited feature state changes -> that note is dropped; the others stay
     col = "feat_" + feat_key.split(".feature.", 1)[1]

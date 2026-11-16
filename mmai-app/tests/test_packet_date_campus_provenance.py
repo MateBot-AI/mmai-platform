@@ -8,7 +8,6 @@ Both are provenance additions read from existing rules objects: no rule, weight,
 from datetime import date
 
 from server import matching, rules
-from server.institutions import INSTITUTIONS
 
 
 def _unit(uid, move_out_flex, move_in_flex="Exact date", school=None):
@@ -71,26 +70,20 @@ def test_rule_check_dates_detail_explains_the_g5_shaped_pass(monkeypatch):
     assert dates["result"] == "pass" and dates["source"].startswith("rules.check_group")
 
 
-def test_campus_distance_fact_names_each_persons_institution_and_keeps_the_average():
-    inst = [i for i in INSTITUTIONS if i.get("lat")][:2]
-    assert len(inst) == 2, "needs two located institutions in the list"
-    apt = rules.Apartment(id="50", address="50 Test St", type_code="2B1B", rent_12m=940.0, rent_6m=1000.0, available_from=date(2027, 1, 19), bedrooms=["1 king"], lat=-37.81, lon=144.96)
-    u1, u2, u3 = _unit(1, "Exact date", school=inst[0]["name"]), _unit(2, "Exact date", school=inst[1]["name"]), _unit(3, "Exact date", school=None)
-    refs = {"1": "U1", "2": "U2", "3": "U3"}
-    f = matching.campus_distance_fact(apt, [u1, u2, u3], refs)
-    assert set(f["per_person"]) == {"U1", "U2"}                     # U3 has no recorded institution: no distance attributed to them
-    assert f["per_person"]["U1"]["institution"] == inst[0]["name"] and f["per_person"]["U2"]["institution"] == inst[1]["name"]
-    assert f["km_average"] == matching._campus_km(apt, [u1, u2, u3])  # the same average the staff card shows
-    assert all(isinstance(v["km"], float) for v in f["per_person"].values()) and "belongs to no single person" in f["basis"]
-    # party case (root requirement): the lead's institution is the lead's only; a companion ref gets no campus distance
-    lead = rules.Person(id="7", unit_id="7", name="x", birth_country=None, budget_max=500.0, arrangements={"Own room"}, bunk_ok=True, smokes=False, smoke_ok=True)
-    companion = rules.Person(id="7-m1", unit_id="7", name="y", birth_country=None, budget_max=None, arrangements={"Own room"}, bunk_ok=True, smokes=False, smoke_ok=True, is_lead=False)
-    party = rules.Unit(id="7", kind="Friends", people=[lead, companion], city="Melbourne", apt_sizes={"2 bedrooms"}, mate_max=3, move_in=date(2027, 2, 1), move_in_flex=0,
-                       move_out=date(2028, 2, 1), move_out_flex=0, extra={"id": 7, "school": inst[0]["name"], "party": 2})
-    prefs = {"7": "U1", "7-m1": "U1-m1"}
-    pf = matching.campus_distance_fact(apt, [party], prefs)
-    assert set(pf["per_person"]) == {"U1"} and "U1-m1" not in str(pf) and pf["per_person"]["U1"]["institution"] == inst[0]["name"]
-    # nobody located: None, like _campus_km
-    assert matching.campus_distance_fact(apt, [u3], refs) is None
-    no_coords = rules.Apartment(id="51", address="51 Test St", type_code="2B1B", rent_12m=940.0, rent_6m=1000.0, available_from=None, bedrooms=["1 king"])
-    assert matching.campus_distance_fact(no_coords, [u1], refs) is None
+def test_no_distance_to_campus_reaches_the_review_or_the_brief():
+    """M4 / GP6(d), 16 Nov 2026: travel to campus or work is checked last on the shortlisted apartments, from measured journeys.
+    The straight-line distance that used to ride in the review and brief requests is gone: not worked out, not sent, not a
+    citable fact and not reported as a missing one. Review contract moved so approvals resting on the old request are redone."""
+    from server import ai, facts
+    assert not hasattr(matching, "campus_distance_fact") and not hasattr(matching, "_campus_km") and not hasattr(matching, "CAMPUS_DISTANCE_BASIS")
+    assert "campus_km" not in facts.APARTMENT_FIELDS
+    apt = {"apartment_id": 50, "address": "50 Test St", "type_label": "2 bed", "suburb": "Carlton", "lease_start": "2027-02-01", "lease_end": "2028-02-01",
+           "total_weekly": 940.0, "campus_km": 1.2, "campus_distance": {"km_average": 1.2, "per_person": {"U1": {"institution": "x", "km": 1.2}}}}
+    cat = facts.catalogue({"apartments": [apt]})
+    assert "A50.campus_km" not in cat and not any("campus" in k for k in cat)   # neither recorded nor "missing"
+    assert ai.REVIEW_CONTRACT == "2026-11-16.no-distance"
+    import inspect
+    for fn in (ai.assess_groups_and_apartments, ai.staff_briefs, ai.review_packet):
+        src = inspect.getsource(fn)
+        assert "campus_km" not in src and "campus_distance" not in src and "campus distance" not in src
+    assert "no distance is supplied" in inspect.getsource(ai.assess_groups_and_apartments)

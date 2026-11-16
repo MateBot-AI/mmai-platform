@@ -224,11 +224,12 @@ made. It is off by default.
 - Size of the review. A full pool makes the review request about 69,000 characters
   (three options and twelve reserves, measured on test data) and its reply carries
   fifteen option notes. The output budget now follows the number of options:
-  2,000 tokens plus 150 for each option, never below the earlier fixed 1,800 and
-  never above the 8,000 ceiling; 4,250 for a full pool, and 6,375 for the one
-  compact retry. It is sized so that the longest reply the validator accepts fits
-  at three characters a token with at least a fifth to spare (9,504 characters for
-  a full pool on test data). That figure is an engineering estimate; it has not
+  2,300 tokens plus 200 for each option (raised on 16 November 2026 from 2,000
+  plus 150), never below the earlier fixed 1,800 and never above the 8,000
+  ceiling; 5,300 for a full pool, and 7,950 for the one compact retry. It is
+  sized so that the longest reply the validator accepts fits at three characters
+  a token with two fifths to spare for a full pool (9,504 characters on test
+  data) and at least a fifth for every smaller one. That figure is an engineering estimate; it has not
   been measured against the model, and neither have the time and input cost of a
   full-pool review: run one controlled review before relying on it. Every option, reserve or not, still needs its
   own valid note, and a reply cut off twice is recorded as held, not as a review.
@@ -274,50 +275,104 @@ None of these is established by this package; each needs its own evidence.
 
 ## MateBot groups: what is and is not done for travel
 
-This is partial. It is recorded here so that the HomeBot travel check above is not
-read as covering MateBot groups.
+The live travel check now covers MateBot groups as well as HomeBot options. It
+is built and tested with stand-in journey and model replies only. No provider
+or model call has been made for it, nothing is switched on, and it has not been
+run on the host. What remains open is listed at the end of this section and is
+not to be reported as done.
 
-Done in this package, with no provider or model call and nothing switched on:
+Built in this package:
 
-- **Distance is no longer in the group score.** The rule score that orders a
-  group's apartments has an areas part (the preferred areas answer) and no
-  distance part. The straight-line distance to the place of study, the fixed
-  distance per travel-time answer, and the 30 minutes assumed for a blank answer
-  are removed. The weight of the part is unchanged. A score already stored was
-  calculated with the old part and stays as stored until matching next
-  calculates it.
-- **An optional travel choices question** (one new nullable column,
-  `enquiries.travel_modes`, added by the ordinary startup migration; the release
-  before this one ignores it) on the MateBot form: Walk, Bicycle,
-  Public transport. It is optional like the travel time question, nothing is
-  pre-selected, and no answer is stored as no answer. An enquiry saved before the
-  question existed keeps no answer; none is inferred from its travel time. Staff
-  can record or clear it. The question wording is derived from the HomeBot form;
-  only the three choices are Bill's. The answer is collected and shown; no
-  calculation reads it yet, and it is not part of the review evidence.
+- **Distance is not used anywhere in ranking.** The rule score that orders a
+  group's apartments has an areas part and no distance part. The straight-line
+  distance to the place of study is no longer given to Claude in the group
+  review or the staff summary, is no longer stored with a group's apartments,
+  and is no longer shown on the group page, where it could be read as a measured
+  journey. The review request now says that travel is not part of the ranking
+  and that no distance is supplied. This changes the review contract
+  (`2026-11-16.no-distance`): when the AI queue next runs, every approved group
+  is queued for a fresh review, and until that review arrives the group is not
+  shown as ready. Plan for those review calls when the queue is switched on.
+- **An optional travel choices question** on the MateBot form (one nullable
+  column, `enquiries.travel_modes`): Walk, Bicycle, Public transport. Nothing is
+  pre-selected and no answer is stored as no answer. An enquiry saved before the
+  question existed keeps no answer; none is inferred. The question wording is
+  derived from the HomeBot form; only the three choices are Bill's. Once
+  answered, the answer is part of the group's review evidence, so a later edit
+  makes the saved review out of date like any other answer; an enquiry that
+  never answered keeps its existing evidence unchanged.
 - **Three at most.** A group still stores up to six ranked apartments. Staff see
   at most three as the shortlist (the current offer included); the others are
-  labelled reserves, keep their ranked order, have no offer button, and move up
-  only when a shortlisted apartment is leased or declined. Nothing is deleted or
-  re-ranked. The page states that travel has not been checked.
-- **The arithmetic, not connected** (`server/matebot_travel.py`): each member's
-  fastest journey by a choice they accepted against their own stated time; the
-  H28 majority calculation only when every member states the same time; and the
-  travel-last replacement order. When stated times differ or any is missing the
-  group result is "needs confirmation" and no figure is combined, because how to
-  combine them has not been ruled.
+  reserves in their ranked order, with no offer button.
+- **The live final travel check** (`server/matebot_live.py`, address
+  `POST /api/groups/{id}/travel-check`, staff only). It runs when a staff member
+  opens a group (when `MMAI_ROUTING_LIVE_AUTO` is on) and again on request. It
+  uses the same switch, key, request shape, attribution and allowances as the
+  HomeBot check; the per-day and per-month allowances are one total shared by
+  both.
+  - People are counted, not enquiries: the enquirer and each further person in
+    their party, each once.
+  - A journey is requested only to a destination that was supplied and is held
+    as an address: the verified address of the institution a person who is
+    studying chose. Each person's journeys are requested only by the travel
+    choices given for them. A party shares the enquirer's choices and travel
+    time; a person in the party who is not the enquirer was never asked for a
+    place of work or study and has none.
+  - Travel is checked last. The stored apartments are taken in their stored
+    order, the current offer first; the first three are checked together; one
+    that fails is replaced by the next stored candidate, which is then checked.
+    Never more than three are shown as the shortlist, and nothing is searched
+    for beyond the stored candidates.
+  - When every person states the same maximum travel time the H28 calculation
+    applies as written. When the times differ or one is missing, no figure is
+    combined and no default is used: each person's journey is shown against
+    their own stated time and the group result is "needs confirmation". Such an
+    apartment keeps its place; it is neither passed nor failed.
+  - Claude's assessment (`server/matebot_travel_reply.py`, behind
+    `MMAI_TRAVEL_AI_REPLY`, which stays off): one request per check for at most
+    three apartments, 1,200 output tokens, positions and figures only (no name,
+    address, institution or destination). Code checks every count, every person
+    named and the group result against its own figures, and withholds the whole
+    reply on any difference. Claude cannot rate or advise offering an apartment
+    whose group result needs confirmation.
+  - A shortlist reads "AI-assessed" only when the group's saved review is
+    current and approved, that review covered every apartment shown, and this
+    check's assessment was accepted. Anything else reads "Held", with the
+    reason, and the list is headed "Provisional shortlist (not confirmed)".
+    Before a check, and when checks are off, the group's apartments carry a
+    "Provisional" notice.
+  - Nothing from the journey provider or from Claude is stored. The only record
+    is a count of requests (`matebot.travel_check` in the audit log), written
+    before they leave.
+- **Hand-off from HomeBot.** Travel choices already ticked on the HomeBot form
+  are carried into the MateBot saved form exactly as ticked, only the three
+  current choices, and are reviewed on their own screen. The hand-off screen
+  comes before HomeBot's travel question, so this applies only to someone who
+  answered it and then went back to change their party. An earlier Tram, Train,
+  Bus or Car answer is never carried or read as another choice.
 
 Not done, and not to be reported as done:
 
-- No journey is measured for a MateBot group, no result is shown to staff, and
-  Claude receives no journey result for a MateBot group.
-- The MateBot AI ranking request still includes the straight-line distance to
-  campus. Removing it changes the review contract and makes saved reviews out of
-  date, so it waits for a decision.
-- Apartment rows on the group card still show the straight-line distance as
-  information.
-- How party members inside one enquiry are counted for the majority is not
-  built.
+- **Work destinations are not measured.** The MateBot form asks where someone
+  will work as a suburb or an employer's name, not an address, so no journey is
+  requested for a person who is working, on a working holiday or "Other". They
+  are counted as having no known destination. A group with nobody studying at an
+  institution on file has no travel result, and its shortlist stays held.
+- **Secondary destinations** (a second place of work or study) are not asked on
+  the MateBot form and are not measured.
+- **Differing or missing travel times.** How to combine them is not ruled. Until
+  it is, most real groups will read "needs confirmation".
+- **The result is not saved**, so it is not part of readiness. The lists of
+  groups, the "ready for reservations" state, the introduction and the offer
+  buttons do not depend on a travel check. A group can be ready by its saved
+  review while its travel is unchecked; the page says so with the
+  "Provisional" notice.
+- **Not run against the provider or Claude.** The live check for groups has only
+  been run with stand-in replies. One controlled check on the host is still
+  needed, and Google journey content must not go to Claude until the retention
+  question is settled.
+- The public transport choice still cannot exclude a ferry or another vehicle
+  the provider counts as transit; this is the same limit as for HomeBot.
 
 ## Controlled startup
 

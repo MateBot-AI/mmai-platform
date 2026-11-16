@@ -1385,16 +1385,18 @@ def overview(c, eid: int) -> dict:
 # When the separate AI travel reply is switched on (homebot_travel_reply), the journey results of this one check are also
 # given to Claude for a short assessment that is returned with this reply and dropped; it is never the saved AI review.
 TRAVEL_CHECK_ACTION = "homebot.travel_check"
+MATEBOT_TRAVEL_CHECK_ACTION = "matebot.travel_check"   # the same provider key and allowance serve both bots (matebot_live)
 TRAVEL_NOT_SAVED = ("Journey times are checked live and are not saved: they are shown on this page only, are not part of the stored "
                     "options or the AI review, and are checked again each time.")
 _travel_lock = threading.Lock()   # one travel check at a time in this process, so the request allowance cannot be overrun
 
 
 def _travel_requests_used(c, prefix: str) -> int:
-    """Provider requests already made by travel checks recorded at a time starting with `prefix` (a UTC day or month)."""
+    """Provider requests already made by travel checks, HomeBot's and MateBot's alike, recorded at a time starting with
+    `prefix` (a UTC day or month)."""
     from . import routing
     used = 0
-    for r in rows(c.execute("SELECT detail FROM audit_log WHERE action=? AND at LIKE ?", (TRAVEL_CHECK_ACTION, prefix + "%"))):
+    for r in rows(c.execute("SELECT detail FROM audit_log WHERE action IN (?, ?) AND at LIKE ?", (TRAVEL_CHECK_ACTION, MATEBOT_TRAVEL_CHECK_ACTION, prefix + "%"))):
         n = (pj(r["detail"]) or {}).get("requests")
         # a record that cannot be read counts as a full check, so a damaged record can only tighten the allowance
         used += n if type(n) is int and n >= 0 else routing.LIVE_LIMITS["MMAI_ROUTING_LIVE_MAX_REQUESTS"][2]

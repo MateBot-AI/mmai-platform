@@ -126,7 +126,7 @@ MODEL = model_name()
 # T6 review contract version: bumped whenever the review/brief prompt, schema or validators are strengthened, so every earlier
 # 'ok' review and brief becomes stale (part of the compatibility evidence; see matching.group_evidence / ai_queue.is_ready).
 # Introduction-only wording/profile changes do NOT bump it.
-REVIEW_CONTRACT = "2026-11-11.step-free-payload"   # Review and staff briefs receive the access value and provenance, not just its fact id.
+REVIEW_CONTRACT = "2026-11-16.no-distance"   # M4 / GP6(d): no distance to campus in the review or brief request; travel is checked last, separately.
 # Response size limits (engineering limits so a reply fits its output budget; Bill has not ruled on note lengths). Enforced by
 # the parsers: an over-cap reply is rejected, never clamped. fact_ids 14 lets a seven-person group cite every member's fact.
 OUTPUT_TOKEN_CEILING = 8000                          # root-approved initial ceiling; a 7-person brief budget (7600) and its compact retry both cap here
@@ -464,7 +464,7 @@ def review_packet(groups: list[dict]) -> list[dict]:
                           [{"room": r["room"], "setup": r["setup"], "room_cost": r.get("room_cost"),
                             "occupants": [{"ref": refs.get(str(o.get("person_id")), f"room{j}-occupant{k}"), "bed": o.get("bed"), "weekly_share": o.get("share")}
                                           for k, o in enumerate(r.get("occupants") or [], start=1)]} for j, r in enumerate(a.get("allocation") or [], start=1)],
-                 "campus_distance_km": a.get("campus_km"), "campus_distance": a.get("campus_distance"), "rule_score": a.get("rule_score"), "rule_rank": a.get("rule_rank"),
+                 "rule_score": a.get("rule_score"), "rule_rank": a.get("rule_rank"),
                  "rule_checks": a.get("rule_checks") or [], "features_asked_for": a.get("features") or []}
                 for a in sorted(g["apartments"], key=lambda x: (x.get("rule_rank") is None, x.get("rule_rank") or 0))],
         })
@@ -568,7 +568,7 @@ def assess_groups_and_apartments(groups: list[dict], meter: dict | None = None) 
         "incomplete or contradictory to approve; staff must clarify - cite the missing or conflicting fact ids). The verdict is compulsory, never overrides a "
         "rule result and never asserts success the facts do not support.\n"
         "4. apartments: rank the listed apartments from best suited to least for this group with one short reason each for the reservations team (rent and each "
-        "share against stated maxima, campus distance, room setup fit, bills, availability, size, the feature facts). Include EVERY apartment_id, each exactly once.\n\n"
+        "share against stated maxima, room setup fit, bills, availability, size, the feature facts). Include EVERY apartment_id, each exactly once. Travel to campus or work is NOT part of this ranking and no distance is supplied: it is checked afterwards, separately, on the shortlisted apartments. Do not estimate, assume or mention a distance or a travel time.\n\n"
         "Return ONLY JSON: one object {\"groups\": [...]} whose \"groups\" list has exactly one object per group index: {\"index\": <group index>, "
         "\"findings\": [...], \"rating\": <1-10 number>, "
         "\"rationale\": <string>, \"verdict\": \"approve\"|\"revise\"|\"hold\", \"replace_refs\": [...], \"replace_reasons\": [...], "
@@ -964,9 +964,8 @@ def staff_briefs(packet: dict, meter: dict | None = None) -> dict:
             "missing_fact_ids_by_ref": {r: sorted(k for k, v in cat.items() if v["status"] == "missing" and v.get("ref") == r) for r in refs},
             "apartment_missing_fact_ids": sorted(k for k, v in cat.items() if v["status"] == "missing" and v.get("ref") is None),
             "approved_review": packet.get("review") or {},
-            "apartments_best_first": [{k: a.get(k) for k in ("apartment_id", "type_label", "suburb", "lease_start", "lease_end", "total_weekly", "campus_km", "bills_included", "step_free_access", "step_free_source")}
-                                      | {"rooms": a.get("allocation_for_ai"), "rule_checks": a.get("rule_checks") or [], "features_asked_for": a.get("features") or [],
-                                         "campus_distance": a.get("campus_distance")}
+            "apartments_best_first": [{k: a.get(k) for k in ("apartment_id", "type_label", "suburb", "lease_start", "lease_end", "total_weekly", "bills_included", "step_free_access", "step_free_source")}
+                                      | {"rooms": a.get("allocation_for_ai"), "rule_checks": a.get("rule_checks") or [], "features_asked_for": a.get("features") or []}
                                       for a in (packet.get("apartments") or [])]}
     # S1b (9 Nov 2026, C200 live-1: 11 of 14 rejected briefs put a housemate's fact id into fact_ids): the item shape now SHOWS the
     # optional compared_with field and one worked example, states that group items never carry it and that ids are used exactly as

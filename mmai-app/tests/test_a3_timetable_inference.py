@@ -98,4 +98,4 @@ def test_brief_prompt_and_contract_carry_the_boundary():
     src = inspect.getsource(ai)
     assert "labels alone do not" in src and "never infer that timetables, class times or attendance line up" in src
     assert "quote supplied timing only as recorded" in src and "without generalising to others" in src
-    assert ai.REVIEW_CONTRACT == "2026-11-11.step-free-payload"   # Access value delivery; timetable boundaries remain.
+    assert ai.REVIEW_CONTRACT == "2026-11-16.no-distance"   # Access value delivery; timetable boundaries remain.

@@ -75,8 +75,9 @@ def test_each_member_uses_only_the_choices_they_accepted():
     for bad in (["Car"], ["Tram"], "Walk", [W, W], [None]):
         with pytest.raises(ht.InvalidTravelInput):
             M(0, "30 minutes", bad, None)
-    with pytest.raises(ht.InvalidTravelInput):
-        M(0, "20 minutes", [W], None)
+    for bad in ("20 minutes", ["30 minutes"], 30, {"30 minutes": 1}):                 # refused as travel input, never a TypeError
+        with pytest.raises(ht.InvalidTravelInput):
+            M(0, bad, [W], None)
     with pytest.raises(ht.InvalidTravelInput):
         M(0, "60 minutes or more", [W], None)                                         # the HomeBot wording is not a MateBot answer
 

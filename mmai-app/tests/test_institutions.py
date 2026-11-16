@@ -62,4 +62,5 @@ def test_distance_to_the_place_of_study_is_not_part_of_the_score():
     u1.extra["areas"] = json.dumps(["Somewhere else"])
     assert matching.preference_score(apt, [u1, u2], chk)[1]["areas"] == 0.3
     u1.extra["areas"] = "[]"
-    assert matching._campus_km(apt, [u1, u2]) is None     # no distance is reported for staff either
+    # no straight-line distance is worked out for staff or for the AI review at all (M4 / GP6(d): travel is checked last)
+    assert not hasattr(matching, "_campus_km") and not hasattr(matching, "campus_distance_fact")

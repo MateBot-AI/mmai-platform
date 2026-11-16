@@ -23,7 +23,7 @@ from fastapi.responses import JSONResponse, FileResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.concurrency import run_in_threadpool
 
-from . import access_facts, accounts, ai, ai_queue, apartment_rejections, group_responses, homebot, homebot_handoff, homebot_shortlist, importer, matching, matebot_travel, outcome_ledger, receipts, rules, scheduler, seed, staff_view, stock_lifecycle, submissions
+from . import access_facts, accounts, ai, ai_queue, apartment_rejections, group_responses, homebot, homebot_handoff, homebot_shortlist, importer, matching, matebot_live, matebot_travel, outcome_ledger, receipts, rules, scheduler, seed, staff_view, stock_lifecycle, submissions
 from . import apartment_features as feat
 from . import security as sec
 from . import homebot_receipts, notifications
@@ -1382,7 +1382,6 @@ def _group_out(g: dict, occ: dict | None = None, circ: dict | None = None) -> di
     for a in apts:
         al = pj(a.pop("allocation_json"), {})
         a["rooms"] = al.get("rooms") or []
-        a["campus_km"] = al.get("campus_km")
         a["type_label"] = rules.APT_TYPES[a["type_code"]]["label"]
         a["is_current"] = a["apartment_id"] == g["apartment_id"]
         a["liability_note"] = rules.liability_note(a["total_weekly"] or 0)
@@ -1397,17 +1396,25 @@ def _group_out(g: dict, occ: dict | None = None, circ: dict | None = None) -> di
         a["also_first_choice_of"] = [{"group_id": x} for x in info["first_choice"] if x != g["id"]]  # information only; nothing is held
     staff_view.apartment_reasons(db, g, apts)   # T10: the AI's apartment reasons in plain words through their own saved basis
     # GP6(d): at most three apartments are a group's shortlist. Every stored candidate stays listed, in its stored order (GP14
-    # history included); the ones beyond three are reserves that move up only when a place opens. Travel is NOT part of this:
-    # the final travel check is not connected for MateBot groups, and the view says so rather than implying a result.
-    declined = apartment_rejections.declined_in_group(db, g["id"]) if apts and g.get("status") not in ("Leased", "Dissolved") else {}
+    # history included); the ones beyond three are reserves that move up only when a place opens. Travel is NOT part of this
+    # stored view: the final travel check is run live from the group page (matebot_live) and nothing from it is stored.
+    # GP14: listed apartments a current member has declined. Read once here and carried on the group, so the list views, the
+    # detail view and the roles below all use the same answer.
+    declined = apartment_rejections.declined_in_group(db, g["id"]) if apts else {}
+    g["declined_apartments"] = {str(k): v for k, v in declined.items()}
     declined_ids = {int(k) for k in declined}
     for a, role in zip(apts, matebot_travel.shortlist_roles([{"id": a["apartment_id"], "current": a["is_current"],
                                                               "unavailable": bool(a["taken_by"]) or a["apartment_id"] in declined_ids} for a in apts])):
         a["shortlist_role"] = role
     g["shortlist_max"] = matebot_travel.MAX_SHORTLIST
-    g["travel_check"] = "not_connected"
+    # the final travel check is live and never stored (matebot_live): the view carries only whether one can be run. Until
+    # one has been run on the page, and its AI assessment accepted, the apartments are provisional and are shown as such.
+    g["travel_live"] = matebot_live.state()
+    g["travel_check"] = "live" if g["travel_live"]["enabled"] else "off"
     g["apartments"] = apts
-    g["next_best"] = next((a for a in apts if not a["is_current"] and not a["taken_by"] and not a["practical_need_hold"]), None)
+    # the "next best" named when the current offer is leased is one staff can actually offer: shortlisted (so never a reserve,
+    # a declined or a leased apartment) and not held for an essential need
+    g["next_best"] = next((a for a in apts if not a["is_current"] and a["shortlist_role"] == matebot_travel.ROLE_SHORTLIST and not a["practical_need_hold"]), None)
     g["rejected"] = pj(g.get("rejected_json"), [])
     # T6: review state. Reservations only treat a group as ready once the AI has assessed it and ranked its apartments.
     st = g.get("ai_status")
@@ -1595,8 +1602,9 @@ def group_detail(gid: int, staff=Depends(current_staff)):
         out["alternatives"] = alts
     else:
         out["alternatives"] = []
-    # GP14: listed apartments a current member has declined (shown as "declined by <name> on <date>"; never offerable while active)
-    out["declined_apartments"] = {str(k): v for k, v in apartment_rejections.declined_in_group(db, gid).items()}
+    # GP14: listed apartments a current member has declined (shown as "declined by <name> on <date>"; never offerable while
+    # active) are already on the group from _group_out; a group with no listed apartment has none
+    out.setdefault("declined_apartments", {})
     _attach_review_state(out, g)
     return out
 
@@ -2429,7 +2437,7 @@ async def create_homebot_handoff(req: Request):
     sec.rate_limit(req, "public_drafts", sec.RATE_DRAFTS_PER_HOUR, 3600)
     try:
         out = homebot_handoff.create(db, body.get("headcount_now"), body.get("headcount_target"), is_test=bool(body.get("is_test")),
-                                     now_iso=now_iso(), expires_iso=_iso_in(DRAFT_DAYS))
+                                     now_iso=now_iso(), expires_iso=_iso_in(DRAFT_DAYS), transport=body.get("transport"))
     except homebot_handoff.HandoffError as ex:
         return JSONResponse({"errors": ex.errors}, status_code=422)
     db.commit()
@@ -2585,6 +2593,18 @@ def homebot_options(eid: int, staff=Depends(current_staff)):
 async def homebot_options_rerun(eid: int, req: Request, staff=Depends(current_staff)):
     body = await sec.json_object(req, empty_ok=True)
     return _homebot_options_call(homebot_shortlist.request_rerun, db, eid, staff["display_name"], str(body.get("scenario") or homebot_shortlist.hm.SCENARIO_CURRENT))
+
+
+@app.post("/api/groups/{gid}/travel-check")
+async def group_travel_check(gid: int, staff=Depends(current_staff)):
+    """The live final travel check for a MateBot group (staff only). Shown once and not saved; see matebot_live. It waits on
+    the journey provider, so it runs in the worker pool and never holds up other requests."""
+    def run():
+        g = row(db.execute("SELECT g.*, a.address, a.type_code, a.suburb, a.bills_included FROM groups g LEFT JOIN apartments a ON a.id=g.apartment_id WHERE g.id=?", (gid,)))
+        if not g:
+            raise HTTPException(404, "Not found")
+        return matebot_live.travel_check(db, _group_out(g), staff["display_name"])
+    return await run_in_threadpool(run)
 
 
 @app.post("/api/homebot/enquiries/{eid}/options/travel-check")

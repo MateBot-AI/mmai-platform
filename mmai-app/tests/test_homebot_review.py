@@ -179,19 +179,19 @@ def test_the_output_budget_follows_the_number_of_options_and_holds_the_longest_v
     assert [(o["apartment_id"], o["listed_as"]) for o in pk["options"]] == [(i, "listed") for i in (1, 2, 3)] + [(i, "reserve") for i in range(4, 16)]
     assert hm.MAX_RESERVES == 12 and len(pk["options"]) == 15                               # 16 is beyond the pool: not sent
     budget = hr.output_tokens(pk)
-    assert budget == hr.OUTPUT_TOKENS_BASE + hr.OUTPUT_TOKENS_PER_OPTION * 15 == 4250
-    assert budget < int(budget * 1.5) == 6375 < ai.OUTPUT_TOKEN_CEILING == 8000              # the compact retry has room too
+    assert budget == hr.OUTPUT_TOKENS_BASE + hr.OUTPUT_TOKENS_PER_OPTION * 15 == 5300
+    assert budget < int(budget * 1.5) == 7950 < ai.OUTPUT_TOKEN_CEILING == 8000              # the compact retry has room too
     longest = _longest_reply(pk)
     clean = hr.parse_review(longest, pk)                                                    # valid as a whole, option by option
     assert len(clean["option_notes"]) == 15 and len(clean["findings"]) == hr.FINDINGS_MAX
     assert all(len(n["note"]) >= hr.NOTE_MAX - 1 for n in clean["option_notes"]) and len(clean["rationale"]) >= hr.RATIONALE_MAX - 1
-    assert len(longest) / 3 <= budget * 0.75                                                # with a quarter to spare
+    assert len(longest) / 3 <= budget * 0.6                                                 # with two fifths to spare
     assert 60000 < len(hr.build_prompt(pk)) < 80000                                         # the request for a full pool, in characters
     # the same holds for every size of packet up to the pool's bound, and small packets keep the earlier budget
     for n in range(1, 16):
         part = dict(pk, options=pk["options"][:n])
         assert len(_longest_reply(part)) / 3 <= hr.output_tokens(part) * 0.8 and hr.output_tokens(part) <= ai.OUTPUT_TOKEN_CEILING
-    assert hr.output_tokens({"options": []}) == 2000 > hr.OUTPUT_TOKENS == 1800 and hr.output_tokens(dict(pk, options=pk["options"][:3])) == 2450
+    assert hr.output_tokens({"options": []}) == 2300 > hr.OUTPUT_TOKENS == 1800 and hr.output_tokens(dict(pk, options=pk["options"][:3])) == 2900
     assert hr.output_tokens(dict(pk, options=pk["options"] * 10)) == ai.OUTPUT_TOKEN_CEILING
     # per-option validation is unchanged for the larger packet: a missing, repeated or unknown note is an unusable reply
     doc = json.loads(longest)
@@ -207,7 +207,7 @@ def test_the_output_budget_follows_the_number_of_options_and_holds_the_longest_v
         asked.append(max_tokens)
         raise ai.AIOutputTruncated("cut off", max_tokens=max_tokens)
     monkeypatch.setattr(ai, "_ask", cut)
-    assert hr.process_pending(on.db)["reviewed"] == 0 and asked == [4250, 6375]
+    assert hr.process_pending(on.db)["reviewed"] == 0 and asked == [5300, 7950]
     assert ai_queue.homebot_review_state(on.db, sl["id"])["reviewed"] is None
     assert hs._review_state(on.db, current(on, eid))["state"] != "reviewed"
 

@@ -1,8 +1,9 @@
 """MateBot group travel: the arithmetic and the three-apartment shortlist roles (GP6(d), H28, M4, 16 November 2026).
 
-Pure: no database, no provider, no model, no clock. It is NOT connected to a journey provider or to the AI assessment yet;
-nothing here measures a journey. It exists so the rules that are settled can be tested exactly, and so the part that is not
-settled cannot be decided by accident.
+Pure: no database, no provider, no model, no clock. Nothing here measures a journey or asks the AI anything: matebot_live
+supplies each person's journeys from the journey provider for one live check and matebot_travel_reply obtains the AI's
+assessment of the result. It is kept separate so the rules that are settled can be tested exactly, and so the part that is
+not settled cannot be decided by accident.
 
 What is settled, and applied here:
   * Travel is checked last, on up to three apartments chosen without travel; an apartment that fails is replaced by the next
@@ -61,7 +62,7 @@ class Member:
     def __post_init__(self):
         if isinstance(self.index, bool) or not isinstance(self.index, int) or self.index < 0:
             raise ht.InvalidTravelInput("index must be a non-negative integer position")
-        if self.stated_time is not None and self.stated_time not in STATED_LIMIT:
+        if self.stated_time is not None and (not isinstance(self.stated_time, str) or self.stated_time not in STATED_LIMIT):
             raise ht.InvalidTravelInput(f"stated_time must be one of {TRAVEL_TIMES} or None")
         modes = self.accepted_modes
         if isinstance(modes, (str, bytes)) or not isinstance(modes, (list, tuple)):
@@ -228,7 +229,7 @@ def travel_last(ordered_ids, assess: Callable, max_shortlist: int = MAX_SHORTLIS
 
 # -------------------------------------------------------------------------------- three at most, for staff (GP6(d))
 def shortlist_roles(apartments, max_shortlist: int = MAX_SHORTLIST) -> list:
-    """Role of each of a group's stored apartments, in the stored order, WITHOUT travel (which is not connected for MateBot).
+    """Role of each of a group's stored apartments, in the stored order, WITHOUT travel (the stored list never holds a travel result; travel is checked live, last, by matebot_live).
     Each item: {"id", "current": bool, "unavailable": bool}. An apartment leased to another group or declined by a current
     member is history and takes no place, including the one currently offered (staff still see it first, with its warning, and
     its place goes to the next candidate). The apartment currently offered otherwise always holds a place. The rest fill the

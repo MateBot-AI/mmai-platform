@@ -329,7 +329,7 @@ def test_ask_signature_is_unchanged_and_the_limits_stand():
     assert list(params) == ["prompt", "model", "max_tokens", "system"]
     assert [p.default for p in params.values()] == [inspect.Parameter.empty, None, 1500, ""]
     assert ai.OUTPUT_TOKEN_CEILING == 8000
-    assert ai.REVIEW_CONTRACT == "2026-11-11.step-free-payload"   # Recorded access value/provenance delivered to both model descriptors.
+    assert ai.REVIEW_CONTRACT == "2026-11-16.no-distance"   # Recorded access value/provenance delivered to both model descriptors.
     assert inspect.signature(ai._ask_bounded).parameters["schema"].default is None
     assert ai._SCHEMA.get() is None
 

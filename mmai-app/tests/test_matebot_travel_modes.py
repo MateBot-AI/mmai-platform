@@ -106,9 +106,9 @@ def test_an_enquiry_saved_before_the_question_has_no_answer_and_its_receipt_does
     assert "Walk" in answer and "Bicycle" in answer and "Public transport" not in answer
 
 
-def test_the_answer_is_not_part_of_the_review_evidence_or_the_score_yet():
-    """Collected only. It is not evidence of a review (adding it would make every saved review out of date) and no score reads
-    it: the final travel check that will use it is not connected for MateBot yet."""
+def test_the_answer_is_not_a_fixed_evidence_field_and_no_score_reads_it():
+    """It is not one of the fixed evidence fields (that would make every saved review out of date): it joins a group's
+    evidence only once it has been answered (tests/test_matebot_live.py). No score reads it: travel is checked last."""
     import inspect
     from server import matching
     assert "travel_modes" not in matching.EVIDENCE_ENQUIRY_FIELDS

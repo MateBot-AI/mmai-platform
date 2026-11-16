@@ -42,5 +42,5 @@ def test_gap_item_can_cite_the_missing_id_and_strictness_is_kept():
 
 
 def test_contract_bumped_so_earlier_reviews_refresh():
-    assert ai.REVIEW_CONTRACT == "2026-11-11.step-free-payload"   # Value/provenance delivered with the catalogue id.
+    assert ai.REVIEW_CONTRACT == "2026-11-16.no-distance"   # Value/provenance delivered with the catalogue id.
     assert "A<id>.step_free_access" in ai._REVIEW_PROMPT_TEXT() if hasattr(ai, "_REVIEW_PROMPT_TEXT") else True

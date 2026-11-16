@@ -903,6 +903,8 @@ def evidence_from_rows(cap: dict) -> tuple[str, dict]:
         e = m["enquiry"] or {}
         facts = {k: e.get(k) for k in EVIDENCE_ENQUIRY_FIELDS}
         facts["in_pool"] = bool(e) and e.get("status") in ACTIVE_ENQUIRY_STATUSES
+        if e.get("travel_modes"):   # the travel choices (16 Nov 2026): in the evidence ONLY once answered, so older snapshots keep their hash
+            facts["travel_modes"] = e["travel_modes"]   # and an edit of the answer makes the saved review out of date like any other answer
         facts["adults_confirmed_party_digest"] = hashlib.sha256((e.get("adults_confirmed_party") or "").encode("utf-8")).hexdigest()[:16] if e.get("adults_confirmed_party") else None
         members.append({"enquiry_id": m["enquiry_id"], "facts": facts, "party_member_ids": [x["id"] for x in m["party_members"]], "rejections": list(m["rejections"])})
     apartments = []
@@ -994,25 +996,6 @@ def date_window_fact(u) -> dict:
     return {"move_in": u.move_in.isoformat(), "move_in_flex_days": u.move_in_flex, "move_in_flex_answer": flex_answer_fact(extra.get("move_in_flex")),
             "move_out": u.move_out.isoformat(), "move_out_flex_days": u.move_out_flex, "move_out_flex_answer": flex_answer_fact(extra.get("move_out_flex")),
             "open_to_extending": bool(getattr(u, "open_to_extending", False)), "effective_move_in_window": mi_w, "effective_move_out_window": mo_w}
-
-
-CAMPUS_DISTANCE_BASIS = ("straight-line km from the apartment to each person's RECORDED institution (the enquirer's school answer matched to the "
-                         "institution list); people with no recorded or unlocated institution have no distance; km_average is the mean over the "
-                         "people listed and belongs to no single person")
-
-
-def campus_distance_fact(apt: rules.Apartment, units: list[rules.Unit], refs: dict) -> Optional[dict]:
-    """campus_km with provenance: per enquirer (packet ref) the institution the distance is measured to and the km, plus the same
-    average _campus_km reports. None when nobody has a located institution (as _campus_km). Presentation of existing values only."""
-    per = {}
-    for u in units:
-        inst = _campus(u.extra)
-        km = _km(apt.lat, apt.lon, inst["lat"], inst["lon"]) if inst else None
-        if inst and km is not None:
-            per[refs.get(u.people[0].id, u.id)] = {"institution": inst.get("name"), "km": round(km, 1)}
-    if not per:
-        return None
-    return {"km_average": _campus_km(apt, units), "per_person": per, "basis": CAMPUS_DISTANCE_BASIS}
 
 
 def rule_check_facts(apt, units, chk, refs: dict) -> list[dict]:
@@ -1118,9 +1101,8 @@ def candidate_apartment_packet(apt_row: dict, g: dict, refs: dict) -> dict:
             "available_from": apt_row.get("available_from"), "lease_start": chk.lease_start.isoformat(), "lease_end": chk.lease_end.isoformat(),
             "rate_kind": chk.rate_kind, "rate_band": rate_band_fact(chk.rate_kind), "stay_days": stay_days_fact(chk.lease_start, chk.lease_end),
             "total_weekly": chk.total_weekly, "extra_bed": chk.extra_bed, "allocation": chk.allocation,
-            "allocation_for_ai": allocation_for_ai(chk.allocation, refs), "campus_km": _campus_km(apt, g["units"]), "rule_score": g["rule_score"],
+            "allocation_for_ai": allocation_for_ai(chk.allocation, refs), "rule_score": g["rule_score"],
             "score_parts": g["score_parts"], "rank": 1, "rule_rank": 1, "rule_checks": rule_check_facts(apt, g["units"], chk, refs),
-            "campus_distance": campus_distance_fact(apt, g["units"], refs),
             "step_free_access": access_facts.effective(apt_row)["value"], "step_free_source": access_facts.effective(apt_row)["source"],
             "features": feature_facts(apt_row, [u.extra for u in g["units"]], refs)}
 
@@ -1193,7 +1175,7 @@ def run_match(c, apartment_id: int, staff: str | None, dataset: str = "real", us
                     c.execute("""INSERT OR REPLACE INTO group_apartments(group_id, apartment_id, rank, rule_rank, rule_score, ai_reason, lease_start, lease_end, rate_kind, exit_window,
                                  weekly_rent, extra_bed, total_weekly, allocation_json) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                               (gid, apartment_id, nxt, nxt, opt["rule_score"], None, opt["lease_start"], opt["lease_end"], opt["rate_kind"], opt["exit_window"],
-                               opt["weekly_rent"], opt["extra_bed"], opt["total_weekly"], _alloc_json(c, opt["allocation"], cands[i]["units"], score_parts=opt["score_parts"], campus_km=opt["campus_km"])))
+                               opt["weekly_rent"], opt["extra_bed"], opt["total_weekly"], _alloc_json(c, opt["allocation"], cands[i]["units"], score_parts=opt["score_parts"])))
                     _store_exception_fields(c, gid, apartment_id, opt)
                     if previous:
                         c.execute("UPDATE group_apartments SET ai_reason=?,rule_rank=? WHERE group_id=? AND apartment_id=?",
@@ -1310,17 +1292,6 @@ def member_key(units: list[rules.Unit]) -> str:
     return ",".join(str(i) for i in sorted(int(u.id) for u in units))
 
 
-def _campus_km(apt: rules.Apartment, units: list[rules.Unit]) -> Optional[float]:
-    kms = []
-    for u in units:
-        c = _campus(u.extra)
-        if c:
-            km = _km(apt.lat, apt.lon, c["lat"], c["lon"])
-            if km is not None:
-                kms.append(km)
-    return round(sum(kms) / len(kms), 1) if kms else None
-
-
 def _apt_option(a_row: dict, apt: rules.Apartment, g: dict) -> dict:
     """One ranked-apartment entry for a group (GP6): whole weekly rent (B5), per-room shares (A12(e)), dates and reasons."""
     chk: rules.GroupCheck = g["check"]
@@ -1331,7 +1302,7 @@ def _apt_option(a_row: dict, apt: rules.Apartment, g: dict) -> dict:
         "lease_start": chk.lease_start.isoformat(), "lease_end": chk.lease_end.isoformat(), "rate_kind": chk.rate_kind, "exit_window": chk.exit_window,
         "weekly_rent": chk.weekly_rent, "extra_bed": chk.extra_bed, "total_weekly": chk.total_weekly, "allocation": chk.allocation,
         "exception_ref": chk.exception_ref, "exception_total": chk.exception_total,
-        "rule_score": g["rule_score"], "score_parts": g["score_parts"], "campus_km": _campus_km(apt, g["units"]), "ai_reason": None,
+        "rule_score": g["rule_score"], "score_parts": g["score_parts"], "ai_reason": None,
     }
 
 
@@ -2031,7 +2002,7 @@ def _merge_apartments(c, gid: int, new_opts: list[dict], units: list | None = No
         c.execute("""INSERT OR REPLACE INTO group_apartments(group_id, apartment_id, rank, rule_rank, rule_score, ai_reason, lease_start, lease_end, rate_kind, exit_window,
                      weekly_rent, extra_bed, total_weekly, allocation_json) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                   (gid, aid, rank, o.get("rule_rank"), o["rule_score"], reasons.get(aid), o["lease_start"], o["lease_end"], o["rate_kind"], o["exit_window"],
-                   o["weekly_rent"], o["extra_bed"], o["total_weekly"], _alloc_json(c, o["allocation"], units, score_parts=o.get("score_parts"), campus_km=o.get("campus_km"))))
+                   o["weekly_rent"], o["extra_bed"], o["total_weekly"], _alloc_json(c, o["allocation"], units, score_parts=o.get("score_parts"))))
         _store_exception_fields(c, gid, aid, o)
     g = row(c.execute("SELECT apartment_id FROM groups WHERE id=?", (gid,)))
     if order:
@@ -2069,7 +2040,7 @@ def persist_group(c, run_id: int | None, e: dict, basis: str, run_kind: str) -> 
         c.execute("""INSERT OR REPLACE INTO group_apartments(group_id, apartment_id, rank, rule_rank, rule_score, ai_reason, lease_start, lease_end, rate_kind, exit_window,
                      weekly_rent, extra_bed, total_weekly, allocation_json) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                   (gid, o["apartment_id"], rank, o.get("rule_rank"), o["rule_score"], o.get("ai_reason"), o["lease_start"], o["lease_end"], o["rate_kind"], o["exit_window"],
-                   o["weekly_rent"], o["extra_bed"], o["total_weekly"], _alloc_json(c, o["allocation"], e["units"], score_parts=o.get("score_parts"), campus_km=o.get("campus_km"))))
+                   o["weekly_rent"], o["extra_bed"], o["total_weekly"], _alloc_json(c, o["allocation"], e["units"], score_parts=o.get("score_parts"))))
     _write_members(c, gid, top["allocation"])
     _membership_changed(c, gid, "proposed")   # inside the run's save guard: version 1 of this membership (not introduced)
     return gid

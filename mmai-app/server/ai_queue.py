@@ -377,7 +377,7 @@ def _payload(c, g: dict, cap: dict | None = None) -> dict | None:
                 raise OfferDrift(g["id"], a["id"])
             refreshed = {"lease_start": chk.lease_start.isoformat(), "lease_end": chk.lease_end.isoformat(), "rate_kind": chk.rate_kind, "exit_window": chk.exit_window,
                          "weekly_rent": chk.weekly_rent, "extra_bed": chk.extra_bed, "total_weekly": chk.total_weekly,
-                         "allocation_json": j({"rooms": chk.allocation, "score_parts": parts, "campus_km": matching._campus_km(apt, ordered)}),
+                         "allocation_json": j({"rooms": chk.allocation, "score_parts": parts}),
                          "exception_ref": chk.exception_ref, "exception_total": chk.exception_total}
             c.execute("UPDATE group_apartments SET lease_start=?, lease_end=?, rate_kind=?, exit_window=?, weekly_rent=?, extra_bed=?, total_weekly=?, allocation_json=?, exception_ref=?,exception_total=? WHERE group_id=? AND apartment_id=?",
                       (*refreshed.values(), g["id"], a["id"]))
@@ -389,7 +389,6 @@ def _payload(c, g: dict, cap: dict | None = None) -> dict | None:
                      "lease_end": chk.lease_end.isoformat(), "rate_kind": chk.rate_kind, "rate_band": matching.rate_band_fact(chk.rate_kind),
                      "stay_days": matching.stay_days_fact(chk.lease_start, chk.lease_end), "total_weekly": chk.total_weekly, "extra_bed": chk.extra_bed,
                      "allocation": chk.allocation, "allocation_for_ai": matching.allocation_for_ai(chk.allocation, refs),
-                     "campus_km": matching._campus_km(apt, ordered), "campus_distance": matching.campus_distance_fact(apt, ordered, refs),
                      "rule_score": score, "score_parts": parts, "rank": ga["rank"],
                      "rule_checks": matching.rule_check_facts(apt, ordered, chk, refs),
                      "step_free_access": access_facts.effective(a)["value"], "step_free_source": access_facts.effective(a)["source"],   # A13(a) recorded fact bound to this row's address: 1 / 0 / None (facts.catalogue decides recorded vs missing)

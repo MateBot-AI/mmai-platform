@@ -1255,7 +1255,7 @@
     const declined = !!((g.declined_apartments || {})[String(a.apartment_id)] || []).length;
     return `<li class="apt-opt ${cur ? 'is-current' : ''} ${(a.taken_by || []).length || declined ? 'is-taken' : ''}">
       <span class="apt-opt__rank mono">${a.rank}</span>
-      <div class="apt-opt__body"><b><a href="#/staff/apartments/${a.apartment_id}" data-apt-link="${a.apartment_id}">${esc(a.address)}</a></b> <span class="small muted">${esc(a.type_label || a.type_code)} · ${esc(a.suburb || '')}${a.campus_km != null ? ` · ~${a.campus_km} km to campus` : ''} · ${fmtD(a.lease_start)} → ${fmtD(a.lease_end)} · ${a.rate_kind === '6m' ? '6-month rate' : '12-month rate'}${a.bills_included ? ' · bills incl.' : ''}</span>
+      <div class="apt-opt__body"><b><a href="#/staff/apartments/${a.apartment_id}" data-apt-link="${a.apartment_id}">${esc(a.address)}</a></b> <span class="small muted">${esc(a.type_label || a.type_code)} · ${esc(a.suburb || '')} · ${fmtD(a.lease_start)} → ${fmtD(a.lease_end)} · ${a.rate_kind === '6m' ? '6-month rate' : '12-month rate'}${a.bills_included ? ' · bills incl.' : ''}</span>
         <div class="small"><span class="mono"><b>${money(a.total_weekly)}/wk</b> whole apartment${a.extra_bed ? ` (incl. $${a.extra_bed} extra bed)` : ''}</span> · shares ${shareRange(a.rooms || [])} ${cur ? '<span class="badge badge--ok">current</span>' : ''} ${a.shortlist_role === 'reserve' ? '<span class="badge" data-role="apartment-reserve" title="Not one of the group\'s three shortlisted apartments. It moves up only when a shortlisted apartment is leased or declined">reserve</span>' : ''} ${takenHtml(a)} ${declinedHtml(a, g)}</div>
         ${practicalHoldHtml(a)}
         ${a.ai_reason ? `<p class="small apt-opt__why">${esc(a.ai_reason)}</p>` : `<p class="small muted apt-opt__why">Rule preference score ${Math.round(a.rule_score)}/100${a.rule_rank ? ` (rule rank ${a.rule_rank})` : ''}.</p>`}</div>
@@ -1264,6 +1264,99 @@
   }
   const FLAG_LABELS = { lease: 'Moved after a lease', stock: 'Apartment changed', rejection: 'Member rejected', bar: 'Member barred', replacement: 'Replacement accepted', dissolved: 'Dissolved by staff', mate: 'Friend brought along' };
   const flagLabel = g => FLAG_LABELS[g.flag_kind] || (g.status === 'Dissolved' ? 'Dissolved' : 'Note');
+  /* MateBot groups: travel is checked last, live, and never saved. Until a check has been run on the group page and the AI has
+     assessed its results, the apartments listed for a group are candidates and are labelled so; they never read as confirmed. */
+  function travelProvisionalHtml(g, opts = {}) {
+    if (['Leased', 'Dissolved'].includes(g.status) || !(g.apartments || []).length) return '';
+    const live = g.travel_live || {};
+    return `<p class="msg small" data-role="travel-provisional" data-state="${live.enabled ? 'live' : 'off'}"><b>Provisional.</b> Travel to campus or work is checked last and has not been checked for the apartments listed here, so they are candidates and not a confirmed shortlist. ${
+      live.enabled ? (opts.offer ? 'The live travel check below shows the result, with the AI\'s assessment; it is not saved.' : 'Open the group to run the live travel check; its result is shown there and is not saved.')
+        : 'Live travel checks are switched off, so travel time needs confirmation before an apartment is treated as suitable.'}</p>`;
+  }
+  const mbTravelShown = new Map();
+  function groupTravelView(r) {
+    if (!r) return '';
+    if (!r.ok) return `<p class="msg small" data-role="mb-travel-refused" data-state="${esc(r.state || '')}">${esc(r.plain)}</p>`;
+    const k = r.check || {}, gate = r.ai_gate || {}, ai = r.ai_reply || {};
+    const missed = (k.failures || 0) + (k.not_requested || 0);
+    const sources = x => {
+      const src = x.travel_sources || {};
+      const links = (src.links || []).filter(q => /^https:\/\//.test(q.url || '')).map(q => `<a href="${esc(q.url)}" target="_blank" rel="noopener noreferrer">${esc(q.title)}</a>`);
+      if (!x.measured && !links.length) return '';
+      return `<p class="small" data-role="mb-travel-sources">Sources: ${GMAPS_TEXT}${links.length ? ' · ' + links.join(' · ') : ''}</p>${src.walking_warning ? `<p class="small muted" data-role="mb-walk-warning">${esc(src.walking_warning)}</p>` : ''}`;
+    };
+    const aiNote = x => {
+      const a = x.ai_travel;
+      if (!a) return '';
+      return `<p class="small" data-role="mb-travel-ai-view"><b>AI assessment${a.of > 1 ? ` (its choice ${a.preference} of ${a.of})` : ''}.</b> Travel: ${esc(a.travel_rating_plain)}.
+        ${(a.strengths || []).length ? `<br>Strengths: ${a.strengths.map(esc).join(' ')}` : ''}${(a.weaknesses || []).length ? `<br>Weaknesses: ${a.weaknesses.map(esc).join(' ')}` : ''}
+        <br>Advice: ${esc(a.advice_plain)}</p>
+        <p class="small" data-role="mb-travel-ai-note"><b>Journey figures the AI reported.</b> ${esc(a.note)}<br>
+        Each person against their own stated time: ${a.within_own_limit} within, ${a.over_own_limit} over, ${a.not_known} not known, ${a.no_stated_limit} with no stated time${a.no_destination ? `, ${a.no_destination} with no destination to measure to` : ''}.
+        Group result: ${esc(a.group_plain)}.</p>`;
+    };
+    const item = (x, label) => `<li class="apt-opt" data-role="mb-travel-option" data-result="${esc(x.role)}" data-apartment="${x.apartment_id}">
+      <div class="apt-opt__body"><b>${esc(x.address || '')}</b> <span class="small muted">${esc(x.type_label || '')} · ${esc(x.suburb || '')} · ${money(x.total_weekly)}/wk whole apartment</span>
+        <span class="badge ${x.role === 'failed' ? 'badge--flag' : gate.held ? 'badge--alt' : 'badge--ok'}">${esc(label)}</span>${x.is_current ? ' <span class="badge">current offer</span>' : ''}${x.replacement ? ' <span class="badge badge--alt">moved up after another failed travel</span>' : ''}
+        <p class="small"><b>${esc(x.result_plain)}</b>${(x.reasons_plain || []).length ? ' Why: ' + x.reasons_plain.map(esc).join('; ') + '.' : ''}</p>
+        ${x.practical_need_hold ? `<p class="small msg">${esc(x.practical_need_reason || 'An essential practical need is not confirmed for this apartment.')}</p>` : ''}
+        ${aiNote(x)}
+        <details class="small" ${x.role === 'failed' ? '' : 'open'}><summary>Journey estimates for each person</summary>${(x.journey_lines || []).map(esc).join('<br>')}${x.measured ? '<br>' + GMAPS_ATTR : ''}</details>
+        ${sources(x)}</div></li>`;
+    const provisional = gate.held !== false;
+    return `<div data-role="mb-travel-result"><p class="small">${GMAPS_ATTR}<br>Journey estimates. ${esc(k.basis || '')}. Checked ${fmtDT(k.checked_at)}.</p>
+      ${gate.plain ? `<p class="${gate.held ? 'msg ' : ''}small" data-role="mb-travel-gate" data-state="${esc(gate.state || '')}"><b>${gate.held ? 'Held.' : 'AI-assessed.'}</b> ${esc(gate.plain)}</p>` : ''}
+      ${ai.plain ? `<p class="small${ai.state === 'ready' ? '' : ' muted'}" data-role="mb-travel-ai" data-state="${esc(ai.state || '')}">${esc(ai.plain)}</p>` : ''}
+      <p class="small muted">The apartments are chosen without travel first. Travel is checked last, for up to ${r.shortlist_max || 3} apartments; one that fails is replaced by the next stored candidate and the replacement is checked. ${esc(r.plain)}</p>
+      ${r.unruled_note ? `<p class="msg small" data-role="mb-travel-unruled">${esc(r.unruled_note)}</p>` : ''}
+      ${missed ? `<p class="msg small">${missed} journey${missed === 1 ? '' : 's'} could not be checked this time; where a time is missing the apartment reads "Travel time needs confirmation".</p>` : ''}
+      ${!k.requests ? '<p class="small muted">No journeys were requested: no member has both a place of study with a verified address and an answer for how they would travel.</p>' : ''}
+      ${(r.shortlist || []).length ? `<h4 class="small">${provisional ? 'Provisional shortlist (not confirmed)' : 'Shortlist'} · up to ${r.shortlist_max || 3}</h4><ol class="apt-list">${r.shortlist.map(x => item(x, provisional ? 'provisional' : 'AI-assessed')).join('')}</ol>` : '<p class="small">No apartment is left on the shortlist after the travel check.</p>'}
+      ${(r.failed || []).length ? `<h4 class="small">Failed the travel check (not on the shortlist)</h4><ol class="apt-list">${r.failed.map(x => item(x, 'failed travel')).join('')}</ol>` : ''}
+      ${(r.not_checked || []).length ? `<p class="small muted" data-role="mb-travel-not-checked">Travel not checked (reserves, no place open): ${r.not_checked.map(x => esc(x.address || ('apartment ' + x.apartment_id))).join('; ')}.</p>` : ''}
+      <details class="small"><summary>Who was counted (${(r.people || []).length} people)</summary>${(r.people || []).map(q => `Person ${q.position}${q.name ? ' (' + esc(q.name) + ')' : ''}: ${
+        q.institution ? 'studies at ' + esc(q.institution) : esc(q.no_destination || 'no destination')}; maximum travel time ${q.stated_time ? esc(q.stated_time) : 'not stated'}; would travel by ${(q.travel_choices || []).length ? q.travel_choices.map(esc).join(', ') : 'not answered'}`).join('<br>')}</details></div>`;
+  }
+  /* The group page's live travel check: run once when the page opens (when that is switched on) and again on request. The reply
+     is kept in this page only, for at most 30 minutes, so a redraw does not ask again; nothing is saved anywhere. */
+  function groupTravelPanel(box, g) {
+    const live = g.travel_live || {};
+    if (!box || !live.enabled || ['Leased', 'Dissolved'].includes(g.status) || !(g.apartments || []).length) { if (box) box.innerHTML = ''; return; }
+    mbTravelShown.forEach(kept => { if (kept.reply && Date.now() - kept.at > HB_TRAVEL_KEEP_MS) kept.reply = null; });
+    const key = `${g.id}:${g.apartment_id}:${(g.apartments || []).map(a => a.apartment_id + '.' + a.shortlist_role).join(',')}:${(g.members || []).map(m => m.enquiry_id).join(',')}`;
+    const kept = mbTravelShown.get(key) || { at: 0, reply: null, busy: false };
+    mbTravelShown.set(key, kept);
+    box.innerHTML = `<div class="card card--tight mt" data-role="mb-travel"><h3>Travel check · live</h3>
+      <div class="actions"><button class="btn btn--sm" type="button" data-action="mb-travel">${kept.reply ? 'Check travel times again' : 'Check travel times now'}</button></div>
+      <p class="small muted">${esc(live.plain || '')}</p>
+      <div data-role="mb-travel-out" aria-live="polite">${kept.reply ? groupTravelView(kept.reply) : ''}</div></div>`;
+    const out = box.querySelector('[data-role="mb-travel-out"]'), btn = box.querySelector('button[data-action="mb-travel"]');
+    const run = async asked => {
+      if (kept.busy) return;
+      kept.busy = true; btn.disabled = true;
+      out.innerHTML = '<p class="small muted">Checking travel times… this can take up to a minute.</p>';
+      try {
+        kept.reply = await api.post(`/api/groups/${g.id}/travel-check`, {});
+        kept.at = Date.now();
+        const shownAt = kept.at;
+        setTimeout(() => {
+          if (kept.at !== shownAt) return;
+          kept.reply = null;
+          if (out.isConnected) { out.innerHTML = '<p class="small muted">The journey times shown earlier have been cleared. Check travel times again to see current ones.</p>'; btn.textContent = 'Check travel times now'; }
+        }, HB_TRAVEL_KEEP_MS);
+        if (!out.isConnected) return;
+        out.innerHTML = groupTravelView(kept.reply);
+        btn.textContent = 'Check travel times again';
+      } catch (ex) {
+        kept.reply = null;
+        if (out.isConnected) out.innerHTML = `<p class="msg err small">${esc(asked ? ex.message : 'Travel times could not be checked just now. Use the button to try again.')}</p>`;
+      } finally { kept.busy = false; if (btn.isConnected) btn.disabled = false; }
+    };
+    btn.addEventListener('click', () => run(true));
+    // when the group opens, check travel once (not again on every redraw; the button checks again on request)
+    if (live.auto && !kept.reply && !kept.at) run(false);
+  }
+
   function groupCard(g, opts = {}) {
     const apts = g.apartments || [];
     const top = apts.find(a => a.is_current) || apts[0];
@@ -1306,9 +1399,9 @@
           ${(top.taken_by || []).length ? `<p class="msg err small">This apartment has been leased${top.taken_by[0].group_id ? ` (Group ${top.taken_by[0].group_id})` : ''}. ${nextBest ? `Next best: <b>${esc(nextBest.address)}</b> at ${money(nextBest.total_weekly)}/wk.` : 'No other available apartment on this group\'s list; run full matching.'}</p>` : ''}</div>`
         : g.no_current_offer ? `<div class="best-apt"><div class="best-apt__head"><span class="eyebrow">Apartment</span><b>No current offer</b><span class="spacer"></span></div><p class="small muted">No apartment is currently selected for this group.${noCurrentApartment(g) ? ' Check its current requirements and the stock, then use Re-check apartment options on the group page. Its members remain together.' : ''}</p></div>`
         : `<div class="best-apt"><div class="best-apt__head"><span class="eyebrow">Apartment</span><b>${esc(g.address || '')}</b><span class="spacer"></span><span class="mono"><b>${money(g.total_weekly)}/wk</b> whole apartment</span></div><p class="liability small">${esc(g.liability_note || '')}</p>${roomsHtml(rooms)}</div>`}
+      ${travelProvisionalHtml(g, opts)}
       ${others.length ? `<details class="more apt-more" ${opts.offer ? 'open' : ''}><summary>Other apartment candidates (${others.length}) · check any warnings before offering; nothing is reserved</summary>
           ${others.some(a => a.shortlist_role === 'reserve') ? `<p class="small muted" data-role="shortlist-limit">At most ${g.shortlist_max || 3} apartments are shortlisted for a group, the current one included. The others are reserves, kept in their ranked order: one moves up only when a shortlisted apartment is leased or declined.</p>` : ''}
-          ${g.travel_check === 'not_connected' ? '<p class="small muted" data-role="travel-not-checked">Travel to campus or work has not been checked for these apartments.</p>' : ''}
           <ol class="apt-list">${others.map(a => aptRowHtml(a, g, opts)).join('')}</ol></details>` : ''}
     </article>`;
   }
@@ -1456,6 +1549,7 @@
       <div class="pane-head"><button class="btn btn--ghost btn--sm" type="button" data-role="back">← Groups</button><h1>Group ${g.id}</h1>${g.apartment_id != null ? `<a class="small" href="#/staff/apartments/${g.apartment_id}">${esc(g.address)}</a>` : `<span class="small muted">No current offer</span>`}</div>
       ${state.cache.flash ? `<p class="msg ${state.cache.flashHeld || /^No replacement/.test(state.cache.flash) ? 'err' : 'ok'}">${esc(state.cache.flash)}</p>` : ''}
       ${groupCard(g, { offer: true })}
+      <div data-role="mb-travel-panel"></div>
       <div data-role="exit-exceptions"></div>
       ${(g.alternatives || []).length ? `<details class="more mt"><summary>Alternative groupings for these people (${g.alternatives.length}) — view only (the AI, not staff, decides who is grouped)</summary>
         <ul class="small alt-list">${g.alternatives.map(a => `<li><a href="#/staff/groups/${a.id}">Group ${a.id}</a> ${a.is_primary ? '<span class="badge badge--ok">proposed</span>' : '<span class="badge badge--alt">alternative</span>'} · ${a.ai_rating != null ? `AI ${Number(a.ai_rating).toFixed(1)}` : a.rule_score == null ? 'rules score not recorded' : `rules ${Math.round(a.rule_score)}`} · ${a.members.map(esc).join(', ')} · ${esc(a.address)}</li>`).join('')}</ul></details>` : ''}
@@ -1549,6 +1643,7 @@
       const lb = p.querySelector('[data-role="intro-label"]'); if (lb) lb.textContent = 'Earlier draft: reload required';
       msg(im, `${why} The draft shown here is no longer the current one: copying, emailing and saving are switched off until you reload this group. Your unsaved text remains in the text box.`, false);
     };
+    groupTravelPanel(p.querySelector('[data-role="mb-travel-panel"]'), g);
     window.MMAI_STAFF_EXCEPTIONS.mount(p.querySelector('[data-role="exit-exceptions"]'), {
       bot: 'matebot', id, owner: g,
       canWrite: ['Proposed', 'Introduced', 'Group confirmed', 'Awaiting replacement'].includes(g.status) && g.is_primary !== false,
@@ -1568,7 +1663,7 @@
       msg(im, 'A booking decision or option re-check is in progress. Reload this group before copying, emailing or editing its introduction.', false);
     }
     p.addEventListener('click', async ev => {
-      const b = ev.target.closest('button'); if (!b || b.closest('[data-role="exit-exceptions"]')) return;
+      const b = ev.target.closest('button'); if (!b || b.closest('[data-role="exit-exceptions"]') || b.closest('[data-role="mb-travel-panel"]')) return;
       try {
         if (b.dataset.action === 'recheck-options') {
           b.disabled = true;

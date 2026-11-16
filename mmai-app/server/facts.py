@@ -32,7 +32,7 @@ PARTY_FIELDS = ("party", "party_size", "move_in", "move_out",      # I16(d): the
 HOUSEHOLD_BUDGET_FACTS = {"total_weekly_rent_exact": "AUD per week", "whole_apartment_max_exact": "AUD per week",
                           "allowance_fraction": "fraction of the household maximum (0.10 = ten percent)", "limit_exact": "AUD per week"}
 HOUSEHOLD_BUDGET_FIELDS = tuple(HOUSEHOLD_BUDGET_FACTS)   # staff-visible fields (staff_view.FACT_LABELS must label each)
-APARTMENT_FIELDS = ("type_label", "suburb", "bills_included", "available_from", "lease_start", "lease_end", "stay_days", "rate_band", "total_weekly", "extra_bed", "campus_km")
+APARTMENT_FIELDS = ("type_label", "suburb", "bills_included", "available_from", "lease_start", "lease_end", "stay_days", "rate_band", "total_weekly", "extra_bed")
 # rate_band replaces the bare rate_kind code ('6m'): the packet carries an explicit A6 pricing-band description plus the exact stay_days,
 # so a model cannot read the band as the lease length (a 1 Feb - 10 Jul stay is 159 days, not six months).
 FEATURE_UNRECORDED = (None, "", "Unknown", "unknown", "unverified")   # apartment_features.compare says 'unverified' when staff have not recorded yes/no
@@ -340,7 +340,7 @@ def check_items(items, cat: dict[str, dict], *, ref: str | None, allow_missing: 
 # verbatim (a course called "Timetable Design", a typed course answer) is masked before judging - the same words elsewhere are judged; "both study
 # Engineering at the same RMIT campus" (what is recorded) passes. Bare "schedule(s)" is judged only when the note rests on study
 # facts and cites no routine (sleep-pattern) fact, since a routine note may honestly say "schedules". No blanket word ban.
-STUDY_FIELDS = ("doing", "school", "course", "level", "campus_km")
+STUDY_FIELDS = ("doing", "school", "course", "level", "campus_km")   # campus_km: no longer supplied (M4); kept so an old cited id is still judged
 _TIMETABLE = re.compile(r"\b(time ?tables?|class(?:es)? (?:times?|schedules?|hours)|lecture (?:times?|schedules?)|(?:study|uni|university|campus|contact) "
                         r"(?:hours|schedules?|days)|attendance|on campus (?:at|around) the same (?:time|hours))\b", re.I)
 _SCHEDULE = re.compile(r"\bschedules?\b", re.I)

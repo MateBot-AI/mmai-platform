@@ -20,6 +20,14 @@ Mapping — only what the MateBot question means the same thing (no guessing; H5
   mate_max            → NOT prefilled                        (HomeBot asked for the total wanted, not the most they would accept)
   budget              → NOT prefilled                        (HomeBot's budget is for the whole apartment; MateBot's is per person
                                                               — never confused, H5; and it has not been asked yet anyway)
+  how you would travel → travel_modes, ONLY when it was already answered (16 Nov 2026). The hand-off screen comes before
+                        HomeBot's travel question, so normally there is no answer and nothing is carried. Someone who answered
+                        it and then went back to change their party has one: the choices they ticked are carried exactly as
+                        ticked, and only the form's three (Walk, Bicycle, Public transport), which mean the same in both
+                        forms. Anything else (an earlier Tram, Train, Bus or Car answer, or text that is not a choice) is
+                        left out and never read as another choice; MateBot asks the question on its own screen either way.
+  longest trip        → NOT prefilled                        (HomeBot's is one answer for the whole party's stated preference;
+                                                              MateBot's is asked of each enquirer and is optional)
 No name, email, phone or any other identity detail exists at this point, and none is ever written into the hand-off draft.
 
 The HomeBot enquiry table records nothing for this branch (unchanged): the party continues as a MateBot enquiry.
@@ -34,6 +42,7 @@ from . import security as sec
 ORIGIN = "homebot"
 MIN_NOW, MAX_NOW, MIN_TARGET, MAX_TARGET = 1, 6, 2, 7   # the HomeBot hand-off screen shows for a wanted total of 2..7 (8+ is routed to staff)
 DRAFT_DAYS = 365   # same retention as any other saved form (T5)
+TRAVEL_CHOICES = ("Walk", "Bicycle", "Public transport")   # the one question both forms ask with the same three choices (H28(c), H31)
 
 
 class HandoffError(ValueError):
@@ -42,8 +51,17 @@ class HandoffError(ValueError):
         self.errors = errors
 
 
-def prefill(headcount_now, headcount_target) -> dict:
-    """Validated MateBot answers for a HomeBot party of `headcount_now` people wanting `headcount_target` in total."""
+def carried_travel(transport) -> list:
+    """The travel choices to carry: exactly those ticked that are one of the form's three, in the form's order. Nothing is
+    added, widened or translated; an answer that is not a list of choices carries nothing."""
+    if not isinstance(transport, (list, tuple)):
+        return []
+    return [m for m in TRAVEL_CHOICES if any(isinstance(v, str) and v == m for v in transport)]
+
+
+def prefill(headcount_now, headcount_target, transport=None) -> dict:
+    """Validated MateBot answers for a HomeBot party of `headcount_now` people wanting `headcount_target` in total, with the
+    travel choices already ticked on the HomeBot form, if any."""
     errors: dict = {}
     now = sec.as_int(headcount_now, -1, -1, 99)
     target = sec.as_int(headcount_target, -1, -1, 99)
@@ -63,10 +81,13 @@ def prefill(headcount_now, headcount_target) -> dict:
     else:
         answers["party"] = "With friends"
         answers["party_size"] = str(now)
+    travel = carried_travel(transport)
+    if travel:
+        answers["travel_modes"] = travel
     return answers
 
 
-def carried_sentences(headcount_now: int, headcount_target: int) -> list[str]:
+def carried_sentences(headcount_now: int, headcount_target: int, travel=()) -> list[str]:
     """Plain words for the HomeBot hand-off screen: what is carried across, and what MateBot still asks (T10)."""
     now, target = int(headcount_now), int(headcount_target)
     extra = target - now
@@ -79,19 +100,21 @@ def carried_sentences(headcount_now: int, headcount_target: int) -> list[str]:
         out.append(f"That {now} of you are enquiring together as friends.")
     out.append(f"That you would ideally like {target - 1} other {'housemate' if target - 1 == 1 else 'housemates'} living with you in total "
                f"— the {now} {'person' if now == 1 else 'people'} you have now plus the {extra} more you want.")
+    if travel:
+        out.append(f"How you said you would get to campus or work: {', '.join(travel)}. MateBot asks this on its own screen, where you can change it.")
     out.append("Everything else — your names and contact details, dates, budget per person, preferences and the most housemates you would accept — "
                "is asked by MateBot, and you can change the carried answers on their own screens.")
     return out
 
 
-def create(c, headcount_now, headcount_target, *, is_test: bool, now_iso: str, expires_iso: str) -> dict:
+def create(c, headcount_now, headcount_target, *, is_test: bool, now_iso: str, expires_iso: str, transport=None) -> dict:
     """Save the hand-off as a MateBot draft (origin='homebot'); returns the token, the carried answers and the plain sentences.
     The draft holds matching answers only (no identity); it expires like any saved form and is wiped with test data when is_test."""
     is_test = bool(is_test) or sec.pilot_gate_enabled()   # controlled pilot: saved forms are TEST too
-    answers = prefill(headcount_now, headcount_target)
+    answers = prefill(headcount_now, headcount_target, transport)
     token = secrets.token_urlsafe(18)
     c.execute("INSERT INTO form_drafts(token, answers_json, step, email, is_test, mate_token, email_token, created_at, updated_at, expires_at, submit_key, origin) "
               "VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
               (token, json.dumps(answers, separators=(",", ":"), sort_keys=True), 0, None, 1 if is_test else 0, None, None, now_iso, now_iso, expires_iso, None, ORIGIN))
     return {"token": token, "resume": "#/resume?t=" + token + ("&test=1" if is_test else ""), "answers": answers,
-            "carried": carried_sentences(int(headcount_now), int(headcount_target)), "is_test": bool(is_test)}
+            "carried": carried_sentences(int(headcount_now), int(headcount_target), answers.get("travel_modes") or ()), "is_test": bool(is_test)}

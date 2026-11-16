@@ -98,7 +98,11 @@ OUTPUT_TOKENS = 1800
 # budget and never above ai.OUTPUT_TOKEN_CEILING. A reply cut off there gets the usual one compact retry and no more.
 # 2000 + 150 (first 1500 + 120): the reviewer's margin, because digits and fact ids take more tokens than prose and the number
 # of fact ids in a finding is not capped. Too small a budget costs a held review, never an unreviewed pass.
-OUTPUT_TOKENS_BASE, OUTPUT_TOKENS_PER_OPTION = 2000, 150
+# 2300 + 200 (16 Nov 2026, was 2000 + 150): more room for a full pool of fifteen. 5,300 for the first attempt and 7,950 for the
+# one compact retry, the most that still fits under the 8,000 ceiling at 1.5 times, so the retry is never the same size as a
+# first attempt that was cut off. Still an estimate, not a measurement against the model; the cost bound is unchanged (two
+# calls at most, each capped by the ceiling).
+OUTPUT_TOKENS_BASE, OUTPUT_TOKENS_PER_OPTION = 2300, 200
 # automatic consumer (runs inside the existing AI queue worker, ai_queue._iteration): rows per batch, batches per wake, and the
 # delay before a row that stays pending after an attempt (provider failure / unusable reply) is tried again
 BATCH = int(os.environ.get("MMAI_HOMEBOT_REVIEW_BATCH", "5"))

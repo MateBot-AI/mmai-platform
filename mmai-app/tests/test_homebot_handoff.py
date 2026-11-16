@@ -65,6 +65,44 @@ def test_carried_sentences_explain_now_total_and_additional_people_plainly():
     assert "on your own" in one and "1 other housemate living" in one
 
 
+# ------------------------------------------------------------------------------------------------- travel choices (16 Nov 2026)
+def test_travel_choices_already_ticked_are_carried_exactly_and_never_widened():
+    base = {"party": "With friends", "party_size": "3", "mate_ideal": "4"}
+    assert hh.prefill(3, 5) == base and hh.prefill(3, 5, None) == base and hh.prefill(3, 5, []) == base   # not answered: nothing carried
+    assert hh.prefill(3, 5, ["Public transport", "Walk"]) == dict(base, travel_modes=["Walk", "Public transport"])
+    assert hh.prefill(3, 5, ["Bicycle"])["travel_modes"] == ["Bicycle"]
+    # an earlier answer is never read as one of today's choices, alone or beside one
+    for old in (["Tram"], ["Train", "Bus"], ["Car"], ["Bike or scooter"], ["Tram", "Train", "Bus", "Car"], ["public transport"], ["Walking"]):
+        assert "travel_modes" not in hh.prefill(3, 5, old), old
+    assert hh.prefill(3, 5, ["Tram", "Walk", "Car"])["travel_modes"] == ["Walk"]
+    # anything that is not a list of choices carries nothing (and is not an error: the question is asked by MateBot anyway)
+    for odd in ("Walk", {"Walk": True}, 7, True, [["Walk"]], [None, 3, {"a": 1}]):
+        assert "travel_modes" not in hh.prefill(3, 5, odd), odd
+    assert hh.TRAVEL_CHOICES == ("Walk", "Bicycle", "Public transport")
+    from server import homebot, matebot_travel
+    assert list(hh.TRAVEL_CHOICES) == homebot.TRANSPORT == list(matebot_travel.MODES)
+    # the longest-trip answer is never carried: MateBot's is each enquirer's own and optional
+    assert "travel" not in hh.prefill(3, 5, ["Walk"]) and "max_travel" not in hh.prefill(3, 5, ["Walk"])
+
+
+def test_the_carried_travel_choices_are_named_and_stay_open_to_change():
+    assert len(hh.carried_sentences(3, 5)) == 3
+    out = hh.carried_sentences(3, 5, ["Walk", "Public transport"])
+    assert len(out) == 4 and out[2] == ("How you said you would get to campus or work: Walk, Public transport. "
+                                        "MateBot asks this on its own screen, where you can change it.")
+
+
+def test_handoff_route_carries_ticked_travel_choices_into_the_saved_form_for_review(client):  # noqa: F811
+    r = client.anon.post("/api/public/homebot/handoff", json={"headcount_now": 1, "headcount_target": 3, "transport": ["Public transport", "Tram", "Bicycle"]})
+    assert r.status_code == 201, r.text
+    out = r.json()
+    assert out["answers"] == {"party": "Alone", "mate_ideal": "2", "travel_modes": ["Bicycle", "Public transport"]} and len(out["carried"]) == 4
+    draft = client.anon.get("/api/public/drafts/" + out["token"]).json()
+    assert draft["answers"] == out["answers"] and draft["step"] == 0 and draft["origin"] == "homebot"   # opened at screen one: reviewed before the summary
+    r = client.anon.post("/api/public/homebot/handoff", json={"headcount_now": 1, "headcount_target": 3, "transport": ["Car"]})
+    assert r.status_code == 201 and "travel_modes" not in r.json()["answers"] and len(r.json()["carried"]) == 3
+
+
 # ---------------------------------------------------------------------------------------------------------------- API
 def test_handoff_route_saves_a_matebot_draft_that_resume_returns_from_screen_one(client):  # noqa: F811
     r = client.anon.post("/api/public/homebot/handoff", json={"headcount_now": 3, "headcount_target": 5})
@@ -134,7 +172,9 @@ def test_homebot_handoff_screen_carries_and_falls_back_honestly():
     assert "/api/public/homebot/handoff" in js and "#/resume?t=" in js and "prepareHandoff(scr)" in js
     assert "show('fallback')" in js   # a failed request never implies a transfer (H2)
     # Each changed script gets its own cache version, including self-hosted routing.
-    assert 'src="form.js?v=20261111-notifications"' in html
+    assert 'src="form.js?v=20261116-handoff-travel"' in html
+    # travel choices already ticked go across exactly as ticked, and only when there are any
+    assert "const travel = [].concat(value('transport') || []);" in js and "travel.length ? { transport: travel } : {}" in js
     assert 'src="app.js?v=20261111-selfhost"' in html
 
 

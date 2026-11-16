@@ -458,7 +458,9 @@
        link falls back to the plain MateBot form and the notice says nothing was carried (never implied, H2). */
     let handoff = { key: '', token: '', pending: null };
     function prepareHandoff(scr) {
-      const c = counts(); const key = `${c.now}:${c.target}:${handoffIsTest() ? 't' : ''}`;
+      // the travel choices are carried only if they were already ticked (someone who went back to change their party): exactly as ticked
+      const travel = [].concat(value('transport') || []);
+      const c = counts(); const key = `${c.now}:${c.target}:${handoffIsTest() ? 't' : ''}:${travel.join('|')}`;
       const notice = $('[data-role=handoffNotice]', scr), list = $('[data-role=handoffCarried]', scr), fb = $('[data-role=handoffFallback]', scr), intro = $('[data-role=handoffCarriedIntro]', scr);
       const links = $$('[data-role=matebotLink]', scr);
       const baseHref = a => a.dataset.baseHref || (a.dataset.baseHref = a.getAttribute('href'));
@@ -468,7 +470,7 @@
       const fail = () => { handoff = { key, token: '', pending: null }; setLinks(''); show('fallback'); };
       if (!API.ok || !c.now || !c.target || c.target <= c.now) { fail(); return; }
       setLinks(''); show('pending', ['Preparing the MateBot form…']);
-      const body = JSON.stringify({ headcount_now: c.now, headcount_target: c.target, is_test: handoffIsTest() });
+      const body = JSON.stringify(Object.assign({ headcount_now: c.now, headcount_target: c.target, is_test: handoffIsTest() }, travel.length ? { transport: travel } : {}));
       const p = fetch(API.base + '/api/public/homebot/handoff', { method: 'POST', credentials: 'omit', headers: { 'Content-Type': 'application/json' }, body })
         .then(r => { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
         .then(d => { if (handoff.pending !== p) return; handoff = { key, token: d.token, pending: null }; setLinks(d.token); show('ready', d.carried); })
