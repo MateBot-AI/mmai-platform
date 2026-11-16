@@ -261,6 +261,10 @@ AGENT_TOOLS_REQUEST_FIELDS = frozenset(("origin", "destination", "travelMode", "
 LIVE_ENV = AGENT_TOOLS_ENV
 LIVE_BASIS = "Estimated weekday departure at 08:00 Melbourne; not a guaranteed journey time"
 LIVE_OFF = "Live travel checks are switched off."
+# Test records (T14) reach the journey provider only while a controlled test is switched on with this exact value. Anyone can
+# make a test record from the public form, so without the switch a test record is never a reason for a provider request.
+LIVE_TEST_DATA_ENV = "MMAI_ROUTING_LIVE_TEST_DATA"
+LIVE_TEST_OFF = "Live travel checks are not run for test records unless a controlled test is switched on."
 # The provider's own words, which it requires beside every walking route shown.
 WALK_WARNING = "WALK routes are in beta and might sometimes be missing clear sidewalks or pedestrian paths."
 SOURCE_TITLE_MAX = 200
@@ -285,6 +289,15 @@ def live_enabled() -> bool:
 
 def live_auto() -> bool:
     return live_enabled() and os.environ.get("MMAI_ROUTING_LIVE_AUTO", "1") != "0"
+
+
+def live_test_data() -> bool:
+    """Whether test records may use the journey provider: only with the exact switch value, and only when checks are on."""
+    return live_enabled() and os.environ.get(LIVE_TEST_DATA_ENV, "0") == "1"
+
+
+def live_allowed_for(is_test) -> bool:
+    return live_enabled() and (not is_test or live_test_data())
 
 
 def live_limit(name: str) -> int:

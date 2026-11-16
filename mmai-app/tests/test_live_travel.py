@@ -96,6 +96,47 @@ def everything(reply):
     return [x for key in ("listed", "alternatives", "unresolved") for x in reply[key]] + ([reply["fourth_option"]] if reply["fourth_option"] else [])
 
 
+def test_a_test_enquiry_reaches_the_provider_only_while_a_controlled_test_is_switched_on(live, monkeypatch):
+    """Anyone can make a test record from the public form (T14). It is never a reason for a provider request unless the
+    controlled-test switch is on with its exact value; real records are unaffected by the switch."""
+    on, eid = live
+    asked = []
+    monkeypatch.setattr(routing, "_agent_tools_post", lambda body: asked.append(1) or (_ for _ in ()).throw(RuntimeError("stand-in")))
+    monkeypatch.delenv(routing.LIVE_TEST_DATA_ENV, raising=False)
+    assert on.get(f"/api/homebot/enquiries/{eid}/options").json()["live_travel"]["enabled"] is True      # a real record: as before
+    on.db.execute("UPDATE homebot_enquiries SET is_test=1 WHERE id=?", (eid,))
+    on.db.commit()
+    state = on.get(f"/api/homebot/enquiries/{eid}/options").json()["live_travel"]
+    assert state == {"enabled": False, "auto": False, "plain": routing.LIVE_TEST_OFF, "ai_reply": False}
+    r = on.post(URL.format(eid), json={})
+    assert r.status_code == 200 and r.json() == {"ok": False, "state": "test_data", "saved": False, "plain": routing.LIVE_TEST_OFF}
+    assert asked == [] and audits(on) == []
+    for not_on in ("0", "true", " 1"):
+        monkeypatch.setenv(routing.LIVE_TEST_DATA_ENV, not_on)
+        assert on.post(URL.format(eid), json={}).json()["state"] == "test_data" and asked == []
+    monkeypatch.setenv(routing.LIVE_TEST_DATA_ENV, "1")
+    assert on.get(f"/api/homebot/enquiries/{eid}/options").json()["live_travel"]["enabled"] is True
+    assert on.post(URL.format(eid), json={}).json()["state"] != "test_data"
+
+
+def test_only_a_signed_in_staff_request_can_reach_the_provider(live, monkeypatch):
+    """With the checks switched on: a signed-out request to either bot's address is refused, and submitting the public form
+    and matching it sends nothing."""
+    from fastapi.testclient import TestClient
+    on, eid = live
+    asked = []
+    monkeypatch.setattr(routing, "_agent_tools_post", lambda body: asked.append(1) or (_ for _ in ()).throw(RuntimeError("stand-in")))
+    assert routing.live_enabled() and audits(on) == []                                   # the fixture's own submission and matching
+    out = TestClient(on.app)
+    for address in (URL.format(eid), "/api/groups/1/travel-check"):
+        assert out.post(address, json={}).status_code in (401, 403), address
+    assert out.get(f"/api/homebot/enquiries/{eid}/options").status_code in (401, 403)
+    second = submit(on, "hb-key-0002", is_test=True)
+    hs.run_pending(on.db)
+    assert second != eid and asked == [] and audits(on) == []
+    assert on.db.execute("SELECT COUNT(*) FROM audit_log WHERE action=?", (hs.MATEBOT_TRAVEL_CHECK_ACTION,)).fetchone()[0] == 0
+
+
 def test_off_by_default_no_request_and_no_record(on, monkeypatch):
     monkeypatch.delenv(routing.AGENT_TOOLS_ENV, raising=False)
     monkeypatch.setenv(routing.AGENT_TOOLS_KEY_ENV, "test-key-not-real")

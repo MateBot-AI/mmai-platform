@@ -114,6 +114,10 @@ Tools key.
 - The check runs by itself when the options are opened, once per list per page; a
   page reload runs it again. `MMAI_ROUTING_LIVE_AUTO=0` keeps the button but stops the
   check running by itself.
+- Only a signed-in staff request can start a check. Submitting the public form never
+  does. A test enquiry is refused before any request unless
+  `MMAI_ROUTING_LIVE_TEST_DATA=1` (default off), which is for a controlled synthetic
+  acceptance only; see the MateBot section below.
 - Cost basis, from the provider's published
   [overview](https://developers.google.com/maps/ai/maps-experience-agent-tools) (read
   16 November 2026): Essentials requests are free up to 10,000 a month and US$7.00 per
@@ -305,19 +309,40 @@ Built in this package:
   at most three as the shortlist (the current offer included); the others are
   reserves in their ranked order, with no offer button.
 - **The live final travel check** (`server/matebot_live.py`, address
-  `POST /api/groups/{id}/travel-check`, staff only). It runs when a staff member
-  opens a group (when `MMAI_ROUTING_LIVE_AUTO` is on) and again on request. It
-  uses the same switch, key, request shape, attribution and allowances as the
-  HomeBot check; the per-day and per-month allowances are one total shared by
-  both.
+  `POST /api/groups/{id}/travel-check`, staff only; a signed-out request is
+  refused). It runs when a staff member opens a group (when
+  `MMAI_ROUTING_LIVE_AUTO` is on) and again on request. The automatic run
+  happens once for an opened group on a page: it is not repeated after a
+  failure, after the result is cleared from the page at 30 minutes, or while a
+  check is already running. A new result needs the "Check again" button or a
+  page reload. It uses the same switch, key, request shape, attribution and
+  allowances as the HomeBot check; the per-check, per-day and per-month
+  allowances (200, 1,000 and 4,000 requests) are one total shared by both, and
+  one check runs at a time across both.
+  - **Test records.** A group with any test member, and a HomeBot test enquiry,
+    are refused before any request unless `MMAI_ROUTING_LIVE_TEST_DATA=1`
+    (default off; the exact value `1` only). Anyone can make a test record from
+    the public form, so this switch is turned on only for a controlled
+    synthetic acceptance and turned off again afterwards. Submitting a form
+    never sends a provider request for either bot.
   - People are counted, not enquiries: the enquirer and each further person in
     their party, each once.
-  - A journey is requested only to a destination that was supplied and is held
-    as an address: the verified address of the institution a person who is
-    studying chose. Each person's journeys are requested only by the travel
-    choices given for them. A party shares the enquirer's choices and travel
-    time; a person in the party who is not the enquirer was never asked for a
-    place of work or study and has none.
+  - A journey is requested only to a destination that was supplied and is an
+    address: for a person who is studying, the verified address of the
+    institution they chose; for a person who is working or on a working
+    holiday, their place-of-work answer when it is a full street address
+    (number, street name and type, then a suburb, city or postcode), sent as
+    typed. Each person's journeys are requested only by the travel choices
+    given for them.
+  - A destination that exists and cannot be measured is never completed or
+    guessed: no place-of-work answer, "Not yet known", a suburb, an employer's
+    name, a street without a suburb, or a place of study that is not one on
+    file. That person reads "travel time needs confirmation", still counts as a
+    person with a destination, and the group result is "needs confirmation".
+  - A person who answered "Other" was not asked for a place of study or work,
+    and a person in a party who is not the enquirer was never asked for one of
+    their own. They have no destination and are not counted in the travel
+    calculation. A party shares the enquirer's choices and travel time.
   - Travel is checked last. The stored apartments are taken in their stored
     order, the current offer first; the first three are checked together; one
     that fails is replaced by the next stored candidate, which is then checked.
@@ -330,7 +355,9 @@ Built in this package:
     apartment keeps its place; it is neither passed nor failed.
   - Claude's assessment (`server/matebot_travel_reply.py`, behind
     `MMAI_TRAVEL_AI_REPLY`, which stays off): one request per check for at most
-    three apartments, 1,200 output tokens, positions and figures only (no name,
+    three apartments, and one shorter second request only if the first was cut
+    off, so at most two; 1,200 output tokens (1,800 for the second); positions and
+    figures only (no name,
     address, institution or destination). Code checks every count, every person
     named and the group result against its own figures, and withholds the whole
     reply on any difference. Claude cannot rate or advise offering an apartment
@@ -353,11 +380,13 @@ Built in this package:
 
 Not done, and not to be reported as done:
 
-- **Work destinations are not measured.** The MateBot form asks where someone
-  will work as a suburb or an employer's name, not an address, so no journey is
-  requested for a person who is working, on a working holiday or "Other". They
-  are counted as having no known destination. A group with nobody studying at an
-  institution on file has no travel result, and its shortlist stays held.
+- **Most work destinations will read "needs confirmation".** The MateBot form
+  asks for "Suburb or employer, or 'Not yet known'", so a full street address
+  is rarely given. Work journeys are measured only when one is. Asking for a
+  work address is a change to the question, which is Bill's to make; it has not
+  been made.
+- **Party members** who are not the enquirer have no destination of their own
+  on the MateBot form.
 - **Secondary destinations** (a second place of work or study) are not asked on
   the MateBot form and are not measured.
 - **Differing or missing travel times.** How to combine them is not ruled. Until
@@ -378,7 +407,7 @@ Not done, and not to be reported as done:
 
 Keep `MMAI_SCHEDULER=0`, `MMAI_AI_QUEUE=0`, `MMAI_HOMEBOT_MATCHING=0`,
 `MMAI_NOTIFICATIONS=0`, `MMAI_MAIL_MODE=off`, `MMAI_ALERT_MODE=off`,
-`MMAI_ROUTING=0`, `MMAI_TRAVEL_AGENT_TOOLS=0` and `MMAI_TRAVEL_AI_REPLY=0` until the corresponding controlled acceptance is authorised.
+`MMAI_ROUTING=0`, `MMAI_TRAVEL_AGENT_TOOLS=0`, `MMAI_TRAVEL_AI_REPLY=0` and `MMAI_ROUTING_LIVE_TEST_DATA=0` until the corresponding controlled acceptance is authorised.
 Keep `MMAI_HOMEBOT_REVIEW_BUILD=1` during preparation. Self-hosted HomeBot links
 to the same origin's MateBot form and forces its review submissions to TEST.
 Set this flag to `0` only as part of the separately approved release; it does not

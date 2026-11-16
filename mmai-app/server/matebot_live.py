@@ -7,10 +7,14 @@ arithmetic (matebot_travel) and the AI's transient assessment (matebot_travel_re
 What is measured, and for whom (H28 counts PEOPLE, not enquiries):
   * every person in the group is counted once: each member enquiry's lead and each further person in that enquiry's party,
     exactly as matching counts them (matching.unit_from_row).
-  * a journey is measured only to a destination that was actually supplied and is held as an address: the verified address
-    of the institution a person who is studying named (M4, I9). The lead's place of study is the lead's alone; another
-    person in the party was never asked for one and has no destination. The form's "Where will you work?" answer is a suburb
-    or an employer's name, not an address, so nothing is measured to it. No destination is ever guessed.
+  * a journey is measured only to a destination that was actually supplied and is unambiguous: the verified address of the
+    institution a person who is studying named (M4, I9), or, for a person who is working or on a working holiday, the
+    "Where will you work?" answer when it is a full street address (a street number, a street and a suburb or postcode),
+    sent as typed. A suburb, an employer's name, "Not yet known", a blank answer or an institution without a verified
+    address is a destination that exists and cannot be measured: that person reads "travel time needs confirmation" and
+    so does the group result (H28(d)/(h)); nothing is guessed, geocoded from a name or filled in. The enquirer's place of
+    study or work is the enquirer's alone; another person in the party was never asked for one and has no destination, and
+    neither has someone whose answer is "Other". The form has no second destination, so nobody is counted twice.
   * each person's journeys are requested only by the travel choices given for them (Walk, Bicycle, Public transport). The
     party's answers are the lead's (I16(d)). Someone with no answer has no journey requested and none selected.
   * the maximum travel time is each enquiry's own optional answer. When the times differ or one is missing the group
@@ -26,6 +30,7 @@ group's stored apartments, order, current offer, saved AI review and decline his
 """
 from __future__ import annotations
 
+import re
 from datetime import datetime, timezone
 from types import SimpleNamespace
 from typing import Optional
@@ -37,9 +42,36 @@ from .institutions import find_institution
 TRAVEL_CHECK_ACTION = hs.MATEBOT_TRAVEL_CHECK_ACTION
 TRAVEL_NOT_SAVED = ("Journey times are checked live and are not saved: they are shown on this page only, are not part of the group's "
                     "stored apartments or its saved AI review, and are checked again each time.")
-NO_DESTINATION_WHY = {"not_studying": "no place of study to measure to (work answers are not addresses, so nothing is measured to them)",
-                      "no_institution": "the place of study is not one with a verified address on file",
+NO_DESTINATION_WHY = {"not_asked": "no place of study or work was given",
                       "party_member": "travelling with the enquirer; no place of work or study was asked for them"}
+# a destination that exists and cannot be measured: the person, and so the group, needs confirmation
+UNMEASURABLE_WHY = {"no_institution": "the place of study is not one with a verified address on file",
+                    "work_missing": "no place of work has been given",
+                    "work_not_address": "the place of work given is not a full street address, so no journey can be measured to it"}
+WORKING = ("Working", "Working holiday")
+WORK_ADDRESS_MAX = 160
+_STREET = re.compile(r"\b\d+[A-Za-z]?(?:\s*[-/]\s*\d+[A-Za-z]?)?\s+(?:[A-Za-z][A-Za-z'.-]*\s+){1,4}?"
+                     r"(?:street|st|road|rd|avenue|ave|lane|ln|drive|dr|place|pl|parade|pde|highway|hwy|boulevard|blvd|court|ct|"
+                     r"crescent|cres|terrace|tce|way|square|sq|quay|esplanade|promenade|close|grove|walk|circuit|parkway)\b\.?(?P<rest>.*)$", re.I | re.S)
+_LOCALITY = re.compile(r"[A-Za-z]{3,}|\b\d{4}\b")
+_NOT_A_STREET_NAME = re.compile(r"\b(?:in|on|at|near|of|and|or|from|to|for|jobs?|days?|hours?|hrs?|minutes?|mins?|km|kms|weeks?|months?|shifts?|nights?)\b", re.I)
+
+
+def work_address(answer) -> Optional[str]:
+    """The "Where will you work?" answer when it is a full street address, as typed (spaces tidied); otherwise None.
+    Full means a street number, a street name with its type, and a suburb, city or postcode after it. A suburb or an
+    employer's name on its own is not an address a journey can be measured to, and is never turned into one."""
+    if not isinstance(answer, str):
+        return None
+    text = " ".join(answer.split())
+    if not text or len(text) > WORK_ADDRESS_MAX:
+        return None
+    m = _STREET.search(text)
+    if not m or not _LOCALITY.search(m.group("rest")):
+        return None
+    if _NOT_A_STREET_NAME.search(m.group(0)[:len(m.group(0)) - len(m.group("rest"))]):
+        return None   # "2 jobs in ... Road": a number followed by ordinary words is a sentence, not an address
+    return text
 OPEN_POINT_PRACTICAL = "an essential practical need recorded for a member is not confirmed for this apartment"
 
 
@@ -63,7 +95,7 @@ def _result_plain(travel: dict) -> str:
         return (f"Over the doubled limit: the closest {m.get('size')} of the people with a known destination average "
                 f"{m.get('average_display')} minutes (rounded) against {f['ceiling_minutes']} minutes, twice the stated {f['stated_limit_minutes']}.")
     if travel["status"] == mt.NO_DESTINATIONS:
-        return "No travel result: no member has a place of study recorded that a journey can be measured to."
+        return "No travel result: no member has a place of study or work recorded."
     return "Travel time needs confirmation. This is not a pass and not a failure."
 
 
@@ -75,17 +107,20 @@ def _journey_lines(travel: dict, people: list) -> list:
         p = by_pos[f["index"]]
         who = f"Person {f['index']} ({p['name']})" if p.get("name") else f"Person {f['index']}"
         own = OWN_PLAIN[f["own_limit"]].format(t=p["stated_time"] or "")
+        cannot = UNMEASURABLE_WHY.get(p["unmeasurable_why"])
         if f["status"] == mt.NO_DESTINATION:
             text = "no journey measured: " + NO_DESTINATION_WHY[p["no_destination_why"]]
         elif f["status"] == mt.NO_MODE_ANSWER:
-            text = "travel time needs confirmation: how they would travel has not been answered, so no journey is selected"
+            text = ("travel time needs confirmation: how they would travel has not been answered, so no journey is selected"
+                    + (f"; and {cannot}" if cannot else ""))
         elif f["status"] == mt.MEASURED:
             text = f"{mr.tr._shown(f['fastest_minutes'])} minutes (rounded) by {' / '.join(f['fastest_modes'])}; {own}"
         elif f["status"] == mt.PARTIAL:
             text = (f"at most {mr.tr._shown(f['bound_minutes'])} minutes (rounded) by {' / '.join(f['best_known_modes'])}; "
                     f"{' / '.join(f['unknown_modes'])} could not be measured, so the fastest is not confirmed; {own}")
         else:
-            text = "travel time needs confirmation: no journey could be measured" + ("" if f["own_limit"] == mt.NO_STATED_LIMIT else "; " + own)
+            text = ("travel time needs confirmation: " + (cannot or "no journey could be measured")
+                    + ("" if f["own_limit"] == mt.NO_STATED_LIMIT else "; " + own))
         if f.get("warning"):
             text += "; long journey, discuss with the group"
         if f.get("in_majority"):
@@ -94,9 +129,12 @@ def _journey_lines(travel: dict, people: list) -> list:
     return lines
 
 
-def state() -> dict:
-    """For the group page: whether a live travel check can be run, and whether the page should run one when it opens."""
+def state(is_test: bool = False) -> dict:
+    """For the group page: whether a live travel check can be run, and whether the page should run one when it opens.
+    A test group gets neither unless a controlled test is switched on (routing.live_test_data)."""
     on = routing.live_enabled()
+    if on and is_test and not routing.live_test_data():
+        return {"enabled": False, "auto": False, "plain": routing.LIVE_TEST_OFF, "ai_reply": False}
     return {"enabled": on, "auto": on and routing.live_auto(), "plain": TRAVEL_NOT_SAVED if on else routing.LIVE_OFF,
             "ai_reply": on and mr.tr.enabled()}
 
@@ -106,14 +144,21 @@ def _refusal(state_: str, plain: str, **extra) -> dict:
 
 
 def _destination(e: dict) -> tuple:
-    """(address, institution name, None) for a lead who is studying at an institution with a verified address; otherwise
-    (None, None, why)."""
-    if (e.get("doing") or "") != "Studying":
-        return None, None, "not_studying"
-    campus = find_institution(e.get("school") or "")
-    if not campus or not campus.get("verified") or not (campus.get("address") or "").strip():
-        return None, None, "no_institution"
-    return campus["address"].strip(), campus["name"], None
+    """(kind, address, shown as, why not) for the enquirer. kind is "study", "work" or None (no destination at all).
+    With a kind and no address the destination exists and cannot be measured; `why not` says why."""
+    doing = e.get("doing") or ""
+    if doing == "Studying":
+        campus = find_institution(e.get("school") or "")
+        if not campus or not campus.get("verified") or not (campus.get("address") or "").strip():
+            return "study", None, None, "no_institution"
+        return "study", campus["address"].strip(), campus["name"], None
+    if doing in WORKING:
+        given = e.get("work")
+        if not isinstance(given, str) or not given.strip():
+            return "work", None, None, "work_missing"
+        address = work_address(given)
+        return ("work", address, "the work address given on the form", None) if address else ("work", None, None, "work_not_address")
+    return None, None, None, "not_asked"
 
 
 def _modes(e: dict) -> tuple:
@@ -135,13 +180,16 @@ def group_people(c, gid: int) -> list:
         unit = matching.unit_from_row(e, party)
         stated = e.get("travel") if isinstance(e.get("travel"), str) and e.get("travel") in mt.STATED_LIMIT else None
         modes = _modes(e)
-        address, institution, why = _destination(e)
+        kind, address, shown, why = _destination(e)
         for n, person in enumerate(unit.people):
             lead = n == 0
+            has = lead and kind is not None
             people.append({"position": len(people) + 1, "enquiry_id": e["id"], "lead": lead, "name": person.name,
                            "stated_time": stated, "modes": modes,   # I16(d): the enquirer's answers are the party's
-                           "destination": address if lead else None, "institution": institution if lead else None,
-                           "no_destination_why": None if (lead and address) else (why if lead else "party_member")})
+                           "destination_kind": kind if lead else None, "destination": address if lead else None,
+                           "destination_shown": shown if lead else None,
+                           "no_destination_why": None if has else (why if lead else "party_member"),
+                           "unmeasurable_why": why if (has and not address) else None})
     return people
 
 
@@ -163,9 +211,12 @@ class GroupEstimates(routing.LiveEstimates):
                 yield (origin, p["destination"], routing.AGENT_TOOLS_MODES[mode])
 
     def journeys(self, aid, person) -> Optional[dict]:
-        """{choice: minutes | UNMEASURED} over the person's own choices; {} when they gave none; None with no destination."""
-        if not person["destination"]:
+        """{choice: minutes | UNMEASURED} over the person's own choices; {} when they gave none; None with no destination.
+        A destination that exists and cannot be measured gives UNMEASURED for every choice: never a pass, never left out."""
+        if not person["destination_kind"]:
             return None
+        if not person["destination"]:
+            return {mode: ht.UNMEASURED for mode in person["modes"]}
         apartment = self.inventory.get(int(aid))
         origin = self._origin(apartment) if apartment else None
         return {mode: (self.cache.get((origin, person["destination"], routing.AGENT_TOOLS_MODES[mode]), ht.UNMEASURED) if origin else ht.UNMEASURED)
@@ -173,6 +224,11 @@ class GroupEstimates(routing.LiveEstimates):
 
     def __call__(self, aid, position, which):
         raise RuntimeError("group estimates are read per person with journeys()")
+
+
+def _is_test(c, gid: int) -> bool:
+    """Read from the records, not from the view passed in: any test member makes the group a test group."""
+    return bool(row(c.execute("SELECT 1 AS t FROM group_members gm JOIN enquiries e ON e.id=gm.enquiry_id WHERE gm.group_id=? AND e.is_test=1 LIMIT 1", (gid,))))
 
 
 def _signature(c, gid: int) -> tuple:
@@ -184,7 +240,9 @@ def _signature(c, gid: int) -> tuple:
 
 def _person_out(p: dict) -> dict:
     return {"position": p["position"], "name": p["name"], "enquiry_id": p["enquiry_id"], "lead": p["lead"],
-            "stated_time": p["stated_time"], "travel_choices": list(p["modes"]), "institution": p["institution"],
+            "stated_time": p["stated_time"], "travel_choices": list(p["modes"]),
+            "destination_kind": p["destination_kind"], "destination_shown": p["destination_shown"],
+            "needs_confirmation": UNMEASURABLE_WHY.get(p["unmeasurable_why"]),
             "no_destination": NO_DESTINATION_WHY.get(p["no_destination_why"])}
 
 
@@ -194,6 +252,8 @@ def travel_check(c, group: dict, staff: str, *, now: Optional[datetime] = None, 
     gid = int(group["id"])
     if not routing.live_enabled():
         return _refusal("off", routing.LIVE_OFF)
+    if not routing.live_allowed_for(_is_test(c, gid)):
+        return _refusal("test_data", routing.LIVE_TEST_OFF)   # before the lock, the allowance and any request
     if group.get("status") in ("Leased", "Dissolved"):
         return _refusal("closed", "This group is closed, so travel was not checked.")
     apts = [a for a in group.get("apartments") or [] if a.get("shortlist_role") != mt.ROLE_UNAVAILABLE]

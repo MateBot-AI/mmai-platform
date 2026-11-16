@@ -76,6 +76,10 @@ def group(db, monkeypatch):
     gid, ids = _six(db, monkeypatch)
     _live_env(monkeypatch)
     _school(db, gid)
+    # the shared fixture makes its people as test records; these checks are about real records, which is what the provider
+    # may be asked about. Test records have their own test below.
+    db.execute(f"UPDATE enquiries SET is_test=0 WHERE id IN ({','.join('?' * len(_members(db, gid)))})", _members(db, gid))
+    db.commit()
     return db, gid, ids
 
 
@@ -110,23 +114,39 @@ def test_every_person_is_counted_once_with_only_what_was_supplied(group):
     db, gid, ids = group
     a, b = _members(db, gid)
     people = ml.group_people(db, gid)
-    assert [(p["position"], p["enquiry_id"], p["lead"], p["institution"], p["modes"], p["stated_time"]) for p in people] == [
-        (1, a, True, RMIT, (), None), (2, b, True, RMIT, (), None)]                       # nothing answered: nothing assumed
-    assert all(p["destination"] and "Victoria" not in (p["no_destination_why"] or "") for p in people)
+    assert [(p["position"], p["enquiry_id"], p["lead"], p["destination_kind"], p["destination_shown"], p["modes"], p["stated_time"]) for p in people] == [
+        (1, a, True, "study", RMIT, (), None), (2, b, True, "study", RMIT, (), None)]     # nothing answered: nothing assumed
+    assert all(p["destination"] and p["no_destination_why"] is None and p["unmeasurable_why"] is None for p in people)
     # a couple: the second person is counted, shares the enquirer's time and choices, and has no destination of their own
     db.execute("UPDATE enquiries SET party='Couple', party_size=2, travel='45 minutes', travel_modes=? WHERE id=?", (j([W, PT]), a))
     db.execute("INSERT INTO party_members(enquiry_id, name, email) VALUES (?, 'Pat Partner', 'pat@example.com')", (a,))
-    # someone working: the work answer is a suburb or an employer, never an address, so nothing is measured to it
+    # someone working whose answer is a suburb: a destination that exists and cannot be measured. Not left out, not guessed
     db.execute("UPDATE enquiries SET doing='Working', work='Richmond', school=NULL, travel='15 minutes', travel_modes=? WHERE id=?", (j([B]), b))
     db.commit()
     people = ml.group_people(db, gid)
     assert [(p["position"], p["enquiry_id"], p["lead"], p["name"]) for p in people][1] == (2, a, False, "Pat Partner")
-    assert [(p["stated_time"], p["modes"], bool(p["destination"]), p["no_destination_why"]) for p in people] == [
-        ("45 minutes", (W, PT), True, None), ("45 minutes", (W, PT), False, "party_member"), ("15 minutes", (B,), False, "not_studying")]
-    # a place of study that is not one with a verified address on file is not guessed at
-    db.execute("UPDATE enquiries SET doing='Studying', school='Somewhere Else College' WHERE id=?", (b,))
-    db.commit()
-    assert [p["no_destination_why"] for p in ml.group_people(db, gid)] == [None, "party_member", "no_institution"]
+    assert [(p["stated_time"], p["modes"], p["destination_kind"], bool(p["destination"]), p["no_destination_why"], p["unmeasurable_why"]) for p in people] == [
+        ("45 minutes", (W, PT), "study", True, None, None), ("45 minutes", (W, PT), None, False, "party_member", None),
+        ("15 minutes", (B,), "work", False, None, "work_not_address")]
+
+    def third(**answers):
+        db.execute(f"UPDATE enquiries SET {', '.join(k + '=?' for k in answers)} WHERE id=?", [*answers.values(), b])
+        db.commit()
+        q = ml.group_people(db, gid)[2]
+        return q["destination_kind"], q["destination"], q["no_destination_why"], q["unmeasurable_why"]
+    # a full street address given as the place of work is used as typed; for a working holiday too
+    assert third(work="  100 Collins Street,   Melbourne ") == ("work", "100 Collins Street, Melbourne", None, None)
+    assert third(doing="Working holiday") == ("work", "100 Collins Street, Melbourne", None, None)
+    assert ml.group_people(db, gid)[2]["destination_shown"] == "the work address given on the form"
+    # no answer, "Not yet known", an employer's name and a street without a suburb all need confirmation; none is completed
+    assert third(work=None) == ("work", None, None, "work_missing") and third(work="   ") == ("work", None, None, "work_missing")
+    for vague in ("Not yet known", "Coles", "Coles Richmond", "200 Queen St", "CBD", "3 days at Chapel Street South Yarra"):
+        assert third(work=vague) == ("work", None, None, "work_not_address"), vague
+    # "Other": no place of study or work was asked for, so there is no destination at all
+    assert third(doing="Other", work="100 Collins Street, Melbourne") == (None, None, "not_asked", None)
+    # a place of study that is not one with a verified address on file is not guessed at: it needs confirmation
+    assert third(doing="Studying", school="Somewhere Else College") == ("study", None, None, "no_institution")
+    assert [(p["no_destination_why"], p["unmeasurable_why"]) for p in ml.group_people(db, gid)] == [(None, None), ("party_member", None), (None, "no_institution")]
     # an answer outside the form's three choices is not used, and an unreadable one is no answer
     db.execute("UPDATE enquiries SET travel_modes=?, travel='about an hour' WHERE id=?", (j(["Car", "Tram", PT]), a))
     db.execute("UPDATE enquiries SET travel_modes='not json' WHERE id=?", (b,))
@@ -135,7 +155,7 @@ def test_every_person_is_counted_once_with_only_what_was_supplied(group):
     assert people[0]["modes"] == (PT,) and people[0]["stated_time"] is None and people[2]["modes"] == ()
 
 
-def test_only_the_person_with_a_destination_is_measured_and_only_by_their_own_choices(group):
+def test_a_work_answer_that_is_not_an_address_is_never_measured_and_never_left_out(group):
     db, gid, ids = group
     a, b = _members(db, gid)
     _answer(db, gid, modes=(W, PT), only=[a])
@@ -145,11 +165,43 @@ def test_only_the_person_with_a_destination_is_measured_and_only_by_their_own_ch
     r = _check(db, gid, p)
     assert r["ok"] and sorted({x["travelMode"] for x in p.bodies}) == ["TRANSIT", "WALK"]            # never the other person's bicycle
     assert len(p.bodies) == 6 and len({x["destination"]["address"] for x in p.bodies}) == 1           # 3 apartments x 2 choices, one destination
-    assert all("Richmond" not in json.dumps(x) for x in p.bodies)
+    assert all("Richmond" not in json.dumps(x) for x in p.bodies)                                     # the suburb is never sent
+    first = r["shortlist"][0]
+    # the person who works is counted as someone with a destination whose journey is not known: no pass on the other alone
+    assert first["result"] == mt.NEEDS_CONFIRMATION and first["travel"]["facts"]["known_destinations"] == 2
+    assert first["travel"]["facts"]["no_destination"] == [] and first["travel"]["facts"]["unmeasured"] == [2]
+    assert first["journey_lines"][1].startswith("Person 2") and "travel time needs confirmation: the place of work given is not a full street address" in first["journey_lines"][1]
+    assert [x["apartment_id"] for x in r["shortlist"]] == ids[:3] and r["failed"] == []               # kept in place, not failed
+    assert [(q["destination_kind"], q["needs_confirmation"], q["no_destination"]) for q in r["people"]] == [
+        ("study", None, None), ("work", ml.UNMEASURABLE_WHY["work_not_address"], None)]
+
+
+def test_a_full_work_address_is_measured_by_that_persons_own_choices(group):
+    db, gid, ids = group
+    a, b = _members(db, gid)
+    _answer(db, gid, modes=(W, PT), only=[a])
+    db.execute("UPDATE enquiries SET doing='Working', work='100 Collins Street, Melbourne', travel='30 minutes', travel_modes=? WHERE id=?", (j([B]), b))
+    db.commit()
+    p = Provider(minutes=20)
+    r = _check(db, gid, p)
+    asked = sorted({(x["destination"]["address"] == "100 Collins Street, Melbourne", x["travelMode"]) for x in p.bodies})
+    assert asked == [(False, "TRANSIT"), (False, "WALK"), (True, "BICYCLE")] and len(p.bodies) == 9   # 3 apartments x (2 + 1)
+    first = r["shortlist"][0]
+    assert first["result"] == mt.PASS and first["travel"]["facts"]["known_destinations"] == 2 and first["travel"]["facts"]["measured"] == [1, 2]
+    assert "by Bicycle" in first["journey_lines"][1] and r["people"][1]["destination_shown"] == "the work address given on the form"
+    assert "Collins" not in json.dumps(r["ai_reply"]) and "Collins" not in json.dumps(_audits(db))    # the address goes to the journey service only
+
+
+def test_someone_whose_answer_is_other_has_no_destination_and_is_not_counted(group):
+    db, gid, ids = group
+    a, b = _members(db, gid)
+    _answer(db, gid)
+    db.execute("UPDATE enquiries SET doing='Other', work=NULL WHERE id=?", (b,))
+    db.commit()
+    r = _check(db, gid, Provider(minutes=20))
     first = r["shortlist"][0]
     assert first["result"] == mt.PASS and first["travel"]["facts"]["known_destinations"] == 1 and first["travel"]["facts"]["no_destination"] == [2]
-    assert first["journey_lines"][1].startswith("Person 2") and "work answers are not addresses" in first["journey_lines"][1]
-    assert [q["no_destination"] for q in r["people"]] == [None, ml.NO_DESTINATION_WHY["not_studying"]]
+    assert "no journey measured: no place of study or work was given" in first["journey_lines"][1]
 
 
 def test_a_place_of_study_that_is_not_on_file_is_never_guessed_at(group):
@@ -158,10 +210,42 @@ def test_a_place_of_study_that_is_not_on_file_is_never_guessed_at(group):
     _answer(db, gid)
     p = Provider()
     r = _check(db, gid, p)
-    assert p.bodies == [] and _audits(db) == [] and [q["no_destination"] for q in r["people"]] == [ml.NO_DESTINATION_WHY["no_institution"]] * 2
+    assert p.bodies == [] and _audits(db) == []
+    assert [q["needs_confirmation"] for q in r["people"]] == [ml.UNMEASURABLE_WHY["no_institution"]] * 2
     x = r["shortlist"][0]
-    assert x["result"] == mt.NO_DESTINATIONS and x["result_plain"].startswith("No travel result") and x["measured"] is False
+    assert x["result"] == mt.NEEDS_CONFIRMATION and x["result_plain"].startswith("Travel time needs confirmation") and x["measured"] is False
+    assert "the place of study is not one with a verified address on file" in x["journey_lines"][0]
     assert r["ai_reply"]["state"] == "off" and r["ai_gate"]["held"] is True
+    # nobody with a place of study or work at all: no travel result, and still nothing requested
+    db.execute("UPDATE enquiries SET doing='Other'")
+    db.commit()
+    x = _check(db, gid, p)["shortlist"][0]
+    assert x["result"] == mt.NO_DESTINATIONS and x["result_plain"] == "No travel result: no member has a place of study or work recorded." and p.bodies == []
+
+
+# ------------------------------------------------------------------------------------------------------- test records
+def test_a_test_group_reaches_the_provider_only_while_a_controlled_test_is_switched_on(group, monkeypatch):
+    db, gid, ids = group
+    _answer(db, gid)
+    db.execute("UPDATE enquiries SET is_test=1 WHERE id=?", (_members(db, gid)[0],))     # one test member makes it a test group
+    db.commit()
+    monkeypatch.delenv(routing.LIVE_TEST_DATA_ENV, raising=False)
+    p, out = Provider(), _view(db, gid)
+    assert out["is_test"] and out["travel_check"] == "off"
+    assert out["travel_live"] == {"enabled": False, "auto": False, "plain": routing.LIVE_TEST_OFF, "ai_reply": False}
+    # the address refuses on what the records say, whatever view it is handed, before the lock, the allowance and any request
+    for view in (out, dict(out, is_test=False, travel_live={"enabled": True, "auto": True})):
+        assert ml.travel_check(db, view, "anna", now=WHEN, post=p) == {"ok": False, "state": "test_data", "saved": False, "plain": routing.LIVE_TEST_OFF}
+    assert p.bodies == [] and _audits(db) == []
+    for not_on in ("0", "true", "yes", " 1", ""):
+        monkeypatch.setenv(routing.LIVE_TEST_DATA_ENV, not_on)
+        assert routing.live_test_data() is False and ml.travel_check(db, out, "anna", now=WHEN, post=p)["state"] == "test_data"
+    monkeypatch.setenv(routing.LIVE_TEST_DATA_ENV, "1")
+    assert _view(db, gid)["travel_live"]["enabled"] is True
+    assert _check(db, gid, p)["state"] == "checked" and len(p.bodies) == 3 and len(_audits(db)) == 1   # one shared journey per apartment
+    # the test switch alone turns nothing on
+    monkeypatch.delenv(routing.AGENT_TOOLS_ENV, raising=False)
+    assert routing.live_test_data() is False and _check(db, gid, p)["state"] == "off" and len(p.bodies) == 3
 
 
 # ----------------------------------------------------------------------------------------------- travel last, three at most
@@ -387,7 +471,10 @@ def test_a_travel_choice_answer_is_evidence_once_given_so_an_edit_makes_the_save
 # ------------------------------------------------------------------------------------------------------ the page
 def test_the_group_page_runs_the_check_on_open_labels_candidates_provisional_and_keeps_nothing():
     panel = STAFF_JS.split("function groupTravelPanel(box, g) {", 1)[1].split("\n  }\n", 1)[0]
-    assert "if (live.auto && !kept.reply && !kept.at) run(false);" in panel                # automatic on open, not staff selection
+    assert "\n    if (live.auto && !kept.tried) run(false);" in panel                         # automatic on open, not staff selection
+    assert "if (kept.busy) return;" in panel and "kept.busy = true; kept.tried = true;" in panel   # one request at a time, one automatic attempt
+    assert panel.count("run(false)") == 1 and panel.count("api.post(") == 1
+    assert "} finally { kept.busy = false; kept.show(); }" in panel                       # a redraw during a check still ends with its result
     assert "api.post(`/api/groups/${g.id}/travel-check`, {})" in panel and "HB_TRAVEL_KEEP_MS" in panel
     for banned in ("localStorage", "sessionStorage", "indexedDB", "document.cookie"):
         assert banned not in panel, banned

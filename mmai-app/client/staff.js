@@ -1271,7 +1271,7 @@
     const live = g.travel_live || {};
     return `<p class="msg small" data-role="travel-provisional" data-state="${live.enabled ? 'live' : 'off'}"><b>Provisional.</b> Travel to campus or work is checked last and has not been checked for the apartments listed here, so they are candidates and not a confirmed shortlist. ${
       live.enabled ? (opts.offer ? 'The live travel check below shows the result, with the AI\'s assessment; it is not saved.' : 'Open the group to run the live travel check; its result is shown there and is not saved.')
-        : 'Live travel checks are switched off, so travel time needs confirmation before an apartment is treated as suitable.'}</p>`;
+        : esc(live.plain || 'Live travel checks are switched off.') + ' Travel time needs confirmation before an apartment is treated as suitable.'}</p>`;
   }
   const mbTravelShown = new Map();
   function groupTravelView(r) {
@@ -1310,12 +1310,13 @@
       <p class="small muted">The apartments are chosen without travel first. Travel is checked last, for up to ${r.shortlist_max || 3} apartments; one that fails is replaced by the next stored candidate and the replacement is checked. ${esc(r.plain)}</p>
       ${r.unruled_note ? `<p class="msg small" data-role="mb-travel-unruled">${esc(r.unruled_note)}</p>` : ''}
       ${missed ? `<p class="msg small">${missed} journey${missed === 1 ? '' : 's'} could not be checked this time; where a time is missing the apartment reads "Travel time needs confirmation".</p>` : ''}
-      ${!k.requests ? '<p class="small muted">No journeys were requested: no member has both a place of study with a verified address and an answer for how they would travel.</p>' : ''}
+      ${!k.requests ? '<p class="small muted">No journeys were requested: no member has both a place of study or work that a journey can be measured to and an answer for how they would travel.</p>' : ''}
       ${(r.shortlist || []).length ? `<h4 class="small">${provisional ? 'Provisional shortlist (not confirmed)' : 'Shortlist'} · up to ${r.shortlist_max || 3}</h4><ol class="apt-list">${r.shortlist.map(x => item(x, provisional ? 'provisional' : 'AI-assessed')).join('')}</ol>` : '<p class="small">No apartment is left on the shortlist after the travel check.</p>'}
       ${(r.failed || []).length ? `<h4 class="small">Failed the travel check (not on the shortlist)</h4><ol class="apt-list">${r.failed.map(x => item(x, 'failed travel')).join('')}</ol>` : ''}
       ${(r.not_checked || []).length ? `<p class="small muted" data-role="mb-travel-not-checked">Travel not checked (reserves, no place open): ${r.not_checked.map(x => esc(x.address || ('apartment ' + x.apartment_id))).join('; ')}.</p>` : ''}
       <details class="small"><summary>Who was counted (${(r.people || []).length} people)</summary>${(r.people || []).map(q => `Person ${q.position}${q.name ? ' (' + esc(q.name) + ')' : ''}: ${
-        q.institution ? 'studies at ' + esc(q.institution) : esc(q.no_destination || 'no destination')}; maximum travel time ${q.stated_time ? esc(q.stated_time) : 'not stated'}; would travel by ${(q.travel_choices || []).length ? q.travel_choices.map(esc).join(', ') : 'not answered'}`).join('<br>')}</details></div>`;
+        q.destination_shown ? (q.destination_kind === 'work' ? 'works at ' : 'studies at ') + esc(q.destination_shown)
+          : q.needs_confirmation ? 'travel time needs confirmation, ' + esc(q.needs_confirmation) : esc(q.no_destination || 'no destination')}; maximum travel time ${q.stated_time ? esc(q.stated_time) : 'not stated'}; would travel by ${(q.travel_choices || []).length ? q.travel_choices.map(esc).join(', ') : 'not answered'}`).join('<br>')}</details></div>`;
   }
   /* The group page's live travel check: run once when the page opens (when that is switched on) and again on request. The reply
      is kept in this page only, for at most 30 minutes, so a redraw does not ask again; nothing is saved anywhere. */
@@ -1324,37 +1325,47 @@
     if (!box || !live.enabled || ['Leased', 'Dissolved'].includes(g.status) || !(g.apartments || []).length) { if (box) box.innerHTML = ''; return; }
     mbTravelShown.forEach(kept => { if (kept.reply && Date.now() - kept.at > HB_TRAVEL_KEEP_MS) kept.reply = null; });
     const key = `${g.id}:${g.apartment_id}:${(g.apartments || []).map(a => a.apartment_id + '.' + a.shortlist_role).join(',')}:${(g.members || []).map(m => m.enquiry_id).join(',')}`;
-    const kept = mbTravelShown.get(key) || { at: 0, reply: null, busy: false };
+    const kept = mbTravelShown.get(key) || { at: 0, reply: null, busy: false, tried: false, note: '', noteErr: false, show: null };
     mbTravelShown.set(key, kept);
     box.innerHTML = `<div class="card card--tight mt" data-role="mb-travel"><h3>Travel check · live</h3>
       <div class="actions"><button class="btn btn--sm" type="button" data-action="mb-travel">${kept.reply ? 'Check travel times again' : 'Check travel times now'}</button></div>
       <p class="small muted">${esc(live.plain || '')}</p>
       <div data-role="mb-travel-out" aria-live="polite">${kept.reply ? groupTravelView(kept.reply) : ''}</div></div>`;
     const out = box.querySelector('[data-role="mb-travel-out"]'), btn = box.querySelector('button[data-action="mb-travel"]');
+    // the latest drawing of this group's panel shows where the one check stands, so a redraw while a check is running
+    // shows "checking" and then its result, and never starts a second one
+    kept.show = () => {
+      if (!out.isConnected) return;
+      btn.disabled = kept.busy;
+      btn.textContent = kept.reply ? 'Check travel times again' : 'Check travel times now';
+      out.innerHTML = kept.busy ? '<p class="small muted">Checking travel times… this can take up to a minute.</p>'
+        : kept.reply ? groupTravelView(kept.reply)
+        : kept.note ? `<p class="${kept.noteErr ? 'msg err small' : 'small muted'}">${esc(kept.note)}</p>` : '';
+    };
     const run = async asked => {
-      if (kept.busy) return;
-      kept.busy = true; btn.disabled = true;
-      out.innerHTML = '<p class="small muted">Checking travel times… this can take up to a minute.</p>';
+      if (kept.busy) return;   // one request at a time for this group: a second click or redraw while one is running asks nothing
+      kept.busy = true; kept.tried = true; kept.note = '';
+      kept.show();
       try {
         kept.reply = await api.post(`/api/groups/${g.id}/travel-check`, {});
         kept.at = Date.now();
         const shownAt = kept.at;
         setTimeout(() => {
           if (kept.at !== shownAt) return;
-          kept.reply = null;
-          if (out.isConnected) { out.innerHTML = '<p class="small muted">The journey times shown earlier have been cleared. Check travel times again to see current ones.</p>'; btn.textContent = 'Check travel times now'; }
+          kept.reply = null; kept.noteErr = false;
+          kept.note = 'The journey times shown earlier have been cleared. Check travel times again to see current ones.';
+          kept.show();
         }, HB_TRAVEL_KEEP_MS);
-        if (!out.isConnected) return;
-        out.innerHTML = groupTravelView(kept.reply);
-        btn.textContent = 'Check travel times again';
       } catch (ex) {
-        kept.reply = null;
-        if (out.isConnected) out.innerHTML = `<p class="msg err small">${esc(asked ? ex.message : 'Travel times could not be checked just now. Use the button to try again.')}</p>`;
-      } finally { kept.busy = false; if (btn.isConnected) btn.disabled = false; }
+        kept.reply = null; kept.noteErr = true;
+        kept.note = asked ? ex.message : 'Travel times could not be checked just now. Use the button to try again.';
+      } finally { kept.busy = false; kept.show(); }
     };
     btn.addEventListener('click', () => run(true));
-    // when the group opens, check travel once (not again on every redraw; the button checks again on request)
-    if (live.auto && !kept.reply && !kept.at) run(false);
+    kept.show();
+    // when the group opens, check travel once for this group as it stands. Not again on a redraw, not again after the shown
+    // result is cleared and not again after a failed attempt: only the button asks again. Nothing is kept beyond this page.
+    if (live.auto && !kept.tried) run(false);
   }
 
   function groupCard(g, opts = {}) {

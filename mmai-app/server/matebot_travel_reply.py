@@ -57,7 +57,7 @@ READY_TEXT = ("The AI assessed these apartments using the Google Maps journey es
 
 GOOD, ACCEPTABLE, POOR, NOT_KNOWN, NOT_APPLICABLE, FAILS = tr.GOOD, tr.ACCEPTABLE, tr.POOR, tr.NOT_KNOWN, tr.NOT_APPLICABLE, tr.FAILS
 RATING_PLAIN = {GOOD: "good", ACCEPTABLE: "acceptable", POOR: "poor", NOT_KNOWN: "not known: the group travel result needs confirmation",
-                NOT_APPLICABLE: "not applicable (no place of study recorded that a journey can be measured to)", FAILS: "fails the travel check"}
+                NOT_APPLICABLE: "not applicable (no place of study or work recorded)", FAILS: "fails the travel check"}
 OFFER, OFFER_CAVEATS, CONFIRM_FIRST = tr.OFFER, tr.OFFER_CAVEATS, tr.CONFIRM_FIRST
 ADVICE_PLAIN = {OFFER: "Suitable to offer.", OFFER_CAVEATS: "Can be offered, with the weaknesses explained to the group.",
                 CONFIRM_FIRST: "Confirm the open points before offering; it is not yet a confirmed suitable option."}
@@ -113,7 +113,7 @@ POINTS = {
     "journeys_not_known": ("weakness", "At least one member's journey is not fully known, so travel cannot be confirmed yet.", _journey_unknown),
     "stated_times_differ_or_missing": ("weakness", "The members' maximum travel times differ or are missing, so no group travel result is calculated.",
                                        _times_unsettled),
-    "no_destination_for_some": ("weakness", "At least one member has no place of study recorded that a journey can be measured to.",
+    "no_destination_for_some": ("weakness", "At least one member has no place of study or work of their own recorded.",
                                 lambda f, pk: f["counts"]["no_destination"] > 0),
     "highest_rent_of_these": ("weakness", "The highest whole-apartment rent of these apartments.", lambda f, pk: _rent_is(f, pk, max)),
     "other_points_to_confirm": ("weakness", "Other points still need confirming before it can be offered.", lambda f, pk: bool(_apartment(f).get("open_points"))),

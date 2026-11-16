@@ -1374,7 +1374,7 @@ def overview(c, eid: int) -> dict:
         scen[sc] = {"label": SCENARIO_LABEL[sc], "job": job_state(c, eid, sc), "current": current_shortlist(c, eid, sc)}
     return {"enabled": True, "enquiry_id": eid, "scenarios": scen, "planning": planning_state(c, e), "versions": versions(c, eid),
             "rejections": [rejection(c, r["id"]) for r in rows(c.execute("SELECT id FROM homebot_rejections WHERE enquiry_id=? ORDER BY id", (eid,)))],
-            "history": history(c, eid), "algorithm_version": ALGORITHM_VERSION, "live_travel": live_travel_state(),
+            "history": history(c, eid), "algorithm_version": ALGORITHM_VERSION, "live_travel": live_travel_state(is_test=bool(e.get("is_test"))),
             "travel_note": "Journey times are estimates, not guarantees. Check each person's journey and the evidence date. Missing or expired journeys need confirmation; an AI review cannot confirm them."}
 
 
@@ -1403,11 +1403,14 @@ def _travel_requests_used(c, prefix: str) -> int:
     return used
 
 
-def live_travel_state(c=None) -> dict:
-    """For the Options panel: whether live travel checks can be run, and whether the page should run one when it opens."""
+def live_travel_state(c=None, *, is_test: bool = False) -> dict:
+    """For the Options panel: whether live travel checks can be run, and whether the page should run one when it opens.
+    A test record gets neither unless a controlled test is switched on (routing.live_test_data)."""
     from . import routing
     from . import homebot_travel_reply
     on = enabled() and routing.live_enabled()
+    if on and is_test and not routing.live_test_data():
+        return {"enabled": False, "auto": False, "plain": routing.LIVE_TEST_OFF, "ai_reply": False}
     return {"enabled": on, "auto": on and routing.live_auto(), "plain": TRAVEL_NOT_SAVED if on else routing.LIVE_OFF,
             "ai_reply": on and homebot_travel_reply.enabled()}
 
@@ -1428,9 +1431,11 @@ def live_travel_check(c, eid: int, scenario: str, staff: str, *, now: Optional[s
     _require_on()
     if scenario not in SCENARIOS:
         raise ValidationError({"scenario": "Unknown scenario."})
-    homebot.get(c, eid)   # 404 before anything else
+    is_test = bool(homebot.get(c, eid).get("is_test"))   # 404 before anything else
     if not routing.live_enabled():
         return _travel_refusal("off", routing.LIVE_OFF)
+    if is_test and not routing.live_test_data():
+        return _travel_refusal("test_data", routing.LIVE_TEST_OFF)   # before the lock, the allowance and any request
     when = _now_dt(now)
     if when.tzinfo is None:
         when = when.replace(tzinfo=timezone.utc)

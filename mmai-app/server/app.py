@@ -1400,8 +1400,12 @@ def _group_out(g: dict, occ: dict | None = None, circ: dict | None = None) -> di
     # stored view: the final travel check is run live from the group page (matebot_live) and nothing from it is stored.
     # GP14: listed apartments a current member has declined. Read once here and carried on the group, so the list views, the
     # detail view and the roles below all use the same answer.
-    declined = apartment_rejections.declined_in_group(db, g["id"]) if apts else {}
-    g["declined_apartments"] = {str(k): v for k, v in declined.items()}
+    # A closed group (leased or dissolved) is not read here, as before: its roles ignore declines, and only its own detail
+    # view reads them (group_detail), so the list views make no query for closed groups.
+    closed = g.get("status") in ("Leased", "Dissolved")
+    declined = apartment_rejections.declined_in_group(db, g["id"]) if apts and not closed else {}
+    if not closed:
+        g["declined_apartments"] = {str(k): v for k, v in declined.items()}
     declined_ids = {int(k) for k in declined}
     for a, role in zip(apts, matebot_travel.shortlist_roles([{"id": a["apartment_id"], "current": a["is_current"],
                                                               "unavailable": bool(a["taken_by"]) or a["apartment_id"] in declined_ids} for a in apts])):
@@ -1409,7 +1413,7 @@ def _group_out(g: dict, occ: dict | None = None, circ: dict | None = None) -> di
     g["shortlist_max"] = matebot_travel.MAX_SHORTLIST
     # the final travel check is live and never stored (matebot_live): the view carries only whether one can be run. Until
     # one has been run on the page, and its AI assessment accepted, the apartments are provisional and are shown as such.
-    g["travel_live"] = matebot_live.state()
+    g["travel_live"] = matebot_live.state(is_test=bool(g.get("is_test")))
     g["travel_check"] = "live" if g["travel_live"]["enabled"] else "off"
     g["apartments"] = apts
     # the "next best" named when the current offer is leased is one staff can actually offer: shortlisted (so never a reserve,
@@ -1603,8 +1607,9 @@ def group_detail(gid: int, staff=Depends(current_staff)):
     else:
         out["alternatives"] = []
     # GP14: listed apartments a current member has declined (shown as "declined by <name> on <date>"; never offerable while
-    # active) are already on the group from _group_out; a group with no listed apartment has none
-    out.setdefault("declined_apartments", {})
+    # active) are already on an open group from _group_out; a closed group's are read here, once, for its own page only
+    if "declined_apartments" not in out:
+        out["declined_apartments"] = {str(k): v for k, v in apartment_rejections.declined_in_group(db, gid).items()}
     _attach_review_state(out, g)
     return out
 

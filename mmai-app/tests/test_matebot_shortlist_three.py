@@ -75,6 +75,16 @@ def test_next_best_is_never_a_reserve_a_declined_or_a_leased_apartment_and_the_d
     monkeypatch.setattr(apartment_rejections, "declined_in_group", declined)
     out = _view(db, gid)
     assert calls == [gid] and member                                                   # one read per group view
+    # a closed group is not read in the list views (as before this branch); only its own page reads it, once
+    was = db.execute("SELECT status FROM groups WHERE id=?", (gid,)).fetchone()[0]
+    db.execute("UPDATE groups SET status='Dissolved' WHERE id=?", (gid,))
+    db.commit()
+    closed = _view(db, gid)
+    assert calls == [gid] and "declined_apartments" not in closed
+    page = app.group_detail(gid, staff={"username": "anna", "display_name": "Anna", "role": "owner"})
+    assert calls == [gid, gid] and page["declined_apartments"][str(ids[1])][0]["name"] == "Synthetic"   # its own page still shows them
+    db.execute("UPDATE groups SET status=? WHERE id=?", (was, gid))
+    db.commit()
     assert out["declined_apartments"][str(ids[1])][0]["name"] == "Synthetic"
     roles = {a["apartment_id"]: a["shortlist_role"] for a in out["apartments"]}
     assert roles[ids[1]] == "unavailable" and [roles[i] for i in ids] == ["shortlist", "unavailable", "shortlist", "shortlist", "reserve", "reserve"]
