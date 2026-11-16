@@ -15,6 +15,7 @@ import threading
 import time
 from datetime import date, datetime, timedelta, timezone
 from typing import Optional
+from urllib.parse import quote
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
@@ -93,7 +94,18 @@ async def _wake_up_scheduler(request: Request, call_next):
     if too_big is not None:
         sec.apply_security_headers(too_big, is_api)
         return too_big
-    if is_api:
+    if sec.pilot_gate_enabled():
+        # Controlled pilot: decided here, before the wake-ups below and before any handler, so a visitor without an allowed
+        # sign-in triggers no scheduler check, no sweep and no handler code at all.
+        refused = await run_in_threadpool(_pilot_gate, request)
+        if refused is not None:
+            sec.apply_security_headers(refused, is_api)
+            return refused
+        # The few addresses open without sign-in (sign-in call, session check, health) do not wake background work either.
+        wake = is_api and bool(getattr(request.state, "pilot_user", None))
+    else:
+        wake = is_api
+    if wake:
         try:
             scheduler.catch_up_if_overdue(db)
         except Exception:
@@ -108,7 +120,8 @@ async def _wake_up_scheduler(request: Request, call_next):
 
 
 def _visitor_hash(req: Request) -> Optional[str]:
-    vid = req.headers.get("x-visitor-id") if TRUST_VISITOR_ID else None
+    # The preview-only header fallback is never honoured while the pilot gate is on: a header is not proof of sign-in.
+    vid = req.headers.get("x-visitor-id") if (TRUST_VISITOR_ID and not sec.pilot_gate_enabled()) else None
     return hashlib.sha256(vid.encode()).hexdigest() if vid else None
 
 
@@ -168,8 +181,51 @@ def resolve_session(req: Request, authorization: Optional[str] = None) -> tuple[
     return None, None
 
 
+def _pilot_session(req: Request) -> Optional[dict]:
+    """Read-only lookup of the allowed pilot user behind this request. Same order as resolve_session (session cookie, then
+    Bearer token) and the FIRST valid session decides, so the gate and the handlers always judge the same sign-in. Writes nothing."""
+    tokens = [req.cookies.get(SESSION_COOKIE)]
+    auth = req.headers.get("authorization") or ""
+    if auth.lower().startswith("bearer "):
+        tokens.append(auth.split(" ", 1)[1].strip())
+    for tok in tokens:
+        s = _session_row(tok) if tok else None
+        if s:
+            return s if sec.pilot_user_allowed(s) else None
+    return None
+
+
+def _pilot_gate(request: Request) -> Optional[Response]:
+    """Controlled pilot gate. Returns None to let the request through, or the refusal to send instead. Open without a session:
+    only the exact paths in security.pilot_open_path (sign-in page and its two files, the sign-in call, session check, health)."""
+    path, method = request.scope.get("path") or "", request.method.upper()   # the exact path the router will match
+    try:
+        s = _pilot_session(request)
+    except Exception:
+        # No detail: a database fault must not open the gate or describe itself to a visitor.
+        return JSONResponse({"detail": "The service is temporarily unavailable. Please try again shortly."}, status_code=503)
+    request.state.pilot_user = s
+    if s or sec.pilot_open_path(method, path):
+        return None
+    if path.startswith("/api/"):
+        return JSONResponse({"detail": "Sign-in is required. This site is in private testing."}, status_code=401)
+    if method in ("GET", "HEAD") and "text/html" in (request.headers.get("accept") or ""):
+        nxt = sec.pilot_next_target(path, request.url.query)
+        return RedirectResponse("/pilot/" + (("?next=" + quote(nxt, safe="")) if nxt and nxt != "/" else ""), status_code=303)
+    return Response("Sign-in is required.", status_code=401, media_type="text/plain")
+
+
+def _pilot_force_test(body: dict) -> dict:
+    """While the pilot gate is on, every new enquiry or saved form is TEST, whatever the page sent."""
+    if sec.pilot_gate_enabled():
+        body["is_test"] = True
+    return body
+
+
 def current_staff(request: Request, authorization: Optional[str] = Header(None)) -> dict:
     s, _ = resolve_session(request, authorization)
+    if s and sec.pilot_gate_enabled() and not sec.pilot_user_allowed(s):
+        s = None   # second check behind the middleware gate: only an allowed pilot user is staff while the gate is on
     if not s:
         raise HTTPException(401, "Staff login required" if not (authorization or request.cookies.get(SESSION_COOKIE)) else "Session expired, please sign in again")
     return s
@@ -230,6 +286,10 @@ async def login(req: Request, resp: Response):
         await _slow_fail()
         raise HTTPException(401, "This shared sign-in has been closed. Please use your own username.")
     sec.login_guard.succeeded(username)
+    if sec.pilot_gate_enabled() and not sec.pilot_user_allowed(u):
+        audit(db, u["display_name"], "pilot_login_refused")
+        await _slow_fail()
+        raise HTTPException(403, "This sign-in is not part of the private testing. Please contact the manager.")
     _prune_sessions()
     token, exp = _new_session(req, u["id"])
     audit(db, u["display_name"], "login")
@@ -241,7 +301,7 @@ async def login(req: Request, resp: Response):
 def session_resume(req: Request, resp: Response, authorization: Optional[str] = Header(None)):
     """T7: called when the app opens. Returns the remembered sign-in for this device (cookie, kept token or visitor id) or 401."""
     s, method = resolve_session(req, authorization)
-    if not s:
+    if not s or (sec.pilot_gate_enabled() and not sec.pilot_user_allowed(s)):
         raise HTTPException(401, "Not signed in on this device")
     _touch(s["token_hash"])
     if method != "cookie":
@@ -492,7 +552,7 @@ def _public_replay(sub: submissions.Submission, mate: Optional[dict], draft_toke
 
 @app.post("/api/public/enquiries", status_code=201)
 async def submit_public(req: Request, email_token: Optional[str] = None, mate_token: Optional[str] = None, draft_token: Optional[str] = None):
-    body = await sec.json_object(req)
+    body = _pilot_force_test(await sec.json_object(req))
     if str(body.get("company_website") or "").strip():  # review M2: honeypot field, hidden from people, filled by bots
         return JSONResponse({"errors": {"form": "Sorry, this form could not be sent. Please try again."}}, status_code=422)
     sec.rate_limit(req, "public_enquiries", sec.RATE_ENQUIRIES_PER_HOUR, 3600)
@@ -589,7 +649,7 @@ def _opt_token(v) -> Optional[str]:
 
 @app.post("/api/public/drafts", status_code=201)
 async def create_draft(req: Request):
-    body = await sec.json_object(req)
+    body = _pilot_force_test(await sec.json_object(req))
     sec.rate_limit(req, "public_drafts", sec.RATE_DRAFTS_PER_HOUR, 3600)
     answers_json, step, email = _draft_fields(body)
     token = secrets.token_urlsafe(18)
@@ -629,7 +689,7 @@ def get_draft(token: str):
 @app.post("/api/public/validate")
 async def validate_public(req: Request):
     from .enquiries import validate
-    body = await sec.json_object(req)
+    body = _pilot_force_test(await sec.json_object(req))
     sec.rate_limit(req, "public_drafts", sec.RATE_DRAFTS_PER_HOUR, 3600)
     return {"errors": validate(body, party_max=matching.mate_limit(db, "test" if body.get("is_test") else "real"))}
 
@@ -759,7 +819,7 @@ def enquiry_detail(eid: int, staff=Depends(current_staff)):
 
 @app.post("/api/enquiries", status_code=201)
 async def staff_create_enquiry(req: Request, staff=Depends(current_staff)):
-    body = await sec.json_object(req)
+    body = _pilot_force_test(await sec.json_object(req))
     channel = body.get("channel") or "Phone"
     if channel not in CHANNELS:
         channel = "Phone"
@@ -2325,7 +2385,11 @@ def stats(staff=Depends(current_staff), dataset: Optional[str] = None):
 
 
 @app.get("/api/health")
-def health():
+def health(request: Request):
+    if sec.pilot_gate_enabled() and not getattr(request.state, "pilot_user", None):
+        # Minimal reply for the host's health check and any visitor without a pilot sign-in: alive and database reachable, no detail.
+        db.execute("SELECT 1").fetchone()
+        return {"ok": True}
     return {"ok": True, "time": now_iso(), "database": getattr(db, "backend", "sqlite"),
             "apartments": db.execute("SELECT COUNT(*) FROM apartments").fetchone()[0]}
 
@@ -2350,7 +2414,7 @@ def _homebot_reply(e: dict, is_test: bool, receipt_status: str) -> dict:
 async def create_homebot_handoff(req: Request):
     """H5/H14: the HomeBot hand-off screen saves the party's size answers as a MateBot saved form (origin 'homebot') and
     returns the resume link. Only compatible answers are carried (server/homebot_handoff.py); no identity exists yet."""
-    body = await sec.json_object(req)
+    body = _pilot_force_test(await sec.json_object(req))
     sec.rate_limit(req, "public_drafts", sec.RATE_DRAFTS_PER_HOUR, 3600)
     try:
         out = homebot_handoff.create(db, body.get("headcount_now"), body.get("headcount_target"), is_test=bool(body.get("is_test")),
@@ -2363,7 +2427,7 @@ async def create_homebot_handoff(req: Request):
 
 @app.post("/api/public/homebot/enquiries", status_code=201)
 async def submit_homebot(req: Request):
-    body = await sec.json_object(req)
+    body = _pilot_force_test(await sec.json_object(req))
     if str(body.get("company_website") or "").strip():  # honeypot, as the MateBot form
         return JSONResponse({"errors": {"form": "Sorry, this form could not be sent. Please try again."}}, status_code=422)
     sec.rate_limit(req, "public_enquiries", sec.RATE_ENQUIRIES_PER_HOUR, 3600)
@@ -2818,6 +2882,26 @@ class _HomeBotStatic(StaticFiles):
         html = re.sub(r'(<meta name="homebot-review-build" content=")[^"]*(")',
                       lambda m: m[1] + review + m[2], html)
         return Response(html, media_type="text/html", headers={"Cache-Control": "no-store"})
+
+
+PILOT_DIR = os.path.join(HERE, "pilot")
+_PILOT_FILES = {"": ("index.html", "text/html"), "pilot.js": ("pilot.js", "text/javascript"), "pilot.css": ("pilot.css", "text/css")}
+
+
+@app.api_route("/pilot", methods=["GET", "HEAD"], include_in_schema=False)
+def pilot_root(request: Request):
+    if not sec.pilot_gate_enabled():
+        raise HTTPException(404, "Not found")
+    return RedirectResponse("/pilot/" + ("?" + request.url.query if request.url.query else ""), status_code=307)
+
+
+@app.api_route("/pilot/{name:path}", methods=["GET", "HEAD"], include_in_schema=False)
+def pilot_page(name: str):
+    """The pilot sign-in page and its two files. Only while the gate is on; otherwise these addresses do not exist."""
+    entry = _PILOT_FILES.get(name) if sec.pilot_gate_enabled() else None
+    if not entry:
+        raise HTTPException(404, "Not found")
+    return FileResponse(os.path.join(PILOT_DIR, entry[0]), media_type=entry[1])
 
 
 if os.path.isdir(HOMEBOT_DIR):

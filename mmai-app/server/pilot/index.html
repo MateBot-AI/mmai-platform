@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="en-AU">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<meta name="referrer" content="same-origin">
+<meta name="theme-color" content="#2b1d2e">
+<title>MateBot AI · Private testing</title>
+<link rel="stylesheet" href="/pilot/pilot.css">
+</head>
+<body>
+<main class="card" aria-labelledby="pilotTitle">
+  <p class="brand">Apartment Living Melbourne</p>
+  <h1 id="pilotTitle">MateBot AI private testing</h1>
+
+  <section id="signedOut" hidden>
+    <p>This site is being tested privately before launch. Please sign in to continue.</p>
+    <form id="signIn" novalidate>
+      <label for="username">Username</label>
+      <input id="username" name="username" type="text" autocomplete="username" autocapitalize="none" spellcheck="false" maxlength="80" required>
+      <label for="password">Password</label>
+      <input id="password" name="password" type="password" autocomplete="current-password" maxlength="200" required>
+      <button id="signInBtn" type="submit">Sign in</button>
+    </form>
+    <p id="msg" class="msg" role="alert" aria-live="assertive"></p>
+  </section>
+
+  <section id="signedIn" hidden>
+    <p id="who" class="who"></p>
+    <p class="note">Everything entered during testing is saved as TEST data only.</p>
+    <ul class="links">
+      <li><a href="/homebot/?test=1">Open the starting page (choose MateBot or HomeBot)</a></li>
+      <li><a href="/#/?test=1">Open the MateBot form</a></li>
+      <li><a href="/#/staff">Open the staff workspace</a></li>
+    </ul>
+    <button id="signOutBtn" type="button" class="quiet">Sign out</button>
+  </section>
+
+  <noscript><p class="msg">Please turn on JavaScript in your browser to sign in.</p></noscript>
+</main>
+<script src="/pilot/pilot.js" defer></script>
+</body>
+</html>

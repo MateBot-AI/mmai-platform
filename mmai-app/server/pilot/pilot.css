@@ -1,0 +1,39 @@
+/* Sign-in page for private testing. System fonts only: the app's own fonts sit behind the sign-in. */
+*, *::before, *::after { box-sizing: border-box; }
+html { -webkit-text-size-adjust: 100%; }
+body {
+  margin: 0; min-height: 100vh; display: grid; place-items: center; padding: 24px 16px;
+  background: #f6f1ea; color: #2b1d2e;
+  font: 16px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+}
+.card {
+  width: 100%; max-width: 420px; background: #ffffff; border: 1px solid #e3d9cc; border-radius: 14px;
+  padding: 28px 24px; box-shadow: 0 6px 24px rgba(43, 29, 46, 0.08);
+}
+.brand { margin: 0 0 6px; font-size: 12px; letter-spacing: 0.08em; text-transform: uppercase; color: #6b5a6e; }
+h1 { margin: 0 0 14px; font-size: 22px; line-height: 1.25; }
+p { margin: 0 0 14px; }
+label { display: block; margin: 12px 0 4px; font-weight: 600; font-size: 14px; }
+input {
+  width: 100%; min-height: 46px; padding: 10px 12px; font: inherit; color: inherit;
+  background: #ffffff; border: 1px solid #a99aab; border-radius: 10px;
+}
+input:focus-visible, button:focus-visible, a:focus-visible { outline: 3px solid #e2702a; outline-offset: 2px; }
+button {
+  width: 100%; min-height: 48px; margin-top: 18px; padding: 10px 16px; font: inherit; font-weight: 700;
+  color: #ffffff; background: #2b1d2e; border: 0; border-radius: 10px; cursor: pointer;
+}
+button:hover { background: #45304a; }
+button[disabled] { opacity: 0.6; cursor: default; }
+button.quiet { color: #2b1d2e; background: #ffffff; border: 1px solid #a99aab; }
+button.quiet:hover { background: #f6f1ea; }
+.msg { min-height: 1.5em; margin: 14px 0 0; color: #a3261c; font-weight: 600; }
+.who { font-weight: 700; }
+.note { padding: 10px 12px; background: #fff4e5; border: 1px solid #f1cf9c; border-radius: 10px; font-size: 14px; }
+.links { list-style: none; margin: 0 0 6px; padding: 0; }
+.links li { margin: 0 0 8px; }
+.links a {
+  display: block; padding: 12px 14px; color: #2b1d2e; font-weight: 600; text-decoration: none;
+  border: 1px solid #e3d9cc; border-radius: 10px; background: #fbf8f4;
+}
+.links a:hover { border-color: #2b1d2e; }

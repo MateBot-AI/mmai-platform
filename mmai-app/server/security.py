@@ -15,6 +15,11 @@ Environment variables (all optional):
   MMAI_FRAME_ANCESTORS          CSP frame-ancestors value (default allows the app's own origin and the Perplexity preview/app hosts)
   MMAI_PUBLIC_BASE_URL          public address of the app for generated links (e.g. https://app.matebot.com.au); empty = page address
   MMAI_TRUST_PROXY_IP=0         ignore X-Forwarded-For (default 1: the hosting proxy sets it; the first address is the visitor)
+  MMAI_PILOT_GATE=1             controlled pilot: every page, file and API call needs an allowed signed-in pilot user, except the
+                                pilot sign-in page, the sign-in call itself and a minimal health reply; all new enquiries are
+                                saved as TEST. Unset/0/off/false/no = off (normal behaviour). Any other value turns it ON, so a
+                                mistyped value fails closed.
+  MMAI_PILOT_USERS              comma-separated usernames allowed through the pilot gate (default: the manager account only)
 """
 from __future__ import annotations
 
@@ -74,6 +79,53 @@ SECURITY_HEADERS = {
     "Permissions-Policy": "camera=(), microphone=(), geolocation=()",
     "Cross-Origin-Opener-Policy": "same-origin-allow-popups",
 }
+
+
+# ---------------------------------------------------------------------------
+# Controlled pilot gate (16 Nov 2026). Read from the environment on every call so one process setting governs every request and
+# a test can switch it without re-importing this module.
+# ---------------------------------------------------------------------------
+_PILOT_OFF = ("", "0", "off", "false", "no")
+PILOT_PAGE_PATHS = ("/pilot", "/pilot/", "/pilot/pilot.js", "/pilot/pilot.css")
+# (method, exact path) pairs that answer without a pilot session while the gate is on. Nothing else does.
+PILOT_OPEN_API = (("POST", "/api/auth/login"), ("GET", "/api/auth/session"), ("GET", "/api/health"))
+PILOT_HSTS = "max-age=31536000"
+
+
+def pilot_gate_enabled() -> bool:
+    return (os.environ.get("MMAI_PILOT_GATE") or "").strip().lower() not in _PILOT_OFF
+
+
+def pilot_usernames() -> frozenset:
+    """Usernames named in MMAI_PILOT_USERS (lower-case). Empty = only the manager role is allowed."""
+    return frozenset(u.strip().lower() for u in (os.environ.get("MMAI_PILOT_USERS") or "").split(",") if u.strip())
+
+
+def pilot_user_allowed(user: dict | None) -> bool:
+    """True when this staff record (needs `username` and `role`) may pass the pilot gate. Never true for a disabled account."""
+    if not user or user.get("disabled"):
+        return False
+    named = pilot_usernames()
+    if named:
+        return str(user.get("username") or "").strip().lower() in named
+    return user.get("role") == "owner"
+
+
+def pilot_open_path(method: str, path: str) -> bool:
+    """Exact-match allow-list for requests that need no pilot session (sign-in page and its two files, sign-in, health)."""
+    m = (method or "").upper()
+    if path in PILOT_PAGE_PATHS:
+        return m in ("GET", "HEAD")
+    return (m, path) in PILOT_OPEN_API
+
+
+def pilot_next_target(path: str, query: str = "") -> str:
+    """A same-site path (+query) to return to after sign-in, or "" when it is not a plain local path."""
+    if not path.startswith("/") or path.startswith("//") or "\\" in path or any(ord(ch) < 32 for ch in path + query):
+        return ""
+    if path in PILOT_PAGE_PATHS:
+        return ""
+    return path + (("?" + query) if query else "")
 
 
 # ---------------------------------------------------------------------------
@@ -241,6 +293,11 @@ def body_too_large(req: Request) -> JSONResponse | None:
 def apply_security_headers(resp, is_api: bool):
     for k, v in SECURITY_HEADERS.items():
         resp.headers.setdefault(k, v)
-    if is_api:
+    if pilot_gate_enabled():
+        # Nothing served during the controlled pilot may be kept by a shared cache (the host's edge cache included): a cached
+        # copy would be handed to a visitor who never passed the gate.
+        resp.headers["Cache-Control"] = "private, no-store"
+        resp.headers.setdefault("Strict-Transport-Security", PILOT_HSTS)
+    elif is_api:
         resp.headers.setdefault("Cache-Control", "no-store")
     resp.headers.setdefault("Content-Security-Policy", csp() if not is_api else "default-src 'none'; frame-ancestors 'none'")

@@ -19,6 +19,7 @@ from .db import retention_guard, audit, j, now_iso, pj, row, rows, transaction
 from .enquiries import EMAIL_RE, MAX_NAME, MAX_TEXT, NAME_BAD_RE, ValidationError
 from .institutions import institution_list
 from . import rules, submissions
+from . import security as sec
 from . import apartment_features as feat
 
 SOURCE = "homebot"
@@ -414,6 +415,7 @@ def create(c, a: dict, *, is_test: bool, submission_key: str | None = None, on_i
     """Validate and store one HomeBot enquiry and its people in ONE transaction (all rows or none). `on_inserted(c, eid)` runs
     inside the same transaction (the submission-key engine marks the key saved there; if it raises, everything rolls back).
     Returns the new id. Raises ValidationError."""
+    is_test = bool(is_test) or sec.pilot_gate_enabled()   # controlled pilot: nothing new is ever stored as real data
     clean = validate(a)
     now = now_iso()
     answers = {k: v for k, v in clean.items() if k not in ("flags",)}

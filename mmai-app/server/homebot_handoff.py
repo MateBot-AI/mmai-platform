@@ -87,6 +87,7 @@ def carried_sentences(headcount_now: int, headcount_target: int) -> list[str]:
 def create(c, headcount_now, headcount_target, *, is_test: bool, now_iso: str, expires_iso: str) -> dict:
     """Save the hand-off as a MateBot draft (origin='homebot'); returns the token, the carried answers and the plain sentences.
     The draft holds matching answers only (no identity); it expires like any saved form and is wiped with test data when is_test."""
+    is_test = bool(is_test) or sec.pilot_gate_enabled()   # controlled pilot: saved forms are TEST too
     answers = prefill(headcount_now, headcount_target)
     token = secrets.token_urlsafe(18)
     c.execute("INSERT INTO form_drafts(token, answers_json, step, email, is_test, mate_token, email_token, created_at, updated_at, expires_at, submit_key, origin) "

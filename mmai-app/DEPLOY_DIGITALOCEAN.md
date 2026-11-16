@@ -54,6 +54,21 @@ HomeBot remains in review mode by default. Only after the relevant acceptance an
 
 Set `MMAI_PUBLIC_BASE_URL` to the actual approved HTTPS origin. `app.matebot.com.au` in the template is a proposal requiring DNS/ownership verification, not an established live address. Verify all saved-form, Bring-a-mate, staff and individual-response links on the real host.
 
+## Private testing behind a sign-in (pilot gate)
+
+Set `MMAI_PILOT_GATE=1` before the service is given any public address. While it is set:
+
+- Every page, file and API call needs an allowed signed-in staff user. Without one, only these answer: the sign-in page `/pilot/` with its two files, the sign-in call `POST /api/auth/login`, the session check `GET /api/auth/session`, and `GET /api/health`, which replies only `{"ok": true}`.
+- Allowed users are the manager account by default. To allow named others, set `MMAI_PILOT_USERS` to a comma-separated list of usernames; that list then replaces the default, so include the manager if he should keep access. Other staff are refused at sign-in and their earlier sessions do not pass.
+- Refused requests are decided before any handler, scheduler check or sweep runs, and write nothing. The preview-only visitor header is ignored.
+- Every new enquiry, HomeBot enquiry and saved form is stored as TEST, whatever the page sent.
+- Every reply carries `Cache-Control: private, no-store` and `Strict-Transport-Security`, so the host's edge cache holds nothing.
+- Any value other than unset, empty, `0`, `off`, `false` or `no` turns the gate on, so a mistyped value closes the site rather than opening it.
+
+Order of work on the host: (1) add `MMAI_PILOT_GATE=1` and `MMAI_PUBLIC_BASE_URL`, deploy, and confirm from the container console that `/` and `/api/apartments` are refused without sign-in and `/api/health` returns only `{"ok":true}`; (2) only then add the public HTTP route (`http_port: 8080` and an ingress rule for `/`) so the domain certificate can be issued; (3) check the public address the same way before anyone signs in. Removing the variable restores ordinary behaviour and is a release decision for Bill, not a configuration tidy-up.
+
+Known limit while testing: repeated wrong passwords for a username pause sign-in for that username for 15 minutes, which an outsider who knows the username can trigger; this is a nuisance, not an entry.
+
 ## External acceptance and release sequence
 
 Anna supplies current inventory, verifies staff accounts and authorises the existing Microsoft 365 mailbox and controlled recipients. Follow `NOTIFICATION_OPERATIONS.md`; provider acceptance is not evidence of receipt, and manual phone-copy previews are not automatic submission receipts.

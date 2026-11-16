@@ -54,6 +54,9 @@ services:
       - key: MMAI_TRUST_VISITOR_ID
         scope: RUN_TIME
         value: "0"
+      - key: MMAI_PILOT_GATE               # private testing: the whole site needs an allowed staff sign-in; new enquiries are TEST
+        scope: RUN_TIME
+        value: "1"
       # --- background work ---
       - key: MMAI_HOMEBOT_REVIEW_BUILD
         scope: RUN_TIME

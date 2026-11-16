@@ -5,6 +5,7 @@ import re
 from datetime import date
 
 from . import ai, rules, submissions
+from . import security as sec
 from . import intro_profile as ip
 from . import apartment_features as feat
 from .countries import normalise_country
@@ -424,6 +425,7 @@ def create_enquiry(c, a: dict, channel: str, staff: str | None = None, is_test: 
     refuses a second enquiry for one key (callers catch the violation and replay). Anything that may call out (country
     normalisation, possibly the AI) is done before the block. Any exception inside the block rolls everything back.
     Note: get_enquiry() may raise after the commit; callers that need the id regardless should use on_inserted."""
+    is_test = bool(is_test) or sec.pilot_gate_enabled()   # controlled pilot: nothing new is ever stored as real data
     a = strip_retired(a)   # retired identity fields never reach storage (answers_json included)
     errors = validate(a, party_max=party_max)
     if errors:
