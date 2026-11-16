@@ -46,6 +46,13 @@ PROBES = (
 )
 
 
+def _notice_as_sent(h, body) -> bool:
+    """A notice must not be cached, must ask the edge to pass it on unchanged, and must carry the contact address in plain text."""
+    cache = h.get("cache-control", "")
+    return ("no-store" in cache and "no-transform" in cache and b'href="mailto:reservations@almelb.com.au"' in body
+            and b"<script" not in body.lower() and b"email-protection" not in body)
+
+
 def _check(name, status, headers, body) -> bool:
     h = {k.lower(): v for k, v in headers.items()}
     if name == "no_store":
@@ -62,9 +69,9 @@ def _check(name, status, headers, body) -> bool:
     if name == "page_headers":
         return "no-store" in h.get("cache-control", "") and h.get("strict-transport-security") == "max-age=31536000"
     if name == "terms_notice":
-        return b"<h1>Terms of Use</h1>" in body and b"Google Maps/Google Earth Additional Terms of Service" in body and "no-store" in h.get("cache-control", "")
+        return b"<h1>Terms of Use</h1>" in body and b"Google Maps/Google Earth Additional Terms of Service" in body and _notice_as_sent(h, body)
     if name == "privacy_notice":
-        return b"<h1>Privacy Policy</h1>" in body and b"Google Privacy Policy" in body and "no-store" in h.get("cache-control", "")
+        return b"<h1>Privacy Policy</h1>" in body and b"Google Privacy Policy" in body and _notice_as_sent(h, body)
     if name == "to_sign_in_only":
         return (h.get("location") or "").startswith("/pilot/")
     if name == "fixed_script":

@@ -304,8 +304,9 @@ def apply_security_headers(resp, is_api: bool):
         resp.headers.setdefault(k, v)
     if pilot_gate_enabled():
         # Nothing served during the controlled pilot may be kept by a shared cache (the host's edge cache included): a cached
-        # copy would be handed to a visitor who never passed the gate.
-        resp.headers["Cache-Control"] = "private, no-store"
+        # copy would be handed to a visitor who never passed the gate. "no-transform" tells the edge to pass pages on as sent:
+        # without it the host's edge replaced the contact address on the public notices with a placeholder and its own script.
+        resp.headers["Cache-Control"] = "private, no-store, no-transform"
         resp.headers.setdefault("Strict-Transport-Security", PILOT_HSTS)
     elif is_api:
         resp.headers.setdefault("Cache-Control", "no-store")

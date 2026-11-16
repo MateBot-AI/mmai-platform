@@ -31,7 +31,7 @@ def test_notices_are_readable_without_sign_in_behind_the_gate(gated):
         assert r.status_code == 200 and r.headers["content-type"].startswith("text/html"), path
         assert r.text == open(os.path.join(LEGAL_DIR, name), encoding="utf-8").read()
         assert f"<h1>{title}</h1>" in r.text
-        assert "no-store" in r.headers["cache-control"] and "private" in r.headers["cache-control"]
+        assert r.headers["cache-control"] == "private, no-store, no-transform"   # not cached, and passed on by the edge as sent
         assert r.headers["strict-transport-security"].startswith("max-age=")
         assert r.headers["x-content-type-options"] == "nosniff"
         assert "script-src 'self'" in r.headers["content-security-policy"]
@@ -86,7 +86,9 @@ def test_notice_wording_and_page_safety():
         assert len(re.findall(r"<li>", html)) == clauses, name
         assert f"<title>{title} · MateBot AI</title>" in html and 'lang="en-AU"' in html and "noindex" in html
         assert "Matebot AI Pty Ltd" in text and "Last updated: 16 November 2026." in text
-        assert '<a href="mailto:reservations@almelb.com.au">reservations@almelb.com.au</a>' in html
+        # the contact address is plain text inside the markers that stop the host's edge swapping it for a placeholder
+        marked = '<!--email_off--><a href="mailto:reservations@almelb.com.au">reservations@almelb.com.au</a><!--/email_off-->'
+        assert html.count(marked) >= 1 and html.count("reservations@almelb.com.au") == 2 * html.count(marked), name
         # fixed pages: no script, no form, nothing loaded from elsewhere, no draft or approval notes left in
         for word in ("<script", "<form", "<input", "<iframe", "<img", "<link", "onclick", "javascript:", "http://", "@import", "url("):
             assert word not in low, (name, word)

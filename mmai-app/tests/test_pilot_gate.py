@@ -280,7 +280,7 @@ def test_sign_in_page_is_served_without_sign_in(gated):
     assert c.get("/pilot/pilot.css").headers["content-type"].startswith("text/css")
     for r in (page, c.get("/pilot/pilot.js"), c.get("/pilot/pilot.css")):
         assert r.status_code == 200
-        assert "no-store" in r.headers["cache-control"] and "private" in r.headers["cache-control"]
+        assert r.headers["cache-control"] == "private, no-store, no-transform"
         assert r.headers["strict-transport-security"].startswith("max-age=")
         assert r.headers["x-content-type-options"] == "nosniff"
         assert "script-src 'self'" in r.headers["content-security-policy"]
@@ -526,6 +526,34 @@ def test_self_check_fails_loudly_when_the_gate_is_not_working(ungated):
     lines.clear()
     assert pilot_selfcheck.run(lambda *a: (_ for _ in ()).throw(ConnectionRefusedError()), lines.append) is False
     assert all("MISMATCH" in line and "no reply (ConnectionRefusedError)" in line for line in lines[:-1])
+
+
+def test_self_check_fails_when_a_notice_is_not_as_sent(gated):
+    """The notices must ask the edge to pass them on unchanged and must carry the contact address in plain text."""
+    from server import pilot_selfcheck
+    c, _, _ = gated
+    real = _through(c)
+    plain = b'<a href="mailto:reservations@almelb.com.au">reservations@almelb.com.au</a>'
+
+    def without_no_transform(method, path, headers, body):
+        status, h, content = real(method, path, headers, body)
+        if path == "/terms":
+            h = {k: ("private, no-store" if k.lower() == "cache-control" else v) for k, v in h.items()}
+        return status, h, content
+
+    def address_swapped(method, path, headers, body):        # what the host's edge did on 16 November 2026
+        status, h, content = real(method, path, headers, body)
+        if path == "/privacy":
+            assert plain in content
+            content = content.replace(plain, b'<a href="/cdn-cgi/l/email-protection#00"><span class="__cf_email__">[email&#160;protected]</span></a>')
+            content = content.replace(b"</body>", b'<script data-cfasync="false" src="/cdn-cgi/scripts/x/email-decode.min.js"></script></body>')
+        return status, h, content
+
+    for fetch, bad in ((without_no_transform, "/terms"), (address_swapped, "/privacy")):
+        lines = []
+        assert pilot_selfcheck.run(fetch, lines.append) is False
+        assert [line.split()[4] for line in lines if "MISMATCH" in line] == [bad], lines
+        assert lines[-1].startswith(f"pilot self-check: FAIL {len(pilot_selfcheck.PROBES) - 1}/{len(pilot_selfcheck.PROBES)} ")
 
 
 def test_self_check_only_starts_when_asked_and_reports_a_gate_that_is_off(monkeypatch, capsys):
