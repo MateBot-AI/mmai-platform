@@ -121,9 +121,13 @@ def pilot_open_path(method: str, path: str) -> bool:
 
 def pilot_next_target(path: str, query: str = "") -> str:
     """A same-site path (+query) to return to after sign-in, or "" when it is not a plain local path."""
-    if not path.startswith("/") or path.startswith("//") or "\\" in path or any(ord(ch) < 32 for ch in path + query):
+    if not path.startswith("/") or "//" in path or "\\" in path or "%" in path or any(ord(ch) < 32 for ch in path + query):
         return ""
-    if path in PILOT_PAGE_PATHS:
+    # A browser folds "." and ".." segments before it navigates, which can turn a harmless-looking path into "//other-site";
+    # any path that is not already in its plain form is refused rather than tidied.
+    if any(seg in (".", "..") for seg in path.split("/")):
+        return ""
+    if path in PILOT_PAGE_PATHS or path.startswith("/pilot/"):
         return ""
     return path + (("?" + query) if query else "")
 

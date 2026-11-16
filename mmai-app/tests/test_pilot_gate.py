@@ -314,10 +314,94 @@ def test_next_target_only_accepts_plain_local_paths():
     from server import security as sec
     assert sec.pilot_next_target("/homebot/", "test=1") == "/homebot/?test=1"
     assert sec.pilot_next_target("/", "") == "/"
-    for bad in ("//evil.example/x", "https://evil.example", "/\\evil.example", "evil", "", "/a\nb"):
+    for bad in ("//evil.example/x", "https://evil.example", "/\\evil.example", "evil", "", "/a\nb") + OFF_SITE_NEXT:
         assert sec.pilot_next_target(bad, "") == "", bad
-    for own in ("/pilot", "/pilot/", "/pilot/pilot.js"):
+    for own in ("/pilot", "/pilot/", "/pilot/pilot.js", "/pilot/anything"):
         assert sec.pilot_next_target(own, "") == ""
+
+
+# Paths a browser would tidy into "//evil.example" (another site) before navigating; found by the independent review, 16 Nov.
+OFF_SITE_NEXT = ("/.//evil.example", "/a/..//evil.example", "/%2e//evil.example", "/./%2e/..//evil.example", "/x//evil.example",
+                 "/..//evil.example", "/a/./b", "/a/../b", "/%2e%2e//evil.example", "/%2F/evil.example", "/a/..", "/.")
+
+
+def test_refused_page_visit_never_carries_an_off_site_return_address(gated):
+    c, _, _ = gated
+    for path in ("/.//evil.example", "/a/..//evil.example", "/%2e//evil.example", "/x//evil.example"):
+        r = c.get(path, headers={"Accept": "text/html"})
+        assert r.status_code == 303 and r.headers["location"] == "/pilot/", (path, r.headers.get("location"))
+
+
+def test_sign_in_page_script_only_ever_navigates_within_this_site(tmp_path):
+    """Runs the real pilot.js in Node with a stand-in page: sign-in succeeds, and the address the script navigates to is recorded
+    for each `next` value. Off-site and untidy values must lead nowhere; a plain local path goes to this site's own origin."""
+    import json
+    import shutil
+    import subprocess
+    node = shutil.which("node")
+    if not node:
+        pytest.skip("node is not installed")
+    harness = r"""
+const fs = require('fs'), vm = require('vm');
+const src = fs.readFileSync(process.argv[2], 'utf8');
+const cases = JSON.parse(process.argv[3]);
+(async () => {
+  const out = [];
+  for (const [search, hash] of cases) {
+    const handlers = {}, assigned = [];
+    const el = () => ({ hidden: false, value: 'x', textContent: '', disabled: false, focus() {},
+      addEventListener(type, fn) { handlers[type] = fn; } });
+    const els = {};
+    const document = { getElementById: (id) => (els[id] = els[id] || el()) };
+    const location = { origin: 'https://app.matebot.com.au', search, hash, assign: (u) => assigned.push(String(u)) };
+    const fetch = async () => ({ ok: true, status: 200, json: async () => ({ username: 'bill', display_name: 'Bill' }) });
+    const ctx = vm.createContext({ document, location, fetch, URL, URLSearchParams });
+    vm.runInContext(src, ctx);
+    await new Promise((r) => setTimeout(r, 0));
+    await handlers.submit({ preventDefault() {} });
+    out.push(assigned);
+  }
+  console.log(JSON.stringify(out));
+})();
+"""
+    from urllib.parse import quote
+    bad = ("//evil.example/x", "https://evil.example", "/\\evil.example", "/\\/evil.example", "evil", "", "/a\nb", "/a\tb", "javascript:alert(1)",
+           "/pilot/", "/pilot", "/pilot/x", "/a b", "/a?x=\\evil") + OFF_SITE_NEXT
+    good = {"/": "https://app.matebot.com.au/", "/homebot/?test=1": "https://app.matebot.com.au/homebot/?test=1",
+            "/staff.html": "https://app.matebot.com.au/staff.html", "/x?u=//evil.example": "https://app.matebot.com.au/x?u=//evil.example",
+            "/ok#//evil.example/..": "https://app.matebot.com.au/ok"}   # a fragment in the value is dropped; still this site
+    cases = [["?next=" + quote(v, safe=""), ""] for v in bad] + [["?next=" + quote(v, safe=""), ""] for v in good]
+    cases += [["?next=" + quote("/staff.html", safe=""), "#enquiries"], ["", ""], ["?next=%2F.%2F%2Fevil.example", "#//evil.example"]]
+    script = tmp_path / "harness.js"
+    script.write_text(harness)
+    run = subprocess.run([node, str(script), os.path.join(PILOT_DIR, "pilot.js"), json.dumps(cases)], capture_output=True, text=True, timeout=60)
+    assert run.returncode == 0, run.stderr
+    got = json.loads(run.stdout)
+    assert len(got) == len(cases)
+    for value, assigned in zip(bad, got):
+        assert assigned == [], (value, assigned)
+    for (value, want), assigned in zip(good.items(), got[len(bad):]):
+        assert assigned == [want], (value, assigned)
+    assert got[-3] == ["https://app.matebot.com.au/staff.html#enquiries"]
+    assert got[-2] == [] and got[-1] == []
+    for assigned in got:   # whatever was accepted, the browser stays on this site
+        for target in assigned:
+            assert target.startswith("https://app.matebot.com.au/") and not target.startswith("https://app.matebot.com.au//")
+
+
+def test_second_check_refuses_other_staff_even_if_the_gate_step_is_skipped(gated, monkeypatch):
+    """The staff check behind every staff address refuses a non-pilot sign-in on its own, without relying on the gate in front."""
+    c, appmod, _ = gated
+    monkeypatch.delenv("MMAI_PILOT_GATE")
+    tok = _login(c, "anna").json()["token"]           # signed in while the gate was off
+    monkeypatch.setenv("MMAI_PILOT_GATE", "1")
+    monkeypatch.setattr(appmod, "_pilot_gate", lambda request: None)   # the front gate lets everything through
+    c.cookies.clear()
+    assert c.get("/api/enquiries", headers={"Authorization": "Bearer " + tok}).status_code == 401
+    assert c.get("/api/enquiries", cookies={COOKIE: tok}).status_code == 401
+    bill = _login(c).json()["token"]
+    c.cookies.clear()
+    assert c.get("/api/enquiries", headers={"Authorization": "Bearer " + bill}).status_code == 200
 
 
 def test_open_addresses_are_an_exact_list():

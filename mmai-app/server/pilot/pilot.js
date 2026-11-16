@@ -5,14 +5,22 @@
   const $ = (id) => document.getElementById(id);
   const signedOut = $('signedOut'), signedIn = $('signedIn'), form = $('signIn'), msg = $('msg'), btn = $('signInBtn');
 
-  // Where to go after signing in: only a plain path on this same site is accepted; anything else is ignored.
+  // Where to go after signing in: only a plain path on this same site is accepted; anything else is ignored. The path must
+  // already be in its plain form (no empty, "." or ".." parts, no percent codes, no backslash), because a browser tidies
+  // those before it navigates and "/.//other-site" would become "//other-site". The address is always built from this
+  // site's own origin, so the browser can never be sent anywhere else.
   function nextTarget() {
     const raw = new URLSearchParams(location.search).get('next') || '';
-    if (!raw.startsWith('/') || raw.startsWith('//') || raw.includes('\\')) return '';
+    const cut = raw.search(/[?#]/);
+    const path = cut < 0 ? raw : raw.slice(0, cut);
+    const query = cut < 0 || raw[cut] !== '?' ? '' : raw.slice(cut).split('#')[0];
+    if (!path.startsWith('/') || path.includes('//') || /[\\%\u0000-\u0020\u007f]/.test(path) || /[\\\u0000-\u001f\u007f]/.test(query)) return '';
+    if (path.split('/').some((part) => part === '.' || part === '..')) return '';
+    if (path === '/pilot' || path.startsWith('/pilot/')) return '';
     let url;
-    try { url = new URL(raw, location.origin); } catch (e) { return ''; }
-    if (url.origin !== location.origin || url.pathname === '/pilot' || url.pathname.startsWith('/pilot/')) return '';
-    return url.pathname + url.search + (location.hash || '');
+    try { url = new URL(location.origin + path + query); } catch (e) { return ''; }
+    if (url.origin !== location.origin || url.pathname !== path) return '';
+    return location.origin + path + query + (location.hash || '');
   }
 
   function show(session) {

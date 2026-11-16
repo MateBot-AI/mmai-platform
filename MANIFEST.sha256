@@ -1,6 +1,6 @@
 080bc63d937532e7fdebd4054f0d1c5111fbe59c2547ee8797f19d8e02d990d5  ./.dockerignore
 221abe934d1c64fe01a3f652a36f3f1137742a933dba6bd7896688e1dd8f4f8d  ./Dockerfile
-d8a481956db01db1455be28869d2d0cb820f4c7a10855ec77aa20cb00b957a9c  ./SOURCE-MANIFEST.json
+8e6a86a329b7ba879e35cccde98e962264e12de3bbb982bbd890f5315a04f0db  ./SOURCE-MANIFEST.json
 a9ad1a503d3011dc2a832d89feec0ad4c35857a32698d20ee8969a757717fc54  ./homebot-app/README.md
 9b06d001e20ae9d7f0b2add9a2a207d1fd9cc0521631c9a15f46c5314a7e9477  ./homebot-app/app.js
 8801646d743cc1f98760727547093b8d08c1dfae8467d383242ffd2f471a6d54  ./homebot-app/data/homebot_data.json
@@ -149,13 +149,13 @@ b5e76ba7e53e40dfc359c85c98d50ddc256390fb96ab6786ca78c4d8fbd73743  ./mmai-app/ser
 f3b9eaf01d0a114f41ac869bb47df8255cc2270f64f0f380d31bb1cd48c945ab  ./mmai-app/server/outcome_ledger.py
 17075ef874064d858ada0f516348fa265408270de99cd528845416f3dab78651  ./mmai-app/server/pilot/index.html
 41dfffa5463ac92717c7c18845050fa963c7841eb40b3ff683b8e5fa37c0ff19  ./mmai-app/server/pilot/pilot.css
-6a3870cc4889bd377662b55549aeff43baa4252e2083818e4aea006d52310447  ./mmai-app/server/pilot/pilot.js
+df78cd62b9d8ecd9948cb6a45b62567d8a710cac070de1d7587c94d3e67100cc  ./mmai-app/server/pilot/pilot.js
 a6e14332524673e811a92c54c334cdba3a0dac69e37a25bb9db06f60833b07b6  ./mmai-app/server/receipts.py
 9d325af01ceca9232d31a092fa9e21b44f5124177af082362eeff19173abd7bb  ./mmai-app/server/review_loop.py
 9160bb5e6b0a87e8e46395cae41b54a63f331cf061bb5c610dc8698bd8625255  ./mmai-app/server/routing.py
 a41c69375799df0ec1dd55139d519ad830784cb3d604001e9e68bc9ec2a5a47b  ./mmai-app/server/rules.py
 e94e82dd63f36f4afd7673243374a6bd9af0d7a433f523427fba6d421d32376e  ./mmai-app/server/scheduler.py
-04df08f37e3a710ad80fc56f98eb72f878788d6f7dcb2838082d2af944ea7e99  ./mmai-app/server/security.py
+01dcefca9026e9f557b81eb2fc248c42c6475fecddb3b7f01ddfdc241a59e694  ./mmai-app/server/security.py
 279d51dd99f2bcbf25c8964cb7e6bb37f4d8656eafdff94415798999d842abe4  ./mmai-app/server/seed.py
 2576c9e2adcd5e103da137502692734b101bf21748621b69f1d68213ee47a542  ./mmai-app/server/staff_view.py
 172b4e283dc9459e1c83cdc25e8cb9b15d98cf6af9dba5eea3751482b2ba7b9d  ./mmai-app/server/stock_lifecycle.py
@@ -236,7 +236,7 @@ de7378cd22453aa206a8c3036f8133f20ca063a39b71013c5002faec0b9ef832  ./mmai-app/tes
 9fcd2adee75da488bbaa218b4578249c08ca436cff37b454c3a94cfd6a4ce0e6  ./mmai-app/tests/test_packet_date_campus_provenance.py
 5fd52481d207143203a6b40bff648a82ca665fe7b4c2f40d7a2971f3b415f6ac  ./mmai-app/tests/test_phase_a_helpers.py
 4e7b05601ef8871713ded28facdf9d3486cc38ebd41f0b97284be99afee25ffa  ./mmai-app/tests/test_phone_copy_shortlist.py
-a53721ed33d49f7b2eb7d8ddd399fff1fcb822f8f953e7a9170c2361cc59301c  ./mmai-app/tests/test_pilot_gate.py
+a2329ee46ddeddb0bb3c760e005289e611bdee2bccafb01fae23d43fca9f74e1  ./mmai-app/tests/test_pilot_gate.py
 c3212ed7100719c8552c1f4844a24e435601869a3e54e59fdc9578aa849ce30f  ./mmai-app/tests/test_production_export.py
 7a33c467db05981d0198876255392dff568b2a1ef8b59f49fbc5a1d105ad6a66  ./mmai-app/tests/test_production_hosting.py
 17d31580e9cae96206b93e887d96e8ef6ae11ec12e28bd583c472989c7b53da1  ./mmai-app/tests/test_queue_state_errors.py
