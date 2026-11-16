@@ -21,7 +21,9 @@
   let DATA = { types: [], institutions: [], extra_bed_charge_per_week: 70 };
   /* API base: <meta name="mmai-api-base"> is rewritten at deploy time. An unresolved "__PORT_…__" placeholder means a copy that
      was never pointed at a server: same origin is assumed on localhost only (self-host / local testing); anywhere else the form
-     shows a visible "not connected" notice and cannot submit. "" = same origin (the backend serves this folder at /homebot/). */
+     shows a visible "not connected" notice and cannot submit. "" = same origin (the backend serves this folder at /homebot/).
+     Requests use credentials 'same-origin': served by the backend itself, the browser's own sign-in cookie goes with them,
+     which the private-testing gate requires for every request; a copy on another site still sends no cookie at all. */
   function apiBase() {
     const meta = document.querySelector('meta[name="mmai-api-base"]');
     const raw = ((meta && meta.getAttribute('content')) || '').trim();
@@ -178,7 +180,7 @@
     }
     function loadData() {
       if (!API.ok) { showApiError(); return Promise.resolve(); }
-      return fetch(API.base + '/api/public/homebot/meta', { cache: 'no-store', credentials: 'omit' }).then(r => { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); }).then(d => {
+      return fetch(API.base + '/api/public/homebot/meta', { cache: 'no-store', credentials: 'same-origin' }).then(r => { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); }).then(d => {
         if (!d || !Array.isArray(d.types) || !d.types.length || !Array.isArray(d.institutions)) throw new Error('bad data');
         DATA = d; dataReady = true; $$('[data-role=dataError]', form).forEach(err => { err.hidden = true; err.textContent = ''; }); renderBudget(); renderSleepRows(); renderPeople();
       }).catch(() => {
@@ -471,7 +473,7 @@
       if (!API.ok || !c.now || !c.target || c.target <= c.now) { fail(); return; }
       setLinks(''); show('pending', ['Preparing the MateBot form…']);
       const body = JSON.stringify(Object.assign({ headcount_now: c.now, headcount_target: c.target, is_test: handoffIsTest() }, travel.length ? { transport: travel } : {}));
-      const p = fetch(API.base + '/api/public/homebot/handoff', { method: 'POST', credentials: 'omit', headers: { 'Content-Type': 'application/json' }, body })
+      const p = fetch(API.base + '/api/public/homebot/handoff', { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body })
         .then(r => { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
         .then(d => { if (handoff.pending !== p) return; handoff = { key, token: d.token, pending: null }; setLinks(d.token); show('ready', d.carried); })
         .catch(() => { if (handoff.pending === p) fail(); });
@@ -508,7 +510,7 @@
       submitting = true; btnSubmit.textContent = 'Saving…'; form.inert = true; $('.steps', root).inert = true;
       const body = payload();
       const snapshot = { counts: counts(), first_name: value('first_name').trim(), answers: answersText() };
-      fetch(API.base + '/api/public/homebot/enquiries', { method: 'POST', credentials: 'omit', headers: { 'Content-Type': 'application/json', 'X-Submission-Key': submitKey }, body: JSON.stringify(body) })
+      fetch(API.base + '/api/public/homebot/enquiries', { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json', 'X-Submission-Key': submitKey }, body: JSON.stringify(body) })
         .then(r => r.json().then(j => ({ status: r.status, j })).catch(() => ({ status: r.status, j: {} })))
         .then(({ status, j }) => {
           if (status === 201 || status === 200) { showDone(j, snapshot); return; }

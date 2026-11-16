@@ -101,3 +101,36 @@ def test_the_pages_first_script_loads_on_a_real_host_name(ungated, tmp_path):
     bad = _run_api_js(tmp_path, "app.matebot.com.au", stored)
     assert bad["defined"] is False and bad["loadError"] == "Backend proxy placeholder was not rewritten"
     assert bad["firstCallError"] == "Cannot read properties of undefined (reading 'get')"
+
+
+# --- HomeBot form behind the private-testing gate -------------------------------------------------------------------------
+# Second browser-only fault found the same day: the HomeBot form sent its three requests with cookies switched off
+# (credentials 'omit'). Behind the gate the browser's sign-in exists only as the cookie, so the price guide could not load
+# ("The price guide and the list of study providers could not be loaded from the enquiry service") and nothing could be
+# sent. This test client always sends its cookies, so the request options are read from the file itself.
+HOMEBOT_FORM = os.path.join(os.path.dirname(os.path.dirname(HERE)), "homebot-app", "form.js")
+HOMEBOT_CALLS = ("/api/public/homebot/meta", "/api/public/homebot/handoff", "/api/public/homebot/enquiries")
+
+
+@pytest.mark.skipif(not os.path.isfile(HOMEBOT_FORM), reason="homebot-app folder not beside mmai-app")
+def test_homebot_form_requests_carry_the_same_site_sign_in():
+    with open(HOMEBOT_FORM, encoding="utf-8") as f:
+        js = f.read()
+    calls = re.findall(r"fetch\(API\.base \+ '([^']+)', \{([^}]*)", js)
+    assert sorted(path for path, _ in calls) == sorted(HOMEBOT_CALLS) and js.count("fetch(") == len(HOMEBOT_CALLS)
+    for path, options in calls:
+        assert "credentials: 'same-origin'" in options, path
+    assert "credentials: 'omit'" not in js and "credentials: 'include'" not in js
+
+
+def test_homebot_form_addresses_need_the_sign_in_behind_the_gate(gated):
+    c, _, _ = gated
+    # as the form used to ask: no cookie, so no sign-in
+    assert c.get(HOMEBOT_CALLS[0]).status_code == 401
+    assert c.post(HOMEBOT_CALLS[1], json={}).status_code == 401 and c.post(HOMEBOT_CALLS[2], json={}).status_code == 401
+    assert _login(c).status_code == 200   # the client now holds the session cookie, as a signed-in browser does
+    r = c.get(HOMEBOT_CALLS[0])
+    assert r.status_code == 200 and r.json()["types"] and isinstance(r.json()["institutions"], list)
+    # with the cookie the two sending addresses are reached (an empty body is then refused for its content, not for sign-in)
+    assert c.post(HOMEBOT_CALLS[1], json={}).status_code not in (401, 403)
+    assert c.post(HOMEBOT_CALLS[2], json={}).status_code not in (401, 403)
