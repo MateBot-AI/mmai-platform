@@ -172,15 +172,16 @@ def test_a_work_answer_that_is_not_an_address_is_never_measured_and_never_left_o
     # the person who works is counted as someone with a destination whose journey is not known: no pass on the other alone
     assert first["result"] == mt.NEEDS_CONFIRMATION and first["travel"]["facts"]["known_destinations"] == 2
     assert first["travel"]["facts"]["no_destination"] == [] and first["travel"]["facts"]["unmeasured"] == [2]
-    assert first["journey_lines"][1].startswith("Person 2") and "travel time needs confirmation: the place of work given is not one full street address with its suburb and state or postcode" in first["journey_lines"][1]
+    assert first["journey_lines"][1].startswith("Person 2") and "travel time needs confirmation: the place of work given is not one full street address with its suburb and postcode" in first["journey_lines"][1]
     assert [x["apartment_id"] for x in r["shortlist"]] == ids[:3] and r["failed"] == []               # kept in place, not failed
     assert [(q["destination_kind"], q["needs_confirmation"], q["no_destination"]) for q in r["people"]] == [
         ("study", None, None), ("work", ml.UNMEASURABLE_WHY["work_not_address"], None)]
 
 
 @pytest.mark.parametrize("typed", [
-    "100 Collins Street, Melbourne VIC 3000", "100 Collins St Melbourne 3000", "100 Collins Street, Melbourne, Victoria",
-    "Level 3, 100 Collins Street, Melbourne VIC 3000", "3/100 Collins St, Melbourne VIC", "12 Acland Street, St Kilda VIC 3182",
+    "100 Collins Street, Melbourne VIC 3000", "100 Collins St Melbourne 3000", "100 Collins Street, Melbourne, Victoria 3000",
+    "Level 3, 100 Collins Street, Melbourne VIC 3000", "3/100 Collins St, Melbourne VIC 3000", "12 Acland Street, St Kilda VIC 3182",
+    "5 Station Street, Malvern 3144", "600 Centre Road, Bentleigh East VIC 3165", "1 George Street, Sydney NSW 2000", "Unit 4/12 Smith Street, Richmond VIC 3121",
     "450 St Kilda Road, Melbourne VIC 3004", "1-5 Swanston St, Carlton 3053", "22 Chapel Street South Yarra VIC 3141",
     "5 Toorak Rd, South Yarra, VIC, 3141, Australia", "300 Burwood Hwy, Burwood East VIC 3151", "12 The Avenue, Parkville VIC 3052",
     "100 collins street melbourne vic 3000", "  100   Collins Street,\n Melbourne   VIC 3000 "])
@@ -189,8 +190,14 @@ def test_one_full_street_address_is_used_exactly_as_typed(typed):
 
 
 @pytest.mark.parametrize("typed", [
-    # no state or postcode, or not a street address at all: nothing is completed
-    "100 Collins Street, Melbourne", "100 Collins Street", "200 Queen St", "Collins Street, Melbourne VIC 3000", "Melbourne VIC 3000",
+    # no postcode, or not a street address at all: nothing is completed
+    "100 Collins Street, Melbourne", "100 Collins Street, Melbourne VIC", "100 Collins Street, Melbourne, Victoria", "100 Collins Street", "200 Queen St",
+    "Collins Street, Melbourne VIC 3000", "Melbourne VIC 3000",
+    # a postcode that is not a street-address postcode, or not the written state's
+    "12 Smith Street, Richmond 1234", "12 Smith Street, Richmond 8001", "12 Smith Street, Richmond 0000", "12 Smith Street, Richmond VIC 2000", "12 Smith Street, Richmond NSW 3121",
+    # a business where the suburb is written (common business words only: see the limit in work_address)
+    "12 Smith Street Acme Cafe VIC 3121", "12 Smith Street Joes Pizza 3121", "12 Smith Street Westfield Doncaster 3108", "12 Smith Street Richmond Gym 3000",
+    "12 Smith Street, Coles Supermarket 3121", "12 Smith Street, Richmond Station 3121", "12 Smith Street West field 3121 9", "12 Smith Street Richmond3121",
     "Richmond", "CBD", "Coles", "Coles Richmond", "Not yet known", "", "   ", None, 12, "12 Smith Richmond VIC 3121",
     "100 Collins Street, Victoria 3000", "100 Collins Street, South Australia 5000", "100 Collins Street, Australia 3000", "100 Collins Street, Melbourne 30000",
     # words before or after the address, or a business name with it
@@ -206,6 +213,13 @@ def test_one_full_street_address_is_used_exactly_as_typed(typed):
     "12 Smith Street Richmond VIC 3121 3122", "x" * 200])
 def test_anything_but_one_full_street_address_is_refused_not_trimmed_or_completed(typed):
     assert ml.work_address(typed) is None
+
+
+def test_the_known_limit_of_the_address_check_is_stated_not_hidden():
+    """There is no list of suburbs, so an unlisted business name written where the suburb goes is accepted with its street
+    and postcode. This pins the limit so it cannot be reported as closed."""
+    assert ml.work_address("12 Smith Street Acme 3121") == "12 Smith Street Acme 3121"
+    assert "no list of suburbs" in ml.work_address.__doc__
 
 
 def test_a_refused_work_answer_sends_nothing_for_that_person(group):

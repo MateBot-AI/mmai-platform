@@ -10,7 +10,7 @@ What is measured, and for whom (H28 counts PEOPLE, not enquiries):
   * a journey is measured only to a destination that was actually supplied and is unambiguous: the verified address of the
     institution a person who is studying named (M4, I9), or, for a person who is working or on a working holiday, the
     "Where will you work?" answer when the whole answer is one full street address (a street number, a street, a suburb
-    and a state or postcode, and nothing else: see work_address), sent exactly as typed. A suburb, an employer's name, an
+    and a postcode, and nothing else: see work_address), sent exactly as typed. A suburb, an employer's name, an
     address with other words, a phone number or a second street beside it, "Not yet known", a blank answer or an institution without a verified
     address is a destination that exists and cannot be measured: that person reads "travel time needs confirmation" and
     so does the group result (H28(d)/(h)); nothing is guessed, geocoded from a name or filled in. The enquirer's place of
@@ -48,7 +48,7 @@ NO_DESTINATION_WHY = {"not_asked": "no place of study or work was given",
 # a destination that exists and cannot be measured: the person, and so the group, needs confirmation
 UNMEASURABLE_WHY = {"no_institution": "the place of study is not one with a verified address on file",
                     "work_missing": "no place of work has been given",
-                    "work_not_address": "the place of work given is not one full street address with its suburb and state or postcode, so no journey can be measured to it"}
+                    "work_not_address": "the place of work given is not one full street address with its suburb and postcode, so no journey can be measured to it"}
 WORKING = ("Working", "Working holiday")
 WORK_ADDRESS_MAX = 160
 _TYPES = (r"street|st|road|rd|avenue|ave|av|lane|ln|drive|dr|place|pl|parade|pde|highway|hwy|boulevard|blvd|court|ct|"
@@ -60,34 +60,60 @@ _NOT_ADDRESS_WORDS = (r"in|on|at|near|by|of|and|or|from|to|for|the\s+corner|corn
                       r"jobs?|days?|hours?|hrs?|minutes?|mins?|km|kms|weeks?|months?|shifts?|nights?|eleven|call|phone|mobile|tel|"
                       r"australia|territory")
 _WORD = r"[A-Za-z][A-Za-z'-]*"
-_PLAIN = rf"(?!(?:{_TYPES}|{_STATES}|{_NOT_ADDRESS_WORDS})\b){_WORD}"
+_PLAIN = rf"\b(?!(?:{_TYPES}|{_STATES}|{_NOT_ADDRESS_WORDS})\b){_WORD}"
+# words that are a kind of business or place rather than part of a suburb's name. They are fine in a street name
+# ("Station Street", "Centre Road"), so they are refused only where the suburb is written. This list is a help, not a proof.
+_NOT_SUBURB_WORDS = (r"cafe|coffee|pizza|restaurant|bistro|kitchen|bakery|bar|pub|hotel|motel|gym|fitness|salon|shop|store|"
+                     r"supermarket|market|mall|plaza|centre|center|office|offices|tower|building|warehouse|factory|depot|"
+                     r"hospital|clinic|pharmacy|chemist|university|uni|school|college|campus|station|airport|"
+                     r"pty|ltd|inc|co|company|group|services|westfield|coles|woolworths|aldi|kmart|bunnings|mcdonalds")
+_LOCAL = rf"(?!(?:{_NOT_SUBURB_WORDS})\b){_PLAIN}"
 # One address and nothing else, start to end: an optional unit or level, a street number, a street name, its type, a
-# suburb, then a state or a postcode (or both). Nothing may come before it or after it.
+# suburb, an optional state, and a postcode. Nothing may come before it or after it.
 _FULL_ADDRESS = re.compile(
     rf"^(?:(?:unit|level|lvl|suite|shop|floor|apartment|apt)\s*\d{{1,4}}[A-Za-z]?\s*[,/]?\s*)?"
     rf"[1-9]\d{{0,4}}[A-Za-z]?(?:\s*[-/]\s*[1-9]\d{{0,4}}[A-Za-z]?)?\s+"
-    rf"(?:(?:St|Mt)\.?\s+)?(?:{_PLAIN}\s+){{1,3}}"
-    rf"(?:{_TYPES})\b\.?(?:\s+(?:north|south|east|west))?\s*,?\s*"
-    rf"(?:(?:St|Mt|North|South|East|West|Port|Mount|Point|Glen|Box|Upper|Lower)\.?\s+)?(?:{_PLAIN}\s*){{1,2}}"
-    rf"(?:\s+(?:north|south|east|west|upper|lower))?\s*,?\s*"
-    rf"(?:(?:{_STATES})\b(?:\s*,?\s*\d{{4}})?|\d{{4}})"
+    rf"(?:(?:St|Mt)\b\.?\s+)?(?:{_PLAIN}\s+){{1,3}}"
+    rf"(?:{_TYPES})\b\.?(?:\s+(?:north|south|east|west)\b)?\s*,?\s*"
+    rf"(?:(?:St|Mt|North|South|East|West|Port|Mount|Point|Glen|Box|Upper|Lower)\b\.?\s+)?{_LOCAL}(?:\s+{_LOCAL})?\b"
+    rf"(?:\s+(?:north|south|east|west|upper|lower)\b)?\s*,?\s*"
+    rf"(?:(?P<state>{_STATES})\b\s*,?\s*)?\b(?P<postcode>\d{{4}})"
     rf"(?:\s*,?\s*Australia)?$", re.I)
+# the postcodes used for street addresses in each state (post-office-box and bulk-mail ranges are not street addresses)
+_STREET_POSTCODES = {"vic": ("3",), "nsw": ("2",), "act": ("26", "29", "02"), "qld": ("4",), "sa": ("5",), "wa": ("6",), "tas": ("7",), "nt": ("08",)}
+_STATE_KEY = {"victoria": "vic", "new south wales": "nsw", "queensland": "qld", "south australia": "sa", "western australia": "wa",
+              "tasmania": "tas", "northern territory": "nt", "australian capital territory": "act"}
+
+
+def _postcode_fits(state: Optional[str], postcode: str) -> bool:
+    """A postcode in a street-address range; and, when a state was written, in that state's range."""
+    if state:
+        key = " ".join(state.lower().split())
+        return postcode.startswith(_STREET_POSTCODES[_STATE_KEY.get(key, key)])
+    return any(postcode.startswith(starts) for starts in _STREET_POSTCODES.values())
 
 
 def work_address(answer) -> Optional[str]:
     """The "Where will you work?" answer when it is one full street address and nothing else; otherwise None.
 
-    Full means, from start to end: an optional unit or level, a street number, a street name with its type, a suburb, and
-    a state or a postcode. The whole answer must be that address: words before or after it, a phone number, a second
-    street, a business name, or an address without a state or postcode are all refused. What is returned is exactly the
-    answer as typed (spaces tidied), so nothing is completed, corrected or added. The stored answer is never changed.
-    A refused answer is not a failure: the person reads "travel time needs confirmation" and no request is made for them."""
+    Full means, from start to end: an optional unit or level, a street number, a street name with its type, a suburb, an
+    optional state, and a postcode that is a street-address postcode (and belongs to the state when one is written). The
+    whole answer must be that address: words before or after it, a phone number, an email address, a second street or a
+    second address, and an address without a postcode are all refused. What is returned is exactly the answer as typed
+    (spaces tidied), so nothing is completed, corrected or added. The stored answer is never changed. A refused answer is
+    not a failure: the person reads "travel time needs confirmation" and no request is made for them.
+
+    Limit, stated plainly: there is no list of suburbs here, so the one or two words where the suburb is written are not
+    checked to be a real suburb, nor the postcode to be that suburb's. Common business words there are refused
+    (_NOT_SUBURB_WORDS), but another business name written in place of the suburb ("12 Smith Street Acme 3121") would be
+    accepted and sent with its street and postcode. The number, the street and the postcode are what place the address."""
     if not isinstance(answer, str):
         return None
     text = " ".join(answer.split())
     if not text or len(text) > WORK_ADDRESS_MAX:
         return None
-    return text if _FULL_ADDRESS.match(text) else None
+    m = _FULL_ADDRESS.match(text)
+    return text if m and _postcode_fits(m.group("state"), m.group("postcode")) else None
 OPEN_POINT_PRACTICAL = "an essential practical need recorded for a member is not confirmed for this apartment"
 
 

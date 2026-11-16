@@ -332,16 +332,24 @@ Built in this package:
     institution they chose; for a person who is working or on a working
     holiday, their place-of-work answer when the whole answer is one full
     street address and nothing else: an optional unit or level, a street
-    number, a street name and type, a suburb, and a state or a postcode. It is
-    sent exactly as typed (spaces tidied); the stored answer is never changed.
+    number, a street name and type, a suburb, an optional state, and a
+    street-address postcode (which must belong to the state when one is
+    written). It is sent exactly as typed (spaces tidied); the stored answer is
+    never changed.
     Each person's journeys are requested only by the travel choices given for
     them.
   - A destination that exists and cannot be measured is never completed or
     guessed: no place-of-work answer, "Not yet known", a suburb, an employer's
-    name, an address without a state or postcode, an address with any other
-    words before or after it, a phone number, a second street, or a place of
-    study that is not one on file. The check errs towards refusing: some real
-    addresses with unusual street names are refused too. That person reads "travel time needs confirmation", still counts as a
+    name, an address without a postcode, a postcode that is not a
+    street-address postcode or not the written state's, an address with any
+    other words before or after it, a phone number, a second street, or a place
+    of study that is not one on file. The check errs towards refusing: some
+    real addresses with unusual street or suburb names are refused too.
+  - Limit of the address check: the application holds no list of suburbs, so
+    the one or two words written where the suburb goes are not checked to be a
+    real suburb, nor the postcode to be that suburb's. Common business words
+    there are refused; another business name written in place of the suburb
+    would be accepted and sent with its street and postcode. That person reads "travel time needs confirmation", still counts as a
     person with a destination, and the group result is "needs confirmation".
   - A person who answered "Other" was not asked for a place of study or work,
     and a person in a party who is not the enquirer was never asked for one of
