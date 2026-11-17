@@ -36,12 +36,10 @@ SIZE_OPTIONS = ["Studio", "1 bedroom", "2 bedrooms", "3 bedrooms"]
 # used for anyone (lead or party member). Keys arriving from an old cached client are STRIPPED before validation/storage and never
 # written to answers_json; a staff edit naming one is refused. Historical rows keep their stored values untouched (nothing is
 # purged), but they are not returned by the API, shown, matched on, scored or sent to the AI.
-RETIRED_FIELDS = frozenset({"dob", "sex", "sex_other", "sex_pref", "age_pref", "guardian_name", "guardian_relationship", "guardian_email", "guardian_phone",
-                            "consent_age",   # consent_age: the old lead-only 18+ tick; never read as (or shown next to) the all-occupants declaration
-                            # 8 Nov 2026 (second change): the own-country/region and avoid-country/region preference questions (old 5.3, 5.4) are
-                            # no longer asked, stored for new rows, shown, matched on or scored. Country of birth, country living in and languages
-                            # stay as identity and introduction information only.
-                            "own_region", "avoid_answer", "avoid_regions", "avoid_countries"})
+RETIRED_FIELDS = frozenset({"dob", "sex", "sex_other", "guardian_name", "guardian_relationship", "guardian_email", "guardian_phone",
+                            "consent_age"})   # consent_age: the old lead-only 18+ tick; never read as the all-occupants declaration
+# 17 Nov 2026: sex_pref, age_pref, own_region, avoid_* restored as matching inputs (Bill supersession of I8 / M10–M12 / T17(g)).
+# Legacy dob / sex / guardian fields remain retired.
 RETIRED_MEMBER_FIELDS = frozenset({"sex", "sex_other", "dob", "needs_guardian"})
 NOT_COLLECTED = ""   # sentinel stored in the legacy NOT NULL columns (dob, sex, sex_pref) for new rows: "not collected", never a value
 ADULTS_FIELD = "adults_confirm"   # 6.4 / I11(d): the enquirer declares that EVERY occupant will be 18 or older on the move-in date
@@ -54,7 +52,8 @@ ANSWER_KEYS = frozenset({
     "party", "party_size", "party_members", "couples_answer", "couples", "doing", "school", "school_other", "course", "level", "course_start", "course_end",
     "work", "areas", "travel", "travel_modes", "features", "features_top", "smoke", "smoke_ok", "routine", "tidy", "social", "guests",
     "diet", "else_text", "intro", "source", "consent_store", "consent_share", "consent_marketing", ADULTS_FIELD,
-    *ip.KEYS,   # introduction-only sex / current age (optional; Bill 8 Nov 2026) — display data, never a matching input
+    "sex_pref", "age_pref", "own_region", "avoid_answer", "avoid_regions", "avoid_countries",
+    *ip.KEYS,   # introduction-only sex / current age (optional) — still display data, separate from sex_pref
     "campaign", "staff_member", "staff_notes", "channel", "enq_date", "is_test", "referrer",
 })
 MEMBER_KEYS = frozenset({"name", "email", "birth_country_raw", *ip.KEYS})
@@ -334,6 +333,32 @@ def validate(a: dict, today: date | None = None, party_max: int | None = None) -
         err["school"] = "Please choose your institution."
     if a.get("school") in ("Other", "English language school (enter name)") and not (a.get("school_other") or "").strip():
         err["school_other"] = "Please enter the name."
+    # 17 Nov 2026: housemate sex preference (Must Match), age range / own-region / avoid (Preference)
+    SEX_PREF_OPTIONS = ("Same sex only", "Mixed is fine", "No preference")
+    OWN_REGION_OPTIONS = ("Prefer to", "Don’t mind", "Prefer a mix")
+    AGE_BANDS = ("18–21", "22–25", "26–30", "31+", "No preference")
+    sp = (a.get("sex_pref") or "").strip()
+    if sp not in SEX_PREF_OPTIONS:
+        err["sex_pref"] = "Please choose a housemate sex preference."
+    orp = (a.get("own_region") or "").strip()
+    if orp not in OWN_REGION_OPTIONS:
+        err["own_region"] = "Please choose whether you would like to live with people from your own country or region."
+    aa = (a.get("avoid_answer") or "").strip()
+    if aa not in ("No, I’m happy to live with anyone", "I prefer not to live with people from some countries or regions"):
+        # accept common ASCII apostrophe variants
+        if aa.replace("'", "’") not in ("No, I’m happy to live with anyone", "I prefer not to live with people from some countries or regions"):
+            err["avoid_answer"] = "Please answer the countries/regions preference question."
+    age = a.get("age_pref")
+    if age not in (None, "", []):
+        if not isinstance(age, list) or not all(isinstance(x, str) for x in age):
+            err["age_pref"] = "Please choose age ranges from the list."
+        else:
+            bad = [x for x in age if x not in AGE_BANDS]
+            if bad:
+                err["age_pref"] = "Please choose age ranges from the list."
+            elif "No preference" in age and len(age) > 1:
+                a["age_pref"] = ["No preference"]  # No preference overrides other selections
+
     # 3.11 / 3.12 (8 Nov 2026): wanted apartment and building features and the up-to-three that matter most. Both optional; wishes only.
     a["features"], a["features_top"] = feat.clean_wanted(a.get("features"), top=a.get("features_top"), errors=err)
     # 6.1 / 6.3 agreements (8 Nov 2026 hardening): JSON true is the ONLY affirmative, as for the 6.4 declaration. Strings such as
@@ -477,7 +502,10 @@ def create_enquiry(c, a: dict, channel: str, staff: str | None = None, is_test: 
         doing=a.get("doing"), school=a.get("school"), school_other=a.get("school_other"), course=a.get("course"), level=a.get("level"),
         course_start=a.get("course_start"), course_end=a.get("course_end"), work=a.get("work"), areas=j(a.get("areas") or []), travel=a.get("travel"),
         travel_modes=j(travel_modes_value(a.get("travel_modes"))) if travel_modes_value(a.get("travel_modes")) else None,   # NULL = no answer
-        sex_pref=NOT_COLLECTED, age_pref=None, own_region=None, avoid_answer=NOT_COLLECTED, avoid_regions=None, avoid_countries=None,   # retired 8 Nov 2026
+        sex_pref=a.get("sex_pref") or None, age_pref=j(a.get("age_pref") or []) if a.get("age_pref") is not None else None,
+        own_region=a.get("own_region") or None, avoid_answer=a.get("avoid_answer") or None,
+        avoid_regions=j(a.get("avoid_regions") or []) if a.get("avoid_regions") is not None else None,
+        avoid_countries=j(a.get("avoid_countries") or []) if a.get("avoid_countries") is not None else None,
         features=j(a.get("features") or []), features_top=j(a.get("features_top") or []), smoke=a["smoke"], smoke_ok=a["smoke_ok"],
         routine=a.get("routine"), tidy=a.get("tidy"), social=a.get("social"), guests=a.get("guests"), diet=a.get("diet"), else_text=a.get("else_text"), intro=a.get("intro"),
         source=a["source"], consent_store=1, consent_share=1, consent_marketing=1 if a.get("consent_marketing") is True else 0,   # validated True above; optional marketing only on JSON true

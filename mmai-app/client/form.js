@@ -485,10 +485,21 @@
 
     function collect() {
       const a = {};
-      const multi = ['languages', 'apt_sizes', 'rooms', 'areas', 'travel_modes', 'features', 'features_top'];
+      const multi = ['languages', 'apt_sizes', 'rooms', 'areas', 'travel_modes', 'features', 'features_top', 'age_pref'];
       new FormData(form).forEach((v, k) => { if (multi.includes(k)) { (a[k] = a[k] || []).push(v); } else if (v !== '') a[k] = v; });
       multi.forEach(k => { a[k] = a[k] || []; });
-      if (a.languages.includes('Other') && a.languages_other) a.languages = a.languages.filter(l => l !== 'Other').concat(a.languages_other.split(/,\s*/));
+      if (a.languages.includes('Other')) {
+        const extra = [];
+        const sel = a.languages_other;
+        if (Array.isArray(sel)) {
+          sel.forEach(v => { if (v && v !== 'Other (type below)') extra.push(v); });
+        } else if (sel && sel !== 'Other (type below)') {
+          extra.push(sel);
+        }
+        if (a.languages_other_text) extra.push(...a.languages_other_text.split(/,\s*/).map(s => s.trim()).filter(Boolean));
+        a.languages = a.languages.filter(l => l !== 'Other').concat(extra);
+      }
+      delete a.languages_other; delete a.languages_other_text;
       // 6.4 / I11(d): adults_confirm is a real boolean (never the checkbox's "on" string); the retired lead-only consent_age is not sent
       ['consent_store', 'consent_share', 'adults_confirm', 'consent_marketing', 'is_test'].forEach(k => { a[k] = !!form.elements[k] && form.elements[k].checked; });
       a.party_members = readPartyRows().map(m => { const pm = { name: m.name.trim(), email: m.email.trim(), birth_country_raw: m.birth_country_raw.trim() };
@@ -502,6 +513,16 @@
       // 3.10 / I16(f): couples only as stated by the enquirer
       if (a.party === 'With friends') { a.couples = a.couples_answer === 'Yes' ? readCouples().filter(p => p[0] && p[1]) : []; }
       else { delete a.couples_answer; a.couples = []; }
+      // 17 Nov 2026: age preference + avoid lists
+      if (a.age_pref && a.age_pref.includes('No preference')) a.age_pref = ['No preference'];
+      if (a.avoid_answer && a.avoid_answer.indexOf('happy to live with anyone') !== -1) {
+        a.avoid_countries = []; a.avoid_regions = [];
+      } else {
+        const ct = (a.avoid_countries_text || '').split(/,\s*/).map(s => s.trim()).filter(Boolean);
+        const rt = (a.avoid_regions_text || '').split(/,\s*/).map(s => s.trim()).filter(Boolean);
+        a.avoid_countries = ct; a.avoid_regions = rt;
+      }
+      delete a.avoid_countries_text; delete a.avoid_regions_text;
       return a;
     }
 
@@ -759,8 +780,8 @@
       // Retired questions (I8 / I11(d), 8 Nov 2026) in an older saved form or stored submission are ignored. The old lead-only
       // consent_age is dropped too, so it can never pre-tick the all-occupants declaration (adults_confirm is only restored from
       // a saved copy of this form that already held the real declaration, e.g. a resumed draft or the staff email copy).
-      ['dob', 'sex', 'sex_other', 'sex_pref', 'age_pref', 'guardian_name', 'guardian_relationship', 'guardian_email', 'guardian_phone', 'consent_age',
-       'own_region', 'avoid_answer', 'avoid_regions', 'avoid_countries'].forEach(k => { delete v0[k]; });   // own-country/region and avoid questions retired 8 Nov 2026
+      ['dob', 'sex', 'sex_other', 'guardian_name', 'guardian_relationship', 'guardian_email', 'guardian_phone', 'consent_age'].forEach(k => { delete v0[k]; });
+      // 17 Nov 2026: sex_pref, age_pref, own_region, avoid_* restored for matching
       const ft = Array.isArray(v0.features_top) ? v0.features_top : []; delete v0.features_top;   // set after 3.11 has rendered the 3.12 chips
       const pm = v0.party_members; const cp = v0.couples; delete v0.party_members; delete v0.couples;
       if (Array.isArray(v0.languages)) { const extra = v0.languages.filter(l => !languages.includes(l)); if (extra.length) { v0.languages = v0.languages.filter(l => languages.includes(l)).concat('Other'); v0.languages_other = v0.languages_other || extra.join(', '); } }

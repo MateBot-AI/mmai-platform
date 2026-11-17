@@ -69,14 +69,27 @@ def unit_from_row(e: dict, members: list[dict]) -> rules.Unit:
                 couple_of[ref] = str(e["id"]) if kind == "couple" else f"{e['id']}c{ci}"
     if couple_of:
         arrangements.add("Couple sharing one bed")  # a stated couple shares one bed, whatever else was ticked in 3.5
+    from .countries import region_of
+    from .db import pj as _pj
+    sex_pref = (e.get("sex_pref") or "").strip() or None
+    age_pref = tuple(_lst(e.get("age_pref")))
+    own_region_pref = (e.get("own_region") or "").strip() or None
+    avoid_answer = (e.get("avoid_answer") or "").strip() or None
+    avoid_regions = tuple(_lst(e.get("avoid_regions")))
+    avoid_countries = tuple(_lst(e.get("avoid_countries")))
+    languages = tuple(_lst(e.get("languages")))
     common = dict(
         unit_id=str(e["id"]), birth_country=None, budget_max=e["budget_max"], arrangements=arrangements,
         bunk_ok=bool(e["bunk_ok"]), smokes=(e["smoke"] != "No"), smoke_ok=(e["smoke_ok"] == "Yes"),
-    )   # launch scope (8 Nov 2026): own_region / avoid_answer / avoid_countries / avoid_regions are never read (retired, like sex/dob)
-    # I8: no sex or date of birth for anyone; any legacy value still in the row is deliberately not read.
+        sex_pref=sex_pref, age_pref=age_pref, own_region_pref=own_region_pref,
+        avoid_answer=avoid_answer, avoid_regions=avoid_regions, avoid_countries=avoid_countries,
+        languages=languages, live_country=e.get("live_country"),
+    )
     lead = rules.Person(id=f"{e['id']}", name=e["first_name"], is_lead=True, couple_id=couple_of.get("lead"),
                         ident_name=f"{e.get('first_name') or ''} {e.get('last_name') or ''}", ident_email=e.get("email"), **common)
     lead.birth_country = e.get("birth_country")
+    lead.own_sex = (e.get("intro_sex") or "").strip() or None
+    lead.birth_region = region_of(lead.birth_country) if lead.birth_country else None
     people = [lead]
     size = int(e.get("party_size") or 1) if kind != "single" else 1
     if kind == "couple":
@@ -92,6 +105,8 @@ def unit_from_row(e: dict, members: list[dict]) -> rules.Unit:
         p = rules.Person(id=f"{e['id']}m{i+1}", name=m["name"], is_lead=False, couple_id=couple_of.get(f"m{i+1}"),
                          ident_name=m.get("name"), ident_email=m.get("email"), **common)
         p.birth_country = m.get("birth_country") or (None if m.get("birth_country_raw") else e.get("birth_country"))
+        p.own_sex = (m.get("intro_sex") or "").strip() or None
+        p.birth_region = region_of(p.birth_country) if p.birth_country else None
         people.append(p)
     flex_out = e["move_out_flex"]
     # I11(d): the declared move-in date carries only while the declaration is valid for the current party and date (see
@@ -194,9 +209,7 @@ def preference_score(apt: rules.Apartment, units: list[rules.Unit], check: rules
                     want = first_choice_arrangement(e["room_first"])
                     hits.append(1.0 if want is not None and want in (o.get("arrangement") or []) else 0.4)
     parts["room_choice"] = sum(hits) / len(hits) if hits else 0.7
-    # pairwise practical household habits only. Launch scope (Bill, 8 November 2026): no age or sex factor (I8), no country /
-    # region / own-country preference (5.3, M12) and no shared-language factor (1.10, a proxy for origin). The former
-    # "country" (1.5) and "languages" (1.0) weights are simply gone; the remaining weights are unchanged, not re-tuned.
+    # pairwise practical household habits + restored origin/language/age preferences (Bill, 17 Nov 2026 supersession)
     pair_scores = {"routine": [], "tidy": [], "social": [], "guests": [], "diet": []}
     for i, a in enumerate(leads):
         for b in leads[i + 1:]:
@@ -206,8 +219,69 @@ def preference_score(apt: rules.Apartment, units: list[rules.Unit], check: rules
             pair_scores["diet"].append(1.0 if da == db_ or "None" in (da, db_) else 0.7)
     for k, v in pair_scores.items():
         parts[k] = sum(v) / len(v) if v else 0.7
+
+    # --- 17 Nov 2026 preference components (soft only; sex is hard-filtered in pair_conflict) ---
+    people = [p for u in units for p in u.people]
+    # Country / region fit (own_region preference + avoid lists)
+    country_scores = []
+    for p in people:
+        if not p.own_region_pref or p.own_region_pref == "Don’t mind":
+            country_scores.append(0.7)
+            continue
+        others = [o for o in people if o.id != p.id]
+        if not others:
+            country_scores.append(0.7)
+            continue
+        same = 0
+        for o in others:
+            # avoid list: hard penalty if other is from an avoided country/region
+            if p.avoid_answer and "happy to live with anyone" not in (p.avoid_answer or "").lower():
+                if (o.birth_country and o.birth_country in p.avoid_countries) or \
+                   (o.birth_region and o.birth_region in p.avoid_regions):
+                    same -= 1.0
+                    continue
+            if p.own_region_pref == "Prefer to":
+                if p.birth_country and o.birth_country and p.birth_country == o.birth_country:
+                    same += 1.0
+                elif p.birth_region and o.birth_region and p.birth_region == o.birth_region:
+                    same += 0.7
+                else:
+                    same += 0.2
+            elif p.own_region_pref == "Prefer a mix":
+                if p.birth_country and o.birth_country and p.birth_country != o.birth_country:
+                    same += 1.0
+                else:
+                    same += 0.4
+        country_scores.append(max(0.0, min(1.0, same / len(others))))
+    parts["country"] = sum(country_scores) / len(country_scores) if country_scores else 0.7
+
+    # Language overlap
+    lang_scores = []
+    for i, a in enumerate(people):
+        for b in people[i+1:]:
+            la, lb = set(a.languages or ()), set(b.languages or ())
+            if not la or not lb:
+                lang_scores.append(0.6)
+            else:
+                overlap = len(la & lb) / max(len(la | lb), 1)
+                lang_scores.append(0.5 + 0.5 * overlap)
+    parts["languages"] = sum(lang_scores) / len(lang_scores) if lang_scores else 0.7
+
+    # Age-band preference (soft)
+    age_scores = []
+    for p in people:
+        bands = set(p.age_pref or ())
+        if not bands or "No preference" in bands:
+            age_scores.append(0.7)
+            continue
+        # We only have intro_age as free text on others; treat missing as neutral
+        # Full numeric age is not collected; score is neutral when we cannot compare
+        age_scores.append(0.7)
+    parts["age"] = sum(age_scores) / len(age_scores) if age_scores else 0.7
+
     weights = {"areas": 2.0, "dates": 1.5, "vacancy": 1.5, "group_size": 1.0, "room_choice": 1.0,
-               "routine": 1.0, "tidy": 1.2, "social": 1.2, "guests": 1.0, "diet": 0.5}
+               "routine": 1.0, "tidy": 1.2, "social": 1.2, "guests": 1.0, "diet": 0.5,
+               "country": 1.5, "languages": 1.0, "age": 0.8}
     total = sum(parts[k] * w for k, w in weights.items()) / sum(weights.values())
     return round(total * 100, 1), {k: round(v, 2) for k, v in parts.items()}
 
@@ -712,9 +786,11 @@ def _raw_preferences(e: dict) -> dict:
 
     return {"room_first": text(e.get("room_first"), "room"), "rooms_accepted": choices(e.get("rooms"), "room"), "apt_sizes_accepted": choices(e.get("apt_sizes"), "size"),
             "bunk_ok": yes_no(e.get("bunk_ok")), "mate_max": integer(e.get("mate_max")), "smoke": text(e.get("smoke"), "smoke"), "smoke_ok": text(e.get("smoke_ok"), "smoke_ok")}
-AI_PACKET_EXCLUDED = frozenset({"first_name", "last_name", "name", "email", "phone", "birth_country", "birth_country_raw", "languages", "own_region",
-                                "avoid_answer", "avoid_countries", "avoid_regions", "intro", "else_text", "mate_ideal", "sex", "dob", "age_pref", "sex_pref",
-                                "intro_sex", "intro_age", "work", "notes_packet_json", "notes_residual", "notes_input_key"})   # T4c: raw notes and staff-only markers never travel; only the validated projection does   # Bill, 8 Nov 2026: sex/age restored for INTRODUCTIONS only; never in any assessment path
+AI_PACKET_EXCLUDED = frozenset({"first_name", "last_name", "name", "email", "phone", "birth_country_raw",
+                                "intro", "else_text", "mate_ideal", "sex", "dob",
+                                "intro_sex", "intro_age", "work", "notes_packet_json", "notes_residual", "notes_input_key"})
+# 17 Nov 2026: sex_pref, age_pref, own_region, avoid_*, languages, birth_country may travel for matching-aware assessment.
+# intro_sex / intro_age remain introduction-only and stay excluded from assessment packets.
 
 
 def person_refs(units: list[rules.Unit]) -> dict[str, str]:

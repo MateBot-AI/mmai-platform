@@ -106,8 +106,80 @@
         <div class="scr" data-scr="languages" data-tip="chat|Which languages do you speak? Shared languages make a home feel like home.">
         <fieldset class="field" data-q="1.10"><legend>Languages you speak <span class="hint-inline">(tick all that apply)</span></legend>
           <div class="chips" data-role="languages" data-required-group="languages"></div>
-          <div class="reveal" data-show-when="languages=Other"><label>Other languages<input name="languages_other" data-req-when="languages=Other"></label></div>
+          <div class="reveal" data-show-when="languages=Other">
+            <label>Other languages (select all that apply)
+              <select name="languages_other" multiple data-req-when="languages=Other" style="height:120px">
+                <option>Afrikaans</option>
+                <option>Amharic</option>
+                <option>Bengali</option>
+                <option>Croatian</option>
+                <option>Czech</option>
+                <option>Farsi</option>
+                <option>Hebrew</option>
+                <option>Hungarian</option>
+                <option>Polish</option>
+                <option>Romanian</option>
+                <option>Russian</option>
+                <option>Serbian</option>
+                <option>Somali</option>
+                <option>Swahili</option>
+                <option>Ukrainian</option>
+                <option>Other (type below)</option>
+              </select>
+            </label>
+            <div class="reveal" data-show-when="languages_other=Other (type below)"><label>Specify other language(s)<input name="languages_other_text" data-req-when="languages_other=Other (type below)" autocomplete="off"></label></div>
+          </div>
         </fieldset>
+        </div>
+
+        <div class="scr" data-scr="sexpref" data-tip="wave|Who would you like to live with? This is a hard match — if you choose same sex only, I'll only put you with people of the same sex.">
+        <div class="field" data-q="5.1"><label>Housemate sex preference
+          <select name="sex_pref" required>
+            <option value="">Select…</option>
+            <option>Same sex only</option>
+            <option>Mixed is fine</option>
+            <option>No preference</option>
+          </select></label>
+          <p class="hint">“Same sex only” means every housemate in your group will be the same sex as you.</p>
+        </div>
+        </div>
+
+        <div class="scr" data-scr="agepref" data-tip="wave|Any preferred age range for your housemates? This is a soft preference only.">
+        <fieldset class="field" data-q="5.2"><legend>Preferred housemate age range <span class="hint-inline">(optional — tick all that suit)</span></legend>
+          <div class="chips" data-role="age_pref">
+            <label class="chip"><input type="checkbox" name="age_pref" value="18–21">18–21</label>
+            <label class="chip"><input type="checkbox" name="age_pref" value="22–25">22–25</label>
+            <label class="chip"><input type="checkbox" name="age_pref" value="26–30">26–30</label>
+            <label class="chip"><input type="checkbox" name="age_pref" value="31+">31+</label>
+            <label class="chip"><input type="checkbox" name="age_pref" value="No preference">No preference</label>
+          </div>
+        </fieldset>
+        </div>
+
+        <div class="scr" data-scr="ownregion" data-tip="globe|Would you like to live with people from your own country or region?">
+        <div class="field" data-q="5.3"><label>Would you like to live with people from your own country or region?
+          <select name="own_region" required>
+            <option value="">Select…</option>
+            <option>Prefer to</option>
+            <option>Don’t mind</option>
+            <option>Prefer a mix</option>
+          </select></label>
+        </div>
+        </div>
+
+        <div class="scr" data-scr="avoid" data-tip="globe|Are there any countries or regions you would prefer not to live with?">
+        <div class="field" data-q="5.4"><label>Are there any countries or regions you would prefer not to live with?
+          <select name="avoid_answer" required>
+            <option value="">Select…</option>
+            <option>No, I’m happy to live with anyone</option>
+            <option>I prefer not to live with people from some countries or regions</option>
+          </select></label>
+          <div class="reveal" data-show-when="avoid_answer=I prefer not to live with people from some countries or regions">
+            <p class="hint">Type countries or regions (comma-separated). Staff can refine these later if needed.</p>
+            <label>Countries to avoid<input name="avoid_countries_text" placeholder="e.g. Country A, Country B" autocomplete="off"></label>
+            <label>Regions to avoid<input name="avoid_regions_text" placeholder="e.g. Region X" autocomplete="off"></label>
+          </div>
+        </div>
         </div>
       </section>
 
