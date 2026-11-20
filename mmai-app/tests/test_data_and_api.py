@@ -24,8 +24,10 @@ def good_answers(**over):
              birth_country_raw="Sweden", live_country_raw="Sweden", languages=["English"],
              city="Melbourne", move_in="2027-02-01", move_in_flex="± 1 week", move_out="2027-07-10", move_out_flex="Exact date",
              budget_option="2B2B-single", apt_sizes=["2 bedrooms"], mate_ideal="1", mate_max="3", rooms=["Own room"], bunk_ok="No", room_first="Own room",
-             party="Alone", doing="Studying", school="RMIT University – City campus", own_region="Don't mind", avoid_answer="No",
-             smoke="No", smoke_ok="Yes", source="Google", consent_store=True, consent_share=True, adults_confirm=True)   # I8 / I11(d): no sex, DOB or age fields
+             party="Alone", doing="Studying", school="RMIT University – City campus",
+             sex_pref="No preference", own_region="Don’t mind",
+             avoid_answer="No, I’m happy to live with anyone",
+             smoke="No", smoke_ok="Yes", source="Google", consent_store=True, consent_share=True, adults_confirm=True)   # I8 / I11(d): no enquirer sex/DOB; matching prefs restored 17 Nov
     a.update(over)
     if a.get("party") == "With friends" and "couples_answer" not in over and "couples" not in over:
         a["couples_answer"] = "No"  # 3.10 is required for friends parties (I16(f)); tests about couples set it explicitly

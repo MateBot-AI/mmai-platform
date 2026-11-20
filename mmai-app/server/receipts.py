@@ -59,13 +59,26 @@ from .db import now_iso, row, rows, transaction
 log = logging.getLogger("mmai.receipts")
 
 KIND_RECEIPT = "customer_receipt"
+KIND_RESERVATIONS = "reservations_new_enquiry"
+RESERVATIONS_TO = "reservations@almelb.com.au"
 MAX_ATTEMPTS = 5
 BACKOFF_MIN = [1, 5, 15, 60, 240]
-SUBJECT = "Your MateBot enquiry: a copy of your answers"
+SUBJECT = "Your MateBot enquiry – we’re finding your perfect housemates"
 # R2 (9 Nov 2026): receipts for TEST-mode records are marked so a test copy can never be mistaken for a real enquiry receipt.
 TEST_SUBJECT_PREFIX = "[TEST] "
 TEST_NOTE = "This is a TEST record made in MateBot's test mode. It is not a real enquiry and nobody will act on it."
-TEAM = "The Apartment Living Melbourne team"
+# doc 2: after answers, before Kind Regards
+LOCKED_IN_LINE = "We're locked in on this—update incoming soon"
+# doc 2 sign-off: two lines under Kind Regards (not a single combined phrase)
+TEAM_LINES = ("Apartment Living Melbourne", "Reservation Team")
+TEAM = "\n".join(TEAM_LINES)
+LOGO_URL = "https://app.matebot.com.au/img/alm-logo.jpg"
+DISCLAIMER = (
+    "The information contained in this electronic message (e-mail), and any files transmitted with it, is intended for "
+    "the named recipients only. It may contain privileged and/or confidential information and if you are not an intended "
+    "recipient, you must not copy, distribute or take any action in reliance on it. Please notify us immediately if you "
+    "have received this electronic message (e-mail) and any files transmitted with it, in error. Then, please destroy your copy."
+)
 
 _EMAIL_RE = re.compile(r"^[A-Za-z0-9.!#$%&'*+/=?^_`{|}~-]+@[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?(?:\.[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?)+$")
 
@@ -358,18 +371,87 @@ def reference(enquiry_id) -> str:
     return f"MateBot-{str(enquiry_id).zfill(5)}"
 
 
-def next_steps_text() -> list[str]:
+def acknowledgement_intro(bot: str) -> list[str]:
+    """Customer acknowledgement copy before the answers block (MateBot or HomeBot)."""
+    form = "MateBot" if bot == "matebot" else "HomeBot"
+    working = (
+        "MateBot is working hard to find you compatible housemates and the right furnished apartment for your group."
+        if bot == "matebot"
+        else "HomeBot is working hard to find you the perfect furnished apartment."
+    )
     return [
-        "Thanks for telling us about yourself. Here is a copy of your enquiry.",
+        f"Thank you for completing the {form} form.",
         "",
-        "MateBot will suggest housemates you'll genuinely get on with. Our team will introduce your suggested group so you can chat and let us know if you're happy or would like changes.",
+        working,
         "",
-        "Once everyone agrees, MateBot will match your group with suitable apartments and our team will arrange viewings.",
-        "",
-        "If any answer below needs changing, just reply to this email.",
-        "",
-        TEAM,
+        "Here is a copy of the answers you gave:",
     ]
+
+
+def signature_text_lines() -> list[str]:
+    return [
+        "Kind Regards,",
+        *TEAM_LINES,
+        "",
+        "Ground, 10 St Andrews Place, East Melbourne, VIC 3002",
+        "M: +61 405 780 780",
+        "T: +61 3 8637 0220",
+        f"E: {RESERVATIONS_TO}",
+        "W: www.apartmentlivingmelbourne.com.au",
+        "",
+        "Consider the environment and think before you print.",
+        "",
+        "DISCLAIMER:",
+        DISCLAIMER,
+    ]
+
+
+def signature_html() -> str:
+    h = html.escape
+    team_br = "<br>".join(h(line) for line in TEAM_LINES)
+    return (
+        f"<p>Kind Regards,<br>{team_br}</p>"
+        f"<p><img src=\"{h(LOGO_URL)}\" alt=\"Apartment Living Melbourne\" "
+        f"style=\"max-width:220px;height:auto;display:block;margin:12px 0\"></p>"
+        f"<p>Ground, 10 St Andrews Place, East Melbourne, VIC 3002<br>"
+        f"M: +61 405 780 780<br>T: +61 3 8637 0220<br>"
+        f"E: {h(RESERVATIONS_TO)}<br>W: www.apartmentlivingmelbourne.com.au</p>"
+        f"<p>Consider the environment and think before you print.</p>"
+        f"<p><strong>DISCLAIMER:</strong><br>{h(DISCLAIMER)}</p>"
+    )
+
+
+def customer_full_name(e: dict) -> str:
+    a = _answers(e)
+    first = ((a.get("first_name") if a else None) or e.get("first_name") or "").strip()
+    last = ((a.get("last_name") if a else None) or e.get("last_name") or "").strip()
+    return f"{first} {last}".strip() or "Unknown"
+
+
+def _sections_text(sections: list[tuple[str, list[tuple[str, str]]]]) -> list[str]:
+    lines: list[str] = []
+    for title, items in sections:
+        lines += ["", title, "-" * len(title)]
+        for q, v in items:
+            lines.append(f"{q}: {v}")
+    return lines
+
+
+def _sections_html(sections: list[tuple[str, list[tuple[str, str]]]]) -> list[str]:
+    h = html.escape
+    parts: list[str] = []
+    for title, items in sections:
+        parts.append(
+            f"<h3 style=\"font-size:1em;margin:1.2em 0 .3em\">{h(title)}</h3>"
+            f"<table cellpadding=\"0\" cellspacing=\"0\" style=\"border-collapse:collapse\">"
+        )
+        for q, v in items:
+            parts.append(
+                f"<tr><td style=\"padding:2px 12px 2px 0;vertical-align:top;color:#555\">{h(q)}</td>"
+                f"<td style=\"padding:2px 0;vertical-align:top\">{h(v)}</td></tr>"
+            )
+        parts.append("</table>")
+    return parts
 
 
 def render_receipt(e: dict) -> dict:
@@ -382,26 +464,53 @@ def render_receipt(e: dict) -> dict:
     is_test = bool(e.get("is_test"))
     subject = (TEST_SUBJECT_PREFIX + SUBJECT) if is_test else SUBJECT   # R2: TEST records are marked; real receipts unchanged
     test_note = [TEST_NOTE, ""] if is_test else []
-    lines = [f"Hi {first},", ""] + test_note + next_steps_text() + ["", "Your answers", f"Reference: {ref}"]
-    for title, items in sections:
-        lines += ["", title, "-" * len(title)]
-        for q, v in items:
-            lines.append(f"{q}: {v}")
+    lines = [f"Hi {first},", ""] + test_note + acknowledgement_intro("matebot") + ["", f"Reference: {ref}"]
+    lines += _sections_text(sections) + ["", LOCKED_IN_LINE, ""] + signature_text_lines()
     text = "\n".join(lines).rstrip() + "\n"
 
     h = html.escape
     parts = [f"<p>Hi {h(first)},</p>"] + ([f"<p><strong>{h(TEST_NOTE)}</strong></p>"] if is_test else [])
-    for para in [p for p in next_steps_text() if p]:
+    for para in [p for p in acknowledgement_intro("matebot") if p]:
         parts.append(f"<p>{h(para)}</p>")
-    parts.append(f"<h2 style=\"font-size:1.1em;margin:1.4em 0 .2em\">Your answers</h2><p style=\"margin-top:0\">Reference: {h(ref)}</p>")
-    for title, items in sections:
-        parts.append(f"<h3 style=\"font-size:1em;margin:1.2em 0 .3em\">{h(title)}</h3><table cellpadding=\"0\" cellspacing=\"0\" style=\"border-collapse:collapse\">")
-        for q, v in items:
-            parts.append(f"<tr><td style=\"padding:2px 12px 2px 0;vertical-align:top;color:#555\">{h(q)}</td><td style=\"padding:2px 0;vertical-align:top\">{h(v)}</td></tr>")
-        parts.append("</table>")
+    parts.append(f"<p style=\"margin-top:0\">Reference: {h(ref)}</p>")
+    parts += _sections_html(sections)
+    parts.append(f"<p>{h(LOCKED_IN_LINE)}</p>")
+    parts.append(signature_html())
     body = "\n".join(parts)
     html_doc = (f"<!doctype html><html><head><meta charset=\"utf-8\"><title>{h(subject)}</title></head>"
                 f"<body style=\"font-family:Arial,Helvetica,sans-serif;font-size:15px;line-height:1.45;color:#222;max-width:640px;margin:0 auto;padding:16px\">{body}</body></html>")
+    return {"subject": subject, "text": text, "html": html_doc}
+
+
+def render_reservations_notification(e: dict) -> dict:
+    """Internal new-enquiry notice for reservations@ — name, contact and allow-listed answers only."""
+    a = _answers(e)
+    name = customer_full_name(e)
+    email = ((a.get("email") if a else None) or e.get("email") or "").strip() or "Not provided"
+    phone = _phone(a, e) or "Not provided"
+    sections = receipt_rows(e)
+    is_test = bool(e.get("is_test"))
+    subject = f"MateBot enquiry from {name}"
+    if is_test:
+        subject = TEST_SUBJECT_PREFIX + subject
+    lines = [
+        "New MateBot enquiry received.",
+        "",
+        f"Name: {name}",
+        f"Email: {email}",
+        f"Phone: {phone}",
+        "",
+        "Answers:",
+    ] + _sections_text(sections)
+    text = "\n".join(lines).rstrip() + "\n"
+    h = html.escape
+    parts = [
+        "<p>New MateBot enquiry received.</p>",
+        f"<p>Name: {h(name)}<br>Email: {h(email)}<br>Phone: {h(phone)}</p>",
+        "<h2 style=\"font-size:1.1em;margin:1.4em 0 .2em\">Answers</h2>",
+    ] + _sections_html(sections)
+    html_doc = (f"<!doctype html><html><head><meta charset=\"utf-8\"><title>{h(subject)}</title></head>"
+                f"<body style=\"font-family:Arial,Helvetica,sans-serif;font-size:15px;line-height:1.45;color:#222;max-width:640px;margin:0 auto;padding:16px\">{''.join(parts)}</body></html>")
     return {"subject": subject, "text": text, "html": html_doc}
 
 
@@ -489,7 +598,7 @@ def transport_from_env():
 
 def build_message(to_email: str, rendered: dict) -> EmailMessage:
     frm = valid_email(os.environ.get("MMAI_MAIL_FROM")) or "no-reply@invalid.local"
-    name = (os.environ.get("MMAI_MAIL_FROM_NAME") or "Apartment Living Melbourne").replace("\r", " ").replace("\n", " ").strip()
+    name = (os.environ.get("MMAI_MAIL_FROM_NAME") or "Apartment Living Melbourne Reservations").replace("\r", " ").replace("\n", " ").strip()
     msg = EmailMessage()
     msg["Subject"] = rendered["subject"]
     msg["From"] = formataddr((name, frm))
@@ -521,12 +630,19 @@ def initial_status(to_email: Optional[str], is_test: bool) -> tuple[str, Optiona
 
 def enqueue_in_transaction(c, enquiry_id: int, email, is_test: bool, kind: str = KIND_RECEIPT) -> None:
     """Runs INSIDE create_enquiry's transaction (through on_inserted): no commit, no rollback here. The recipient is the address
-    on the form as saved (snapshot). INSERT OR IGNORE keeps one row per enquiry/kind if the hook ever runs twice."""
+    on the form as saved (snapshot), or the fixed reservations mailbox for KIND_RESERVATIONS. INSERT OR IGNORE keeps one row
+    per enquiry/kind if the hook ever runs twice."""
     to = valid_email(email)
     status, err = initial_status(to, bool(is_test))
     now = now_iso()
     c.execute("INSERT OR IGNORE INTO email_outbox(enquiry_id, kind, to_email, status, attempts, last_error, created_at, updated_at) VALUES (?,?,?,?,0,?,?,?)",
               (enquiry_id, kind, to or str(email or "")[:254], status, err, now, now))
+
+
+def enqueue_submission_emails(c, enquiry_id: int, email, is_test: bool) -> None:
+    """Customer acknowledgement + reservations notification in the same enquiry transaction."""
+    enqueue_in_transaction(c, enquiry_id, email, is_test, KIND_RECEIPT)
+    enqueue_in_transaction(c, enquiry_id, RESERVATIONS_TO, is_test, KIND_RESERVATIONS)
 
 
 def enqueue_receipt(c, enquiry_id: int, kind: str = KIND_RECEIPT) -> dict:
@@ -538,13 +654,14 @@ def enqueue_receipt(c, enquiry_id: int, kind: str = KIND_RECEIPT) -> dict:
         e = row(c.execute("SELECT id, email, is_test FROM enquiries WHERE id=?", (enquiry_id,)))
         if not e:
             return {"outbox_id": None, "status": "no_enquiry", "created": False}
+        dest = RESERVATIONS_TO if kind == KIND_RESERVATIONS else e.get("email")
         with transaction(c):  # own short write block under the connection lock (commit on exit, rollback only of this block on error)
-            enqueue_in_transaction(c, enquiry_id, e.get("email"), bool(e.get("is_test")), kind)
+            enqueue_in_transaction(c, enquiry_id, dest, bool(e.get("is_test")), kind)
         r = row(c.execute("SELECT id, status FROM email_outbox WHERE enquiry_id=? AND kind=?", (enquiry_id, kind)))
-        log.info("receipt enqueue enquiry=%s outbox=%s status=%s", enquiry_id, r and r["id"], r and r["status"])
+        log.info("receipt enqueue enquiry=%s kind=%s outbox=%s status=%s", enquiry_id, kind, r and r["id"], r and r["status"])
         return {"outbox_id": r and r["id"], "status": r and r["status"], "created": True}
     except Exception as ex:  # a receipt problem must never turn a saved submission into an error
-        log.warning("receipt enqueue failed enquiry=%s error=%s", enquiry_id, type(ex).__name__)
+        log.warning("receipt enqueue failed enquiry=%s kind=%s error=%s", enquiry_id, kind, type(ex).__name__)
         return {"outbox_id": None, "status": "error", "created": False, "error": type(ex).__name__}
 
 
@@ -599,19 +716,26 @@ def deliver_pending(c, transport=None, limit: int = 25, now: Optional[str] = Non
                 counts["cancelled"] += 1
                 continue
             to = valid_email(ob["to_email"])  # immutable snapshot of the address supplied on the form; never from the request
+            kind = ob.get("kind") or KIND_RECEIPT
+            is_reservations = kind == KIND_RESERVATIONS
             if not to or (e.get("is_test") and not test_recipient_allowed(to) and not isinstance(transport, CapturedTransport)):
                 _set(c, oid, status="held", last_error="recipient invalid" if not to else "test enquiry: sending not enabled for this recipient")
                 counts["skipped"] += 1
                 continue
-            if (e.get("email") or "").strip().lower() != to.lower():
+            if not is_reservations and (e.get("email") or "").strip().lower() != to.lower():
                 # the record's address was changed after submission (staff correction, or a different person on the record now):
                 # never send the original answers to the old address, and never retarget automatically — staff decide
                 _set(c, oid, status="held", last_error="record email changed since submission; not sent")
                 counts["skipped"] += 1
                 continue
+            if is_reservations and to.lower() != RESERVATIONS_TO:
+                _set(c, oid, status="held", last_error="reservations recipient mismatch; not sent")
+                counts["skipped"] += 1
+                continue
             attempts = ob["attempts"]  # already counts this attempt (incremented by the claim)
             try:
-                msg = build_message(to, render_receipt(e))
+                rendered = render_reservations_notification(e) if is_reservations else render_receipt(e)
+                msg = build_message(to, rendered)
                 mid = transport.send(msg)  # no transaction open, no lock held
             except Exception as ex:
                 err = f"{type(ex).__name__}"[:120]
@@ -673,11 +797,13 @@ def kick_delivery(c) -> Optional[threading.Thread]:
 
 
 def after_saved(c, enquiry_id: int) -> dict:
-    """After the enquiry transaction committed: repair-enqueue if the atomic hook was somehow bypassed (idempotent), then,
-    if mail is enabled and the row is queued, deliver in the background. Never raises."""
+    """After the enquiry transaction committed: repair-enqueue customer + reservations kinds if bypassed (idempotent), then,
+    if mail is enabled and any row is queued, deliver in the background. Never raises. Returns the customer-receipt status
+    (API/staff still key off that kind)."""
     try:
-        res = enqueue_receipt(c, enquiry_id)
-        if res.get("status") == "queued":
+        res = enqueue_receipt(c, enquiry_id, KIND_RECEIPT)
+        res_r = enqueue_receipt(c, enquiry_id, KIND_RESERVATIONS)
+        if res.get("status") == "queued" or res_r.get("status") == "queued":
             kick_delivery(c)
         return res
     except Exception as ex:

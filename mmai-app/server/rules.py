@@ -26,7 +26,7 @@ MONTHLY_FACTOR = 4.334   # A8
 MIN_GROUP, MAX_GROUP = 2, 7  # P3
 # T6 evidence: the rule set a review or brief was made under. Bump whenever a hard rule, a scoring component or the assessment
 # packet changes; every stored assessment carries it and a group is only "ready" while it matches (ai_queue.is_ready).
-RULE_VERSION = "2026-11-17.sex-country-prefs"   # 17 Nov: housemate sex preference (Must Match) + country/region/language/age preferences restored (Bill supersession of I8/M10–M12/T17(g))
+RULE_VERSION = "2026-11-10.t3d.room-choice-exact.canonical-order"   # 10 Nov: 3.7 first-choice hit = exact arrangement label (prefix bug), candidate members in canonical id order before allocation (same member set -> same allocation/score); weights unchanged. Earlier: A6(b) literal: Jan/Feb start + July end = 6-month rate in any year (same-year code restriction removed)
 DEFAULT_MIN_LEASE_MONTHS = 2  # A9(a): the minimum lease is generally 2 months; A15(d): 2 months on every apartment today; staff can change it per apartment (A9(b))
 # Budget (A16, 8 Nov 2026): the ONLY budget test is the whole household's - actual whole-apartment weekly rent including the A5
 # extra-bed charge against the SUM of every member's stated weekly maximum, +10% (studio/1BR/2-bedroom) or +20% (3-bedroom), via
@@ -334,17 +334,6 @@ class Person:
     # the identity the allocation is computed for. Stamped onto the occupant only if that same uid is still active and bound
     # to the row at the guarded write; a later or replacement identity is never substituted. None when not resolvable.
     ident_uid: Optional[str] = None
-    # 17 Nov 2026 matching inputs (Bill supersession)
-    own_sex: Optional[str] = None          # from intro_sex: Female / Male / Another term / Prefer not to say / None
-    sex_pref: Optional[str] = None         # Same sex only / Mixed is fine / No preference
-    age_pref: tuple = ()                   # selected age bands
-    own_region_pref: Optional[str] = None  # Prefer to / Don’t mind / Prefer a mix
-    avoid_answer: Optional[str] = None
-    avoid_regions: tuple = ()
-    avoid_countries: tuple = ()
-    languages: tuple = ()
-    birth_region: Optional[str] = None     # derived from birth_country via countries.region_of
-    live_country: Optional[str] = None
 
     def __post_init__(self):
         if self.couple_id is None and self.is_couple_member:
@@ -429,13 +418,9 @@ class Apartment:
 # ---------------------------------------------------------------------------
 def pair_conflict(a: Person, b: Person) -> Optional[str]:
     """Return a reason if `a` cannot live with `b` (checked from a's point of view).
-    Hard pairwise rules: smoking (5.5/5.6) and housemate sex preference (I8 Must Match, 17 Nov 2026 supersession).
-    Country/region preferences are scored, not hard-filtered here."""
-    # Housemate sex preference (Must Match)
-    if a.sex_pref == "Same sex only" and a.own_sex and b.own_sex:
-        # Only enforce when both have a binary sex answer that can be compared
-        if a.own_sex in ("Female", "Male") and b.own_sex in ("Female", "Male") and a.own_sex != b.own_sex:
-            return f"{a.name} prefers same-sex housemates only"
+    Launch scope (Bill, 8 November 2026): the only pairwise hard rule is smoking (5.5/5.6). Sex (I8) and every origin-based
+    rule (5.3/5.4, M8, M10, M11, M12: country or region of birth, nationality defaults) are NOT matching factors; a person's
+    birth_country is carried for identity (GP2 introductions, history) only and is never read here."""
     # 5.5 / 5.6 smoking (B3: outside only is the only smoking allowed)
     if b.smokes and not a.smoke_ok:
         return f"{a.name} will not live with someone who smokes or vapes outside (5.6)"
@@ -857,8 +842,8 @@ def parties(units: list) -> list[tuple[str, list]]:
 
 
 def check_group(apt: Apartment, units: list[Unit], *, today: Optional[date] = None, exception_offers=()) -> GroupCheck:
-    """Run every hard filter (T4(b)). Returns a GroupCheck with reasons for any failure.
-    Hard filters include smoking and housemate sex preference (Same sex only). Country/region/age/language are Preference scores.
+    """Run every hard filter (T4(b)). Returns a GroupCheck with reasons for any failure. Launch scope (8 November 2026): no
+    origin, sex or age-preference filter exists in this path; there are no hooks or parameters for them.
     `today` (A17(a)) is the business date; None = lease_dates.business_today() via the injectable Melbourne clock. It is only
     used for the future-vacancy count, never for anything about the people."""
     from . import lease_dates   # local import: lease_dates imports rules

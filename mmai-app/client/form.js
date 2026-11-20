@@ -169,10 +169,10 @@
             <label class="party-cell"><small>Full name</small><input data-pm="name" required aria-label="${who} name" autocomplete="off"></label>
             <label class="party-cell"><small>Email</small><input data-pm="email" type="email" required aria-label="${who} email" autocomplete="off"></label>
             <label class="party-cell"><small>Country of birth</small><input data-pm="birth_country_raw" required autocomplete="off" placeholder="Type their country" aria-label="${who} country of birth"><span class="country-hint" data-pm="hint"></span></label>
-            <span class="party-cell party-cell--intro small muted">Optional, for introductions only (not used for matching):</span>
-            <label class="party-cell party-cell--sex"><small>Sex (optional)</small><select data-pm="intro_sex" aria-label="${who} sex, for introductions only"><option value="">Prefer to leave blank</option>${INTRO_SEX_OPTIONS.map(o => `<option>${o}</option>`).join('')}</select></label>
+            <span class="party-cell party-cell--intro small muted">Very important to help me form groups when sex and age are important to individual members:</span>
+            <label class="party-cell party-cell--sex"><small>Sex</small><select data-pm="intro_sex" aria-label="${who} sex"><option value="">Prefer to leave blank</option>${INTRO_SEX_OPTIONS.map(o => `<option>${o}</option>`).join('')}</select></label>
             <label class="party-cell party-cell--other"><small>The term they use</small><input data-pm="intro_sex_other" maxlength="40" autocomplete="off" aria-label="${who} term used"></label>
-            <label class="party-cell"><small>Current age (optional)</small><input data-pm="intro_age" type="number" inputmode="numeric" min="0" max="999" step="1" placeholder="Years" autocomplete="off" aria-label="${who} current age, for introductions only"></label>`;
+            <label class="party-cell"><small>Current age</small><input data-pm="intro_age" type="number" inputmode="numeric" min="0" max="999" step="1" placeholder="Years" autocomplete="off" aria-label="${who} current age"></label>`;
           if (existing[i]) PM_FIELDS.forEach(k => { const el = row.querySelector(`[data-pm="${k}"]`); if (el) el.value = existing[i][k] || ''; });
           wrap.append(row);
         }
@@ -678,7 +678,7 @@
     // already_submitted replay or a later unsaved edit can never put unsaved answers in the enquirer's copy. The saved answers
     // are poured into a fresh, isolated, off-screen form instance (empty state, trusted saved values only) and read back with
     // the same reviewRows logic as the summaries; nothing is kept in storage or a URL and the instance is removed afterwards.
-    const EMAIL_SUBJECT = 'Your MateBot enquiry: a copy of your answers';
+    const EMAIL_SUBJECT = 'Your MateBot enquiry – we’re finding your perfect housemates';
     let emailGen = 0;          // bumped by Start again: a late GET reply from a previous enquiry is then ignored
     let emailWanted = false;   // "Email completed form" pressed on the summary: open the preview once the save is confirmed
     const emailEls = () => ({ box: R('emailBox'), to: R('emailTo'), subject: R('emailSubject'), body: R('emailBody'), open: R('emailOpen'), err: R('emailError'), btn: R('emailFormDone') });

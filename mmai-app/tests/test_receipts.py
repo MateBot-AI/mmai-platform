@@ -24,7 +24,14 @@ def _post(anon, answers, key=KEY):
     return anon.post("/api/public/enquiries", json=answers, headers={submissions.HEADER: key} if key else {})
 
 
-def _outbox(c, eid=None):
+def _outbox(c, eid=None, kind=receipts.KIND_RECEIPT):
+    """Customer-receipt rows by default (reservations kind is asserted separately)."""
+    if eid is None:
+        return rows(c.execute("SELECT * FROM email_outbox WHERE kind=? ORDER BY id", (kind,)))
+    return rows(c.execute("SELECT * FROM email_outbox WHERE enquiry_id=? AND kind=? ORDER BY id", (eid, kind)))
+
+
+def _all_outbox(c, eid=None):
     if eid is None:
         return rows(c.execute("SELECT * FROM email_outbox ORDER BY id"))
     return rows(c.execute("SELECT * FROM email_outbox WHERE enquiry_id=? ORDER BY id", (eid,)))
@@ -53,12 +60,15 @@ def test_default_mode_is_off_and_records_held_without_claiming_sent(client, mail
     c = appdb(client)
     r = _post(anon, good_answers(is_test=False))
     assert r.status_code == 201 and r.json()["receipt"] == "held"
-    ob = _outbox(c, r.json()["id"])
+    eid = r.json()["id"]
+    ob = _outbox(c, eid)
     assert len(ob) == 1 and ob[0]["status"] == "held" and ob[0]["attempts"] == 0 and ob[0]["sent_at"] is None
     assert "disabled" in ob[0]["last_error"]
+    reserved = _outbox(c, eid, receipts.KIND_RESERVATIONS)
+    assert len(reserved) == 1 and reserved[0]["to_email"] == receipts.RESERVATIONS_TO and reserved[0]["status"] == "held"
     # a delivery pass while off moves nothing and sends nothing
     assert receipts.deliver_pending(c) == {"sent": 0, "dryrun": 0, "retry": 0, "failed": 0, "cancelled": 0, "skipped": 0}
-    assert _outbox(c, r.json()["id"])[0]["status"] == "held"
+    assert _outbox(c, eid)[0]["status"] == "held"
     # the outbox never stores a body: only the recipient and state
     assert set(ob[0].keys()) >= {"enquiry_id", "kind", "to_email", "status"} and "body" not in " ".join(ob[0].keys())
 
@@ -72,14 +82,18 @@ def test_replayed_submission_queues_exactly_one_receipt(client, mail_dryrun):
     r2 = _post(anon, a)  # double click / retry after a lost reply
     assert r1.status_code == 201 and r2.status_code == 200 and r2.json()["replayed"] is True
     assert len(_outbox(c)) == 1 and _outbox(c)[0]["status"] == "queued"
+    assert len(_all_outbox(c, r1.json()["id"])) == 2
     # enqueue called again directly (e.g. a replay after the side effects were lost) is a no-op
     again = receipts.enqueue_receipt(c, r1.json()["id"])
     assert again["created"] is False and len(_outbox(c)) == 1
     t = receipts.CapturedTransport()
-    assert receipts.deliver_pending(c, t)["sent"] == 1
-    assert receipts.deliver_pending(c, t)["sent"] == 0 and len(t.sent) == 1  # a second pass does not resend
+    assert receipts.deliver_pending(c, t)["sent"] == 2  # customer + reservations
+    assert receipts.deliver_pending(c, t)["sent"] == 0 and len(t.sent) == 2  # a second pass does not resend
     ob = _outbox(c)[0]
     assert ob["status"] == "sent" and ob["attempts"] == 1 and ob["message_id"] and ob["sent_at"]
+    assert _outbox(c, r1.json()["id"], receipts.KIND_RESERVATIONS)[0]["status"] == "sent"
+    assert t.sent[0]["To"] == "t@example.com"
+    assert t.sent[1]["To"] == receipts.RESERVATIONS_TO
 
 
 def test_receipt_row_is_written_in_the_same_transaction_as_the_enquiry(client, mail_dryrun, monkeypatch):
@@ -91,6 +105,7 @@ def test_receipt_row_is_written_in_the_same_transaction_as_the_enquiry(client, m
     assert r.status_code == 201
     ob = _outbox(c, r.json()["id"])
     assert len(ob) == 1 and ob[0]["status"] == "queued" and ob[0]["to_email"] == "t@example.com"
+    assert len(_all_outbox(c, r.json()["id"])) == 2
     # a submission that is rolled back leaves no outbox row behind (fencing: Superseded raised inside the transaction)
     monkeypatch.undo()
     monkeypatch.setenv("MMAI_MAIL_MODE", "dryrun"); monkeypatch.setenv("MMAI_MAIL_FROM", "hello@example.com")
@@ -111,11 +126,12 @@ def test_receipt_row_is_written_in_the_same_transaction_as_the_enquiry(client, m
     real_enqueue = receipts.enqueue_in_transaction
     seen = {}
 
-    def enqueue_then_fail(c, eid, email, is_test):
-        real_enqueue(c, eid, email, is_test)
+    def enqueue_then_fail(c, eid, email, is_test, kind=receipts.KIND_RECEIPT):
+        real_enqueue(c, eid, email, is_test, kind)
         seen["inside"] = c.execute("SELECT COUNT(*) FROM email_outbox WHERE to_email='after@example.com'").fetchone()[0]
         raise RuntimeError("simulated failure after the outbox insert, inside the enquiry transaction")
-    monkeypatch.setattr(receipts, "enqueue_in_transaction", enqueue_then_fail)
+    monkeypatch.setattr(receipts, "enqueue_submission_emails",
+                        lambda c, eid, email, is_test: enqueue_then_fail(c, eid, email, is_test))
     n_enq = c.execute("SELECT COUNT(*) FROM enquiries").fetchone()[0]
     try:
         r = _post(anon, good_answers(is_test=False, email="after@example.com"), key="k_" + "y" * 30)
@@ -138,18 +154,20 @@ def test_recipient_comes_from_the_saved_record_and_is_a_single_address(client, m
     msg = t.sent[0]
     saved = row(c.execute("SELECT email FROM enquiries WHERE id=?", (eid,)))["email"]
     assert msg["To"] == saved == "person@example.com" and "," not in msg["To"] and msg["From"].endswith("<hello@example.com>")
-    assert msg["Subject"] == "Your MateBot enquiry: a copy of your answers" and msg["Auto-Submitted"] == "auto-generated"
-    # the record's address is changed by staff before delivery: the receipt is held — not sent to the old address, not retargeted
+    assert msg["Subject"] == receipts.SUBJECT and msg["Auto-Submitted"] == "auto-generated"
+    # the record's address is changed by staff before delivery: the customer receipt is held — not sent to the old address
     c.execute("UPDATE enquiries SET email='staff-corrected@example.com', first_name='Someone Else' WHERE id=?", (eid,)); c.commit()
-    c.execute("UPDATE email_outbox SET status='queued' WHERE enquiry_id=?", (eid,)); c.commit()
+    c.execute("UPDATE email_outbox SET status='queued' WHERE enquiry_id=? AND kind=?", (eid, receipts.KIND_RECEIPT)); c.commit()
+    before = len(t.sent)
     res = receipts.deliver_pending(c, t)
     ob = _outbox(c, eid)[0]
-    assert res["sent"] == 0 and ob["status"] == "held" and "changed since submission" in ob["last_error"] and len(t.sent) == 1
+    assert res["sent"] == 0 and ob["status"] == "held" and "changed since submission" in ob["last_error"] and len(t.sent) == before
     # a corrupted snapshot is never sent to
     c.execute("UPDATE enquiries SET email='person@example.com' WHERE id=?", (eid,)); c.commit()
-    c.execute("UPDATE email_outbox SET status='queued', to_email='bad address, two@example.com' WHERE enquiry_id=?", (eid,)); c.commit()
+    c.execute("UPDATE email_outbox SET status='queued', to_email='bad address, two@example.com' WHERE enquiry_id=? AND kind=?",
+              (eid, receipts.KIND_RECEIPT)); c.commit()
     res = receipts.deliver_pending(c, t)
-    assert res["sent"] == 0 and _outbox(c, eid)[0]["status"] == "held" and len(t.sent) == 1
+    assert res["sent"] == 0 and _outbox(c, eid)[0]["status"] == "held" and len(t.sent) == before
     # staff edits to the columns never change the receipt content: it is rendered from the submitted payload
     c.execute("UPDATE enquiries SET last_name='Edited' WHERE id=?", (eid,)); c.commit()
     assert "Last name: Person" in receipts.render_receipt(row(c.execute("SELECT * FROM enquiries WHERE id=?", (eid,))))["text"]
@@ -172,9 +190,10 @@ def test_mail_failure_never_fails_or_duplicates_the_submission(client, mail_dryr
     monkeypatch.undo()
     monkeypatch.setenv("MMAI_MAIL_MODE", "dryrun"); monkeypatch.setenv("MMAI_MAIL_FROM", "hello@example.com")
     monkeypatch.setattr(receipts, "kick_delivery", lambda c: None)
-    # 2) the transport fails: the row retries with back-off, the enquiry is untouched, no duplicate row
+    # 2) the transport fails: the customer row retries with back-off, the enquiry is untouched, no duplicate row
     r = _post(anon, good_answers(is_test=False, email="second@example.com"), key="k_" + "s" * 30)
     eid = r.json()["id"]
+    c.execute("UPDATE email_outbox SET status='sent' WHERE enquiry_id=? AND kind=?", (eid, receipts.KIND_RESERVATIONS)); c.commit()
     t = receipts.CapturedTransport(fail_times=2)
     res = receipts.deliver_pending(c, t)
     ob = _outbox(c, eid)[0]
@@ -191,6 +210,7 @@ def test_permanent_failure_after_max_attempts(client, mail_dryrun):
     anon = TestClient(client.app)
     c = appdb(client)
     eid = _post(anon, good_answers(is_test=False)).json()["id"]
+    c.execute("UPDATE email_outbox SET status='sent' WHERE enquiry_id=? AND kind=?", (eid, receipts.KIND_RESERVATIONS)); c.commit()
     t = receipts.CapturedTransport(fail_times=99)
     for _ in range(receipts.MAX_ATTEMPTS):
         receipts.deliver_pending(c, t, now="2999-01-01T00:00:00+00:00")
@@ -232,6 +252,7 @@ def test_deleting_the_enquiry_removes_the_queued_receipt(client, mail_dryrun, mo
     assert _outbox(c, eid2) == []
     # a row claimed for sending whose enquiry vanished mid-way is cancelled, not sent
     eid3 = _post(anon, good_answers(is_test=False, email="third@example.com"), key="k_" + "w" * 30).json()["id"]
+    c.execute("UPDATE email_outbox SET status='sent' WHERE enquiry_id=? AND kind=?", (eid3, receipts.KIND_RESERVATIONS)); c.commit()
     # (portable simulation for SQLite and Postgres: the enquiry row is removed while the outbox row is still present)
     real_row = receipts.row
 
@@ -258,9 +279,16 @@ def test_receipt_contains_customer_questions_and_answers_but_nothing_internal(cl
     e = row(c.execute("SELECT * FROM enquiries WHERE id=?", (eid,)))
     r = receipts.render_receipt(e)
     text, html_ = r["text"], r["html"]
-    assert text.startswith("Hi Test,") and "Here is a copy of your enquiry." in text and "The Apartment Living Melbourne team" in text
-    assert "Once everyone agrees, MateBot will match your group with suitable apartments" in text
-    assert f"Reference: MateBot-{str(eid).zfill(5)}" in text
+    assert text.startswith("Hi Test,") and "Here is a copy of the answers you gave:" in text
+    assert "Thank you for completing the MateBot form." in text
+    assert "MateBot is working hard to find you compatible housemates" in text
+    assert receipts.LOCKED_IN_LINE in text
+    assert text.index(receipts.LOCKED_IN_LINE) < text.index("Kind Regards,")
+    assert "Kind Regards," in text
+    assert "Apartment Living Melbourne" in text and "Reservation Team" in text
+    assert "Apartment Living Melbourne\nReservation Team" in text
+    assert "DISCLAIMER:" in text and f"Reference: MateBot-{str(eid).zfill(5)}" in text
+    assert receipts.LOGO_URL in html_
     assert "First name: Test" in text and "Email: t@example.com" in text and "Mobile number: +61 0400000000" in text
     assert "I confirm that everyone included in this enquiry, including me, will be 18 or older on the move-in date. If that is not the case, please contact the ALM team instead of continuing.: Yes" in text
     for gone in ("Date of birth", "Sex:", "Housemate sex preference", "Preferred housemate age range", "I confirm I will be 18 or older", "Parent or guardian"):

@@ -25,8 +25,8 @@ def saved(c, **over):
     return response.json()
 
 
-def outbox(c):
-    return row(c.db.execute("SELECT * FROM homebot_email_outbox"))
+def outbox(c, kind=hr.KIND):
+    return row(c.db.execute("SELECT * FROM homebot_email_outbox WHERE kind=?", (kind,)))
 
 
 def captured():
@@ -35,11 +35,14 @@ def captured():
     return transport
 
 
-def queue(c, monkeypatch):
+def queue(c, monkeypatch, kind=None):
     monkeypatch.setenv("MMAI_MAIL_MODE", "dryrun")
     monkeypatch.setenv("MMAI_MAIL_FROM", "hello@example.com")
     with transaction(c.db):
-        c.db.execute("UPDATE homebot_email_outbox SET status='queued'")
+        if kind is None:
+            c.db.execute("UPDATE homebot_email_outbox SET status='queued'")
+        else:
+            c.db.execute("UPDATE homebot_email_outbox SET status='queued' WHERE kind=?", (kind,))
 
 
 def test_original_snapshot_atomic_and_replay_singleton(client):
@@ -48,9 +51,12 @@ def test_original_snapshot_atomic_and_replay_singleton(client):
     first = outbox(client)
     replay = post(client, body()).json()
     assert replay == {**result, "replayed": True}
-    assert client.db.execute("SELECT COUNT(*) FROM homebot_email_outbox").fetchone()[0] == 1
+    assert client.db.execute("SELECT COUNT(*) FROM homebot_email_outbox").fetchone()[0] == 2
     assert client.db.execute("SELECT COUNT(*) FROM email_outbox").fetchone()[0] == 0
     assert outbox(client)["snapshot_json"] == first["snapshot_json"]
+    reserved = outbox(client, hr.KIND_RESERVATIONS)
+    assert reserved["to_email"] == receipts.RESERVATIONS_TO
+    assert reserved["snapshot_json"] == first["snapshot_json"]
 
 
 def test_snapshot_covers_normalized_customer_answers_without_private_data():
@@ -59,11 +65,28 @@ def test_snapshot_covers_normalized_customer_answers_without_private_data():
     assert all(not set(p) - hr.PERSON_KEYS for p in clean["people"])
     clean.update(staff_notes="PRIVATE STAFF SECRET", matching={"score": 82}, arbitrary="PRIVATE UNKNOWN")
     clean["people"][0]["private"] = "PRIVATE PERSON SECRET"
-    rendered = hr.render(hr.snapshot(clean), 19, True)
+    snap = hr.snapshot(clean)
+    rendered = hr.render(snap, 19, True)
     assert "HomeBot-00019" in rendered["text"]
+    assert "Thank you for completing the HomeBot form." in rendered["text"]
+    assert "Here is a copy of the answers you gave:" in rendered["text"]
+    assert "Your answers" not in rendered["text"]  # doc 2: intro line only, no extra heading
+    assert receipts.LOCKED_IN_LINE in rendered["text"]
+    assert rendered["text"].index(receipts.LOCKED_IN_LINE) < rendered["text"].index("Kind Regards,")
+    assert "Kind Regards," in rendered["text"] and "DISCLAIMER:" in rendered["text"]
+    assert "Apartment Living Melbourne\nReservation Team" in rendered["text"]
+    assert receipts.LOGO_URL in rendered["html"]
     assert "Person 3" in rendered["text"] and "Richmond" in rendered["text"]
     assert "PRIVATE" not in json.dumps(rendered)
     assert "TEST" in rendered["subject"]
+    assert hr.SUBJECT in rendered["subject"] or rendered["subject"].endswith(hr.SUBJECT)
+    reserved = hr.render_reservations(snap, 19, False)
+    assert reserved["subject"].startswith("HomeBot enquiry from ")
+    assert receipts.RESERVATIONS_TO not in reserved["text"]  # recipient is envelope To, not body requirement
+    assert "New HomeBot enquiry received." in reserved["text"]
+    assert "Answers:" in reserved["text"]
+    assert receipts.LOCKED_IN_LINE not in reserved["text"]
+    assert "PRIVATE" not in json.dumps(reserved)
 
 
 def test_snapshot_survives_actual_staff_requirement_edit(client, monkeypatch):
@@ -117,7 +140,7 @@ def test_mode_off_wins_and_held_backlog_never_released(client, monkeypatch):
 
 def test_delivery_is_outside_transaction_and_dryrun_is_not_sent(client, monkeypatch):
     saved(client)
-    queue(client, monkeypatch)
+    queue(client, monkeypatch, hr.KIND)
     transport = captured()
     original_send = transport.send
     def send(msg):
@@ -132,9 +155,9 @@ def test_delivery_is_outside_transaction_and_dryrun_is_not_sent(client, monkeypa
 
 def test_ambiguous_sending_row_is_never_retried(client, monkeypatch):
     saved(client)
-    queue(client, monkeypatch)
+    queue(client, monkeypatch, hr.KIND)
     with transaction(client.db):
-        client.db.execute("UPDATE homebot_email_outbox SET status='sending', attempts=1")
+        client.db.execute("UPDATE homebot_email_outbox SET status='sending', attempts=1 WHERE kind=?", (hr.KIND,))
     transport = captured()
     assert hr.deliver_pending(client.db, transport)["dryrun"] == 0
     assert outbox(client)["status"] == "sending" and outbox(client)["attempts"] == 1
@@ -142,7 +165,7 @@ def test_ambiguous_sending_row_is_never_retried(client, monkeypatch):
 
 def test_failure_retry_bound_and_private_error_not_logged(client, monkeypatch):
     saved(client)
-    queue(client, monkeypatch)
+    queue(client, monkeypatch, hr.KIND)
     transport = captured()
     transport.send = Mock(side_effect=TimeoutError("PRIVATE recipient/provider detail"))
     for attempt in range(1, receipts.MAX_ATTEMPTS + 1):
@@ -156,7 +179,7 @@ def test_failure_retry_bound_and_private_error_not_logged(client, monkeypatch):
 
 def test_recipient_change_holds_original_copy(client, monkeypatch):
     saved(client)
-    queue(client, monkeypatch)
+    queue(client, monkeypatch, hr.KIND)
     with transaction(client.db):
         client.db.execute("UPDATE homebot_enquiries SET email='changed@example.com'")
     assert hr.deliver_pending(client.db, captured())["dryrun"] == 0
@@ -165,7 +188,7 @@ def test_recipient_change_holds_original_copy(client, monkeypatch):
 
 def test_post_acceptance_write_failure_cannot_trigger_resend(client, monkeypatch):
     saved(client)
-    queue(client, monkeypatch)
+    queue(client, monkeypatch, hr.KIND)
     transport = captured()
     monkeypatch.setattr(hr, "_set", Mock(side_effect=RuntimeError("synthetic database fault")))
     with pytest.raises(RuntimeError):
@@ -178,7 +201,7 @@ def test_post_acceptance_write_failure_cannot_trigger_resend(client, monkeypatch
 def test_graph_ambiguous_is_parked_and_status_contains_no_customer_content(client, monkeypatch):
     from server.mail_graph import GraphAmbiguous
     saved(client)
-    queue(client, monkeypatch)
+    queue(client, monkeypatch, hr.KIND)
     transport = captured()
     transport.send = Mock(side_effect=GraphAmbiguous("PRIVATE provider detail"))
     assert hr.deliver_pending(client.db, transport)["skipped"] == 1
@@ -193,7 +216,7 @@ def test_graph_ambiguous_is_parked_and_status_contains_no_customer_content(clien
 
 def test_test_recipient_denied_even_with_dryrun_transport(client, monkeypatch):
     saved(client, is_test=True)
-    queue(client, monkeypatch)
+    queue(client, monkeypatch, hr.KIND)
     assert hr.deliver_pending(client.db, receipts.DryRunTransport())["dryrun"] == 0
     assert outbox(client)["status"] == "held"
 
@@ -205,7 +228,7 @@ def test_test_clear_preserves_real_snapshot(client):
     assert response.status_code == 201
     homebot.delete_test_data(client.db)
     assert outbox(client) == real
-    assert client.db.execute("SELECT COUNT(*) FROM homebot_email_outbox").fetchone()[0] == 1
+    assert client.db.execute("SELECT COUNT(*) FROM homebot_email_outbox").fetchone()[0] == 2
 
 
 def test_delete_removes_snapshot(client):

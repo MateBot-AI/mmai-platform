@@ -29,14 +29,21 @@ SENDER = "reservations@almelb.com.au"
 
 
 def _outbox(c, eid):
-    return rows(c.execute("SELECT * FROM email_outbox WHERE enquiry_id=? ORDER BY id", (eid,)))[0]
+    return rows(c.execute("SELECT * FROM email_outbox WHERE enquiry_id=? AND kind=? ORDER BY id",
+                          (eid, receipts.KIND_RECEIPT)))[0]
 
 
 def _enquiry(client):
     anon = TestClient(client.app)
     r = _post(anon, good_answers(is_test=False))
     assert r.status_code == 201
-    return anon, r.json()["id"]
+    eid = r.json()["id"]
+    # delivery classification tests focus on the customer receipt row
+    c = appdb(client)
+    c.execute("UPDATE email_outbox SET status='sent' WHERE enquiry_id=? AND kind=?",
+              (eid, receipts.KIND_RESERVATIONS))
+    c.commit()
+    return anon, eid
 
 
 # --------------------------------------------------------------------------- outbox classification of Graph answers (F1)

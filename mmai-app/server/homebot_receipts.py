@@ -15,7 +15,8 @@ from .db import assert_not_guarded, j, now_iso, pj, row, rows, transaction
 
 log = logging.getLogger(__name__)
 KIND = "homebot_submission"
-SUBJECT = "Your HomeBot enquiry: a copy of your answers"
+KIND_RESERVATIONS = "homebot_reservations_new_enquiry"
+SUBJECT = "Your HomeBot enquiry – we’re finding your perfect apartment"
 ANSWER_KEYS = {
     "first_name", "last_name", "email", "phone_code", "phone", "contact_pref",
     "party_mode", "headcount_now", "headcount_target", "want_help", "people", "bunk_condition",
@@ -44,9 +45,11 @@ def snapshot(a: dict) -> dict:
         sections.append([title, [[q, _text(v)] for q, v in items]])
 
     code = a.get("phone_code")
+    full_name = f"{a['first_name']} {a['last_name']}".strip()
+    phone = a["phone"] if code == "other" else f"{code} {a['phone']}"
     section("About you", [
-        ("Name", f"{a['first_name']} {a['last_name']}"), ("Email", a["email"]),
-        ("Phone", a["phone"] if code == "other" else f"{code} {a['phone']}"),
+        ("Name", full_name), ("Email", a["email"]),
+        ("Phone", phone),
         ("Preferred contact", a["contact_pref"]),
         ("Do you have everyone in your group?", "Yes" if a["party_mode"] == "complete" else "No"),
         ("People moving in now", a["headcount_now"]), ("People wanted in total", a["headcount_target"]),
@@ -86,42 +89,81 @@ def snapshot(a: dict) -> dict:
         *[(label, "Yes" if a.get(key) else "No") for key, label in zip(
             ("consent_contact", "consent_lease", "consent_adults"), homebot.CONSENT_TEXT)],
     ])
-    return {"first_name": a["first_name"], "party_mode": a["party_mode"],
+    return {"first_name": a["first_name"], "last_name": a["last_name"], "email": a["email"],
+            "phone": phone, "full_name": full_name, "party_mode": a["party_mode"],
             "headcount_now": a["headcount_now"], "headcount_target": a["headcount_target"], "sections": sections}
 
 
-def render(saved: dict, enquiry_id: int, is_test: bool) -> dict:
-    first = saved["first_name"] or "there"
-    next_step = ("Our team will review your apartment requirements and contact you about suitable options and viewings."
-                 if saved["party_mode"] == "complete" else
-                 f"We have noted that you have {saved['headcount_now']} people and want {saved['headcount_target']} in total. "
-                 "You are finding the remaining housemates yourselves. Our team will review your apartment requirements "
-                 "and discuss the next steps with you. Please let us know when your group is complete.")
-    paragraphs = [f"Hi {first},", "Thanks for telling us what you are looking for. Here is a copy of your enquiry.",
-                  next_step, "If an answer needs changing, please contact the Apartment Living Melbourne team.",
-                  f"Reference: {homebot.reference(enquiry_id)}"]
-    if is_test:
-        paragraphs.insert(1, receipts.TEST_NOTE)
-    text = "\n\n".join(paragraphs) + "\n\nYour answers\n"
-    body = "".join(f"<p>{html.escape(p)}</p>" for p in paragraphs)
+def _answers_blocks(saved: dict) -> tuple[str, str]:
+    """Sectioned answers only — caller supplies 'Here is a copy…' / 'Answers:' headings."""
+    text = ""
+    body = ""
     for title, items in saved["sections"]:
         text += "\n" + title + "\n" + "\n".join(f"{q}: {v}" for q, v in items) + "\n"
         body += f"<h2>{html.escape(title)}</h2><dl>"
         body += "".join(f"<dt>{html.escape(q)}</dt><dd>{html.escape(v)}</dd>" for q, v in items) + "</dl>"
+    return text, body
+
+
+def render(saved: dict, enquiry_id: int, is_test: bool) -> dict:
+    first = saved["first_name"] or "there"
+    paragraphs = [f"Hi {first},"] + ([receipts.TEST_NOTE] if is_test else [])
+    paragraphs += [p for p in receipts.acknowledgement_intro("homebot") if p]
+    paragraphs.append(f"Reference: {homebot.reference(enquiry_id)}")
+    text = "\n\n".join(paragraphs)
+    body = "".join(f"<p>{html.escape(p)}</p>" for p in paragraphs)
+    ans_text, ans_html = _answers_blocks(saved)
+    text = (text + "\n" + ans_text + "\n" + receipts.LOCKED_IN_LINE + "\n\n"
+            + "\n".join(receipts.signature_text_lines()) + "\n")
+    body = (body + ans_html
+            + f"<p>{html.escape(receipts.LOCKED_IN_LINE)}</p>"
+            + receipts.signature_html())
     return {"subject": (receipts.TEST_SUBJECT_PREFIX if is_test else "") + SUBJECT,
             "text": text, "html": f"<!doctype html><html><body>{body}</body></html>"}
+
+
+def render_reservations(saved: dict, enquiry_id: int, is_test: bool) -> dict:
+    name = (saved.get("full_name") or f"{saved.get('first_name', '')} {saved.get('last_name', '')}".strip() or "Unknown")
+    email = saved.get("email") or "Not provided"
+    phone = saved.get("phone") or "Not provided"
+    subject = f"HomeBot enquiry from {name}"
+    if is_test:
+        subject = receipts.TEST_SUBJECT_PREFIX + subject
+    paragraphs = [
+        "New HomeBot enquiry received.",
+        f"Name: {name}",
+        f"Email: {email}",
+        f"Phone: {phone}",
+        f"Reference: {homebot.reference(enquiry_id)}",
+        "Answers:",
+    ]
+    text = "\n\n".join(paragraphs)
+    body = "".join(f"<p>{html.escape(p)}</p>" for p in paragraphs[:-1]) + "<h2>Answers</h2>"
+    ans_text, ans_html = _answers_blocks(saved)
+    text = text + "\n" + ans_text
+    body = body + ans_html
+    return {"subject": subject, "text": text, "html": f"<!doctype html><html><body>{body}</body></html>"}
+
+
+def _insert_kinds(c, enquiry_id: int, to_customer, is_test: bool, saved: dict, now: str) -> None:
+    snap = j(saved)
+    status, error = receipts.initial_status(to_customer, is_test)
+    c.execute("""INSERT OR IGNORE INTO homebot_email_outbox
+        (enquiry_id, kind, to_email, snapshot_json, status, attempts, last_error, created_at, updated_at)
+        VALUES (?,?,?,?,?,0,?,?,?)""", (enquiry_id, KIND, to_customer or "", snap, status, error, now, now))
+    status_r, error_r = receipts.initial_status(receipts.RESERVATIONS_TO, is_test)
+    c.execute("""INSERT OR IGNORE INTO homebot_email_outbox
+        (enquiry_id, kind, to_email, snapshot_json, status, attempts, last_error, created_at, updated_at)
+        VALUES (?,?,?,?,?,0,?,?,?)""",
+              (enquiry_id, KIND_RESERVATIONS, receipts.RESERVATIONS_TO, snap, status_r, error_r, now, now))
 
 
 def enqueue_in_transaction(c, enquiry_id: int) -> None:
     """Called only by the original submission hook, before commit."""
     e = row(c.execute("SELECT email, is_test, answers_json FROM homebot_enquiries WHERE id=?", (enquiry_id,)))
     to = receipts.valid_email(e["email"])
-    status, error = receipts.initial_status(to, bool(e["is_test"]))
     saved = snapshot(pj(e["answers_json"]))
-    now = now_iso()
-    c.execute("""INSERT OR IGNORE INTO homebot_email_outbox
-        (enquiry_id, kind, to_email, snapshot_json, status, attempts, last_error, created_at, updated_at)
-        VALUES (?,?,?,?,?,0,?,?,?)""", (enquiry_id, KIND, to or "", j(saved), status, error, now, now))
+    _insert_kinds(c, enquiry_id, to, bool(e["is_test"]), saved, now_iso())
 
 
 def outbox_status(c, enquiry_id: int):
@@ -134,19 +176,27 @@ def after_saved(c, enquiry_id: int) -> dict:
     """Missing historical snapshot is held, never invented from later staff edits."""
     try:
         with transaction(c):
-            e = row(c.execute("SELECT email FROM homebot_enquiries WHERE id=?", (enquiry_id,)))
+            e = row(c.execute("SELECT email, is_test FROM homebot_enquiries WHERE id=?", (enquiry_id,)))
             if not e:
                 return {"status": "cancelled"}
             now = now_iso()
+            to = receipts.valid_email(e["email"]) or ""
+            # Repair customer kind without inventing a snapshot
             c.execute("""INSERT OR IGNORE INTO homebot_email_outbox
                 (enquiry_id, kind, to_email, snapshot_json, status, attempts, last_error, created_at, updated_at)
                 VALUES (?,?,?,NULL,'held',0,?,?,?)""",
-                (enquiry_id, KIND, receipts.valid_email(e["email"]) or "",
-                 "original submission snapshot unavailable; not sent", now, now))
+                      (enquiry_id, KIND, to, "original submission snapshot unavailable; not sent", now, now))
+            c.execute("""INSERT OR IGNORE INTO homebot_email_outbox
+                (enquiry_id, kind, to_email, snapshot_json, status, attempts, last_error, created_at, updated_at)
+                VALUES (?,?,?,NULL,'held',0,?,?,?)""",
+                      (enquiry_id, KIND_RESERVATIONS, receipts.RESERVATIONS_TO,
+                       "original submission snapshot unavailable; not sent", now, now))
             result = outbox_status(c, enquiry_id)
-        if result["status"] == "queued":
+            reserved = row(c.execute("""SELECT status FROM homebot_email_outbox
+                                        WHERE enquiry_id=? AND kind=?""", (enquiry_id, KIND_RESERVATIONS)))
+        if (result and result["status"] == "queued") or (reserved and reserved["status"] == "queued"):
             kick_delivery(c)
-        return result
+        return result or {"status": "error"}
     except Exception as ex:
         log.warning("HomeBot receipt preparation failed enquiry=%s error=%s", enquiry_id, type(ex).__name__)
         return {"status": "error"}
@@ -197,18 +247,34 @@ def deliver_pending(c, transport=None, limit=25, now=None):
                 counts["cancelled"] += 1
                 continue
             to = receipts.valid_email(ob["to_email"])
-            if (not to or e["email"].strip().lower() != to.lower() or not ob["snapshot_json"]
+            is_reservations = ob["kind"] == KIND_RESERVATIONS
+            if (not to or not ob["snapshot_json"]
                     or (e["is_test"] and not receipts.test_recipient_allowed(to)
                         and not isinstance(transport, receipts.CapturedTransport))):
                 _set(c, oid, status="held", last_error="recipient, TEST permission or original snapshot requires review")
                 counts["skipped"] += 1
                 continue
+            if not is_reservations and e["email"].strip().lower() != to.lower():
+                _set(c, oid, status="held", last_error="recipient, TEST permission or original snapshot requires review")
+                counts["skipped"] += 1
+                continue
+            if is_reservations and to.lower() != receipts.RESERVATIONS_TO:
+                _set(c, oid, status="held", last_error="reservations recipient mismatch; not sent")
+                counts["skipped"] += 1
+                continue
             try:
-                msg = receipts.build_message(to, render(pj(ob["snapshot_json"]), ob["enquiry_id"], bool(e["is_test"])))
+                saved = pj(ob["snapshot_json"])
+                rendered = (render_reservations(saved, ob["enquiry_id"], bool(e["is_test"]))
+                            if is_reservations else render(saved, ob["enquiry_id"], bool(e["is_test"])))
+                msg = receipts.build_message(to, rendered)
                 with c._mmai_lock:
-                    current = row(c.execute("""SELECT e.email FROM homebot_email_outbox o
+                    current = row(c.execute("""SELECT e.email, o.kind FROM homebot_email_outbox o
                         JOIN homebot_enquiries e ON e.id=o.enquiry_id WHERE o.id=? AND o.status='sending'""", (oid,)))
-                if not current or current["email"].strip().lower() != to.lower():
+                if not current:
+                    _set(c, oid, status="cancelled", last_error="enquiry removed or recipient changed")
+                    counts["cancelled"] += 1
+                    continue
+                if current["kind"] != KIND_RESERVATIONS and current["email"].strip().lower() != to.lower():
                     _set(c, oid, status="cancelled", last_error="enquiry removed or recipient changed")
                     counts["cancelled"] += 1
                     continue

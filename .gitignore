@@ -1,0 +1,9 @@
+# Local Python / test artifacts (never commit)
+**/__pycache__/
+**/*.py[cod]
+**/.pytest_cache/
+**/*.db
+**/*.db-*
+**/*.sqlite*
+**/.env
+**/.env.*

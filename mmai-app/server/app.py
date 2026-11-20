@@ -504,9 +504,9 @@ def _create_guarded(sub: Optional[submissions.Submission], receipt: bool = False
     def hook(c, eid):
         if sub:
             submissions.mark_saved(c, sub, eid)
-        if receipt:  # I19(q), public form only: the receipt intent is written in the SAME transaction as the enquiry row
+        if receipt:  # I19(q), public form only: customer + reservations intents in the SAME transaction as the enquiry row
             saved = row(c.execute("SELECT email, is_test FROM enquiries WHERE id=?", (eid,)))  # the address as saved (normalised)
-            receipts.enqueue_in_transaction(c, eid, saved and saved["email"], bool(saved and saved["is_test"]))
+            receipts.enqueue_submission_emails(c, eid, saved and saved["email"], bool(saved and saved["is_test"]))
     try:
         return create_enquiry(db, on_inserted=hook, submission_key=sub.key if sub else None, **kw)
     except ValidationError:

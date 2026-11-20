@@ -76,7 +76,7 @@ async def run(width, scenario):
         assert len(posts) == 1, posts
         ref = await pg.inner_text('[data-role=doneRef]'); print(width, scenario, 'ref:', ref[:40])
         to = await pg.inner_text('[data-role=emailTo]'); subj = await pg.inner_text('[data-role=emailSubject]'); body = await pg.input_value('[data-role=emailBody]')
-        assert to == 'qa.phone@example.com' and subj == 'Your MateBot enquiry: a copy of your answers', (to, subj)
+        assert to == 'qa.phone@example.com' and subj == 'Your MateBot enquiry – we’re finding your perfect housemates', (to, subj)
         assert body.startswith('Hi Qa2,') and 'Your answers' in body and 'Reference: MateBot-' in body and '1. About you' in body and '- First name: Qa2' in body, body[:300]
         print(body); assert 'Staff only' not in body and 'TEST' not in body and 'staff' not in body.lower().split('your answers')[1]
         assert '6. Consent' in body and 'Sent' not in body
