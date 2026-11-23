@@ -2,13 +2,17 @@
 (() => {
   const api = window.MMAI_API;
   const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
-  // Introduction-only sex / current age (Bill, 8 Nov 2026): shown to staff and used in introductions only; never a matching input.
-  const INTRO_SEX_OPTIONS = ['Female', 'Male', 'Another term', 'Prefer not to say'];
-  const introText = r => { const bits = []; if (r.intro_sex === 'Another term') bits.push(r.intro_sex_other || 'Another term'); else if (r.intro_sex) bits.push(r.intro_sex); if (r.intro_age !== null && r.intro_age !== undefined && r.intro_age !== '') bits.push(String(r.intro_age)); return bits.length ? bits.join(', ') : 'Not given'; };
-  const introEdit = (prefix, r) => `<div class="field"><label>Sex<select name="${prefix}intro_sex"><option value="" ${!r.intro_sex ? 'selected' : ''}>Not given</option>${INTRO_SEX_OPTIONS.map(o => `<option ${r.intro_sex === o ? 'selected' : ''}>${o}</option>`).join('')}</select></label></div>
-      <div class="field"><label>Term they use (only with “Another term”)<input name="${prefix}intro_sex_other" maxlength="40" value="${esc(r.intro_sex_other || '')}"></label></div>
+  // Sex (multi-select) and current age (Bill, 23 Nov 2026). Older single answers ("Another term", "Prefer not to say") stay exactly as given.
+  const INTRO_SEX_OPTIONS = ['Female', 'Male', 'Non-binary', 'A different term (please specify)'];
+  const LEGACY_SEX = ['Another term', 'Prefer not to say'];
+  const sexList = v => String(v || '').split(',').map(x => x.trim()).filter(Boolean);
+  const isOtherTerm = x => x === 'Another term' || x === 'A different term (please specify)';
+  const sexText = r => sexList(r.intro_sex).map(x => isOtherTerm(x) ? (r.intro_sex_other || (x === 'Another term' ? x : 'A different term')) : x).join(', ');
+  const introText = r => { const bits = []; const sx = sexText(r); if (sx) bits.push(sx); if (r.intro_age !== null && r.intro_age !== undefined && r.intro_age !== '') bits.push(String(r.intro_age)); return bits.length ? bits.join(', ') : 'Not given'; };
+  const introEdit = (prefix, r) => `<div class="field"><label>Sex (tick all that apply)<select name="${prefix}intro_sex" multiple style="height:100px">${[...INTRO_SEX_OPTIONS, ...LEGACY_SEX.filter(o => sexList(r.intro_sex).includes(o))].map(o => `<option ${sexList(r.intro_sex).includes(o) ? 'selected' : ''}>${o}</option>`).join('')}</select></label></div>
+      <div class="field"><label>Term they use (only with “A different term”)<input name="${prefix}intro_sex_other" maxlength="40" value="${esc(r.intro_sex_other || '')}"></label></div>
       <div class="field"><label>Current age<input name="${prefix}intro_age" type="number" min="0" max="999" step="1" value="${r.intro_age === null || r.intro_age === undefined ? '' : esc(String(r.intro_age))}"></label></div>`;
-  const introPatch = (root, prefix) => { const v = k => root.querySelector(`[name="${prefix}${k}"]`).value; const sex = v('intro_sex'); return { intro_sex: sex || null, intro_sex_other: sex === 'Another term' ? v('intro_sex_other') : null, intro_age: v('intro_age').trim() === '' ? null : v('intro_age').trim() }; };
+  const introPatch = (root, prefix) => { const v = k => root.querySelector(`[name="${prefix}${k}"]`).value; const sx = [...root.querySelector(`[name="${prefix}intro_sex"]`).selectedOptions].map(o => o.value); const sex = sx.join(', '); return { intro_sex: sex || null, intro_sex_other: sx.some(isOtherTerm) ? v('intro_sex_other') : null, intro_age: v('intro_age').trim() === '' ? null : v('intro_age').trim() }; };
   const fmtD = s => s ? new Date(s.slice(0, 10) + 'T00:00:00').toLocaleDateString('en-AU', { day: 'numeric', month: 'short', year: 'numeric' }) : '—';
   const fmtDT = s => s ? new Date(s).toLocaleString('en-AU', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }) : '—';
   const money = n => n == null ? '—' : '$' + Number(n).toFixed(0);
@@ -811,7 +815,7 @@
             <div class="chips" data-role="editFeaturesTop">${(state.ref.features || []).map(f => `<label class="chip" ${(e.features || []).includes(f.label) ? '' : 'hidden'}><input type="checkbox" name="edit_features_top" value="${esc(f.label)}" ${(e.features_top || []).includes(f.label) ? 'checked' : ''}>${esc(f.label)}</label>`).join('')}</div>
             <div class="actions"><button class="btn btn--sm" type="button" data-action="save-answers">Save answers</button>${e.birth_country_confirmed ? '' : '<button class="btn btn--ghost btn--sm" type="button" data-action="confirm-country">Confirm country as shown</button>'}</div>
             <h4 class="mt">Introduction details</h4>
-            <p class="small muted">Shared in introductions to proposed housemates; not used for matching. Optional: record only what the person told you, as they said it. Saving changes nothing about the group or the adults declaration, but any introduction already drafted is marked for re-drafting.</p>
+            <p class="small muted">Sex and current age: record only what the person told you, as they said it. Saving changes nothing about the group or the adults declaration, but any introduction already drafted is marked for re-drafting.</p>
             ${e.intro_profile_status === 'incomplete' ? `<p class="small warn-text">Not yet given by: ${esc(e.intro_missing.join(', '))}. Ask before introducing; MateBot AI never fills this in.</p>` : ''}
             <div class="editgrid" data-role="introEdit">${introEdit('lead_', e)}</div>
             <div class="actions"><button class="btn btn--sm" type="button" data-action="save-intro">Save introduction details</button></div>
@@ -820,7 +824,7 @@
               <label>${esc(m.name)}: country of birth ${m.birth_country_raw && !m.birth_country_confirmed ? '<span class="badge badge--warn">confirm</span>' : ''}<input name="member_country" value="${esc(m.birth_country || '')}" list="countries-dl"></label>
               <span class="small muted">Typed: “${esc(m.birth_country_raw || '—')}”</span>
               <div class="actions"><button class="btn btn--ghost btn--sm" type="button" data-action="confirm-member" data-member="${m.id}">${m.birth_country_confirmed ? 'Save country' : 'Confirm country'}</button></div>
-              <p class="sublabel">Introduction details for ${esc(m.name)} <span class="small muted">(their own answer; not used for matching)</span></p>
+              <p class="sublabel">Introduction details for ${esc(m.name)} <span class="small muted">(their own answer)</span></p>
               <div class="editgrid">${introEdit(`m${m.id}_`, m)}</div>
               <div class="actions"><button class="btn btn--ghost btn--sm" type="button" data-action="save-member-intro" data-member="${m.id}">Save introduction details</button></div>
             </div>`).join('')}` : ''}
@@ -837,7 +841,7 @@
             <dl class="kv">
               ${kv('Contact', `${e.phone_code || ''} ${e.phone || ''} · ${e.contact_method || ''}`, '1.4')}
               ${kv('Country of birth', e.birth_country || e.birth_country_raw, '1.8')}${kv('Lives in', e.live_country || e.live_country_raw, '1.9')}${kv('Languages', e.languages, '1.10')}
-              ${kv('For introductions only (sex, current age)', [`${e.first_name}: ${introText(e)}`, ...e.party_members.map(m => `${m.name}: ${introText(m)}`)].concat(e.intro_profile_status === 'incomplete' ? ['Not given by everyone: ask before introducing'] : []), '1.6')}
+              ${kv('Sex and current age', [`${e.first_name}: ${introText(e)}`, ...e.party_members.map(m => `${m.name}: ${introText(m)}`)].concat(e.intro_profile_status === 'incomplete' ? ['Not given by everyone: ask before introducing'] : []), '1.6')}
               ${kv('City', e.city, '2.1')}${kv('Move in', `${fmtD(e.move_in)} (${e.move_in_flex})`, '2.2')}${kv('Move out', `${fmtD(e.move_out)} (${e.move_out_flex})`, '2.4')}
               ${kv('Budget', `${e.budget_option} · max ${money(e.budget_max)}/wk (${e.budget_guide} guide)`, '3.1')}${kv('Apartment sizes', e.apt_sizes, '3.2')}${kv('Housemates ideal / max', `${e.mate_ideal} / ${e.mate_max}`, '3.3')}
               ${kv('Room arrangements', e.rooms, '3.5')}${kv('Bunk bed OK', e.bunk_ok ? 'Yes' : 'No', '3.6')}${kv('First choice', e.room_first, '3.7')}${kv('Enquiring as', e.party + (e.party_size > 1 ? ` (${e.party_size} people)` : ''), '3.8')}
@@ -845,6 +849,7 @@
               ${e.party_members.length ? kv('Other people', e.party_members.map(m => `${m.name} <${m.email}> · born in ${m.birth_country || (m.birth_country_raw ? `“${m.birth_country_raw}”` : 'country not recorded')}${m.birth_country_raw && !m.birth_country_confirmed ? ' (confirm below)' : ''}`), '3.9') : ''}
               ${kv('Doing', e.doing, '4.1')}${kv('Study', [e.school, e.school_other, e.course, e.level].filter(Boolean).join(' · '), '4.2')}${kv('Course dates', e.course_start ? `${fmtD(e.course_start)} → ${fmtD(e.course_end)}` : '', '4.4')}${kv('Work', e.work, '4.5')}${kv('Preferred areas', e.areas, '4.6')}${kv('Travel choices', (e.travel_modes || []).length ? e.travel_modes : 'Not answered', '4.7')}${kv('Max travel', e.travel, '4.7')}
               ${kv('Features wanted (wishes, not filters)', (e.features || []).length ? e.features : 'None ticked', '3.11')}${kv('Matter most', (e.features_top || []).length ? e.features_top : 'None chosen', '3.12')}
+              ${kv('Housemate sex preference', e.sex_pref, '5.1')}${kv('Preferred housemate age range', e.age_pref, '5.2')}${kv('Interest in other cultures and languages', e.culture_interest, '5.4')}${(e.culture_languages || []).length ? kv('Languages I’m interested in', e.culture_languages, '5.4') : ''}${(e.culture_regions || []).length ? kv('Regions I’m interested in', e.culture_regions, '5.4') : ''}${(e.culture_countries || []).length ? kv('Countries I’m interested in', e.culture_countries, '5.4') : ''}
               ${kv('Smokes', e.smoke, '5.5')}${kv('OK with outside smoker', e.smoke_ok, '5.6')}${kv('Routine / tidy / social / guests / diet', [e.routine, e.tidy, e.social, e.guests, e.diet].map(x => x || '—').join(' / '), '5.7')}
               ${kv('Anything else', e.else_text, '5.12')}${kv('Introduction', e.intro, '5.13')}
               ${kv('Heard about us', e.source, '6.1')}${kv('Consents', `store ${e.consent_store ? '✓' : '✗'} · share ${e.consent_share ? '✓' : '✗'} · marketing ${e.consent_marketing ? '✓' : '✗'}`, '6.2')}
@@ -1998,7 +2003,7 @@
             <p class="small">${ret.due.length} enquiry(ies) due for deletion${ret.due.length ? ': ' + ret.due.map(d => `${esc(d.first_name)} ${esc(d.last_name)}${d.is_test ? ' (TEST)' : ''}`).join(', ') : ''}.</p>
             <div class="actions"><button class="btn btn--ghost btn--sm btn--danger" type="button" data-action="purge" ${ret.due.length ? '' : 'disabled'}>Run purge now</button></div><p class="msg" data-role="rmsg"></p></div>
           <div class="card card--tight mt"><h3>Question types</h3>
-            <p class="small muted">Whether each form question is a must-match, a preference or information only is set in the software. Information-only answers are not used for matching. Staff cannot change these classifications here.</p>
+            <p class="small muted">Whether each form question is a must-match, a preference or plain information is set in the software. Staff cannot change these classifications here.</p>
             <dl class="kv small">${Object.entries(qt).map(([q, t]) => `<dt>${q}</dt><dd>${t}</dd>`).join('')}</dl></div>
         </div>
         <div>

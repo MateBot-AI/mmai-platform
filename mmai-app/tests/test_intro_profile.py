@@ -48,8 +48,13 @@ def test_clean_accepts_only_the_agreed_values():
     assert "intro_sex_other" in ip.clean({"intro_sex": "Another term", "intro_age": 24})[1]           # the term is required with "Another term"
     assert "intro_sex_other" in ip.clean({"intro_sex": "Another term", "intro_sex_other": "x" * 41})[1]
     assert ip.clean({"intro_sex": "Male", "intro_sex_other": "ignored"})[0]["intro_sex_other"] is None   # only meaningful with "Another term"
-    for bad in ("female", "F", "Woman", 1, True, ["Female"], {"v": "Female"}):
+    for bad in ("female", "F", "Woman", 1, True, ["Zed"], ["Female", "Prefer not to say"], {"v": "Female"}):
         assert "intro_sex" in ip.clean({"intro_sex": bad})[1], bad
+    # 23 Nov 2026: sex is multi-select
+    assert ip.clean({"intro_sex": ["Female", "Male"]})[0]["intro_sex"] == "Female, Male"
+    assert ip.clean({"intro_sex": ["Non-binary", ip.DIFFERENT_TERM], "intro_sex_other": "Agender"})[0]["intro_sex_other"] == "Agender"
+    assert "intro_sex_other" in ip.clean({"intro_sex": [ip.DIFFERENT_TERM]})[1]
+    assert ip.hard_sexes("Female, Non-binary") == {"Female"} and ip.hard_sexes(["Non-binary"]) == set()
     for bad in (True, False, -1, 1000, 24.5, "24.5", "twenty", "", [24], {"v": 24}, " 2 4 "):
         if bad == "":
             assert ip.clean({"intro_age": bad})[0]["intro_age"] is None   # blank = not given
@@ -65,7 +70,7 @@ def test_status_counts_prefer_not_to_say_as_an_answer_and_flags_blanks():
     assert ip.status({"first_name": "Ana", "intro_sex": "Female", "intro_age": 22}, [{"name": "Bo"}, {"name": "Cy", "intro_sex": "Prefer not to say", "intro_age": 0}]) == ("incomplete", ["Bo"])
     assert ip.describe({"intro_sex": "Another term", "intro_sex_other": "Agender", "intro_age": 24}) == "Agender, 24"
     assert ip.describe({"intro_sex": "Prefer not to say"}) == "Prefer not to say" and ip.describe({}) == "—"
-    assert "not used for matching" in ip.PURPOSE
+    assert "not used for matching" not in ip.PURPOSE
 
 
 # ---------------- intake ----------------
@@ -161,7 +166,8 @@ def test_staff_edit_changes_only_intro_columns_and_marks_the_intro_draft_stale(c
     unit_after = matching.unit_from_row(after, rows(c.execute("SELECT name, email, birth_country, birth_country_raw FROM party_members WHERE enquiry_id=? ORDER BY id", (e["id"],))))
     strip = lambda u: {k: v for k, v in u.__dict__.items() if k not in ("people", "extra")}   # `extra` is the raw row itself (carries every column)
     assert strip(unit_after) == strip(unit_before) and len(unit_after.people) == len(unit_before.people)
-    assert [p.__dict__ for p in unit_after.people] == [p.__dict__ for p in unit_before.people]   # rule-level people: identical
+    own = ("own_sexes", "own_age")   # the person's own sex / age ARE matching inputs since 23 Nov 2026; nothing else may change
+    assert [{k: v for k, v in p.__dict__.items() if k not in own} for p in unit_after.people] == [{k: v for k, v in p.__dict__.items() if k not in own} for p in unit_before.people]
     hash_after, snap = matching.group_evidence(c, gid)
     assert hash_after == hash_before and "intro" not in json.dumps(snap)   # no rerank / re-review trigger
     # the customer introduction draft for the group is marked stale (append-only), twice: once per edit
@@ -196,12 +202,12 @@ def test_receipt_shows_intro_answers_only_when_given_and_never_legacy_values(cli
     c = appdb(client)
     c.execute("UPDATE enquiries SET sex='Female', dob='2000-01-01' WHERE id=?", (e["id"],)); c.commit()
     text = json.dumps(receipts.receipt_rows(row(c.execute("SELECT * FROM enquiries WHERE id=?", (e["id"],)))))
-    assert "Sex (shared in introductions to proposed housemates; not used for matching)\", \"Non-binary\"" in text
-    assert "Current age (shared in introductions to proposed housemates; not used for matching)\", \"24\"" in text
-    assert "for introductions only: Male, 20" in text and "2000-01-01" not in text and "Female" not in text
+    assert "[\"Sex\", \"Non-binary\"]" in text and "[\"Current age\", \"24\"]" in text
+    assert "not used for matching" not in text and "for introductions only" not in text
+    assert "sex and age: Male, 20" in text and "2000-01-01" not in text and "Female" not in text
     e2 = submit(client, email="q@example.com")
     text2 = json.dumps(receipts.receipt_rows(row(c.execute("SELECT * FROM enquiries WHERE id=?", (e2["id"],)))))
-    assert "introductions" not in text2   # not asked/answered → not shown (no "Not provided" nag)
+    assert "sex and age" not in text2   # not asked/answered → not shown (no "Not provided" nag)
 
 
 def test_intro_fields_are_outside_every_matching_and_review_input():

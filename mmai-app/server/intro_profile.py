@@ -10,21 +10,46 @@ Fields (enquirer on `enquiries`, each other party member on `party_members`, sam
   intro_sex_other  the person's own words when intro_sex is ANOTHER_TERM (otherwise NULL)
   intro_age        current age in whole years as the person states it (not a date of birth); any non-negative whole number
                    that fits the column (0..AGE_MAX) is stored — no business age band, no exclusion, no derivation
-Both questions are OPTIONAL at intake: "Prefer not to say" is an answer and is never overridden; an absent answer is a staff
-flag (and an introduction draft omits/flags it), never a reason to refuse a submission or to exclude anyone from matching.
+23 Nov 2026 (Bill): Sex is now MULTI-SELECT (Female, Male, Non-binary, A different term) and, together with the person's
+housemate sex preference, IS a matching input (the "Same sex only" hard filter, rules.pair_conflict). intro_sex is stored as the
+selected options joined by ", " (see split()); older single values ("Another term", "Prefer not to say") stay readable and are
+shown exactly as given. An absent answer is a staff flag, never a reason to refuse a submission.
 """
 from __future__ import annotations
 
-ANOTHER_TERM = "Another term"
-NOT_SAID = "Prefer not to say"
-SEX_OPTIONS = ("Female", "Male", ANOTHER_TERM, NOT_SAID)
+ANOTHER_TERM = "Another term"          # legacy single answer (pre 23 Nov 2026), still readable
+NOT_SAID = "Prefer not to say"         # legacy single answer (pre 23 Nov 2026), still readable
+DIFFERENT_TERM = "A different term (please specify)"
+SEX_OPTIONS = ("Female", "Male", "Non-binary", DIFFERENT_TERM)   # what the form offers now
+LEGACY_SEX_OPTIONS = (ANOTHER_TERM, NOT_SAID)
+OTHER_TERMS = (ANOTHER_TERM, DIFFERENT_TERM)   # either of these needs the person's own words in intro_sex_other
+SEX_SEP = ", "
 AGE_MIN, AGE_MAX = 0, 999   # representation bound only (three digits), not an age rule
 MAX_OTHER = 40
 KEYS = ("intro_sex", "intro_sex_other", "intro_age")
-PURPOSE = "Shared in introductions to proposed housemates; not used for matching."
+PURPOSE = "This helps me form groups that respect people’s preferences about sex and age."
 SEX_MESSAGE = "Please choose one of the options."
 OTHER_MESSAGE = f"Please say the term you use (up to {MAX_OTHER} characters)."
-AGE_MESSAGE = "Please enter the current age as a whole number of years (or leave it blank)."
+AGE_MESSAGE = "Please enter the current age as a whole number of years."
+
+
+def split(v) -> list[str]:
+    """The sex options a stored/submitted value holds, in order, without duplicates. Accepts a list (form), the ", "-joined string
+    stored in the column, or a legacy single answer. Never raises."""
+    if v is None or v == "":
+        return []
+    items = v if isinstance(v, (list, tuple)) else str(v).split(SEX_SEP.strip())
+    out: list[str] = []
+    for x in items:
+        x = str(x).strip()
+        if x and x not in out:
+            out.append(x)
+    return out
+
+
+def hard_sexes(v) -> set[str]:
+    """The Female / Male selections only: the sole values the "Same sex only" hard filter compares (Bill, 23 Nov 2026)."""
+    return {x for x in split(v) if x in ("Female", "Male")}
 
 
 def clean_age(v):
@@ -57,17 +82,24 @@ def clean(values: dict, *, existing: dict | None = None) -> tuple[dict, dict]:
     existing = existing or {}
     if "intro_sex" in values:
         v = values["intro_sex"]
-        if v is None or v == "":
+        picked = split(v)
+        if not picked:
             out["intro_sex"] = None
-        elif isinstance(v, str) and v.strip() in SEX_OPTIONS:
-            out["intro_sex"] = v.strip()
+        elif isinstance(v, (list, tuple)) or isinstance(v, str):
+            allowed = SEX_OPTIONS + LEGACY_SEX_OPTIONS
+            if any(x not in allowed for x in picked):
+                err["intro_sex"] = SEX_MESSAGE
+            elif len(picked) > 1 and any(x in LEGACY_SEX_OPTIONS for x in picked):
+                err["intro_sex"] = SEX_MESSAGE   # a legacy answer stands alone
+            else:
+                out["intro_sex"] = SEX_SEP.join(picked)
         else:
             err["intro_sex"] = SEX_MESSAGE
     # the sex the row will hold after this change: the supplied value when valid, None when supplied but invalid/blank, else the stored one
     sex_now = out["intro_sex"] if "intro_sex" in out else (None if "intro_sex" in values else existing.get("intro_sex"))
     if "intro_sex" in values or "intro_sex_other" in values:
         other = values.get("intro_sex_other", existing.get("intro_sex_other"))
-        if sex_now == ANOTHER_TERM:
+        if any(x in OTHER_TERMS for x in split(sex_now)):
             if not isinstance(other, str) or not other.strip() or len(other.strip()) > MAX_OTHER:
                 err["intro_sex_other"] = OTHER_MESSAGE
             else:
@@ -75,7 +107,7 @@ def clean(values: dict, *, existing: dict | None = None) -> tuple[dict, dict]:
         else:
             if other not in (None, "") and not isinstance(other, str):
                 err["intro_sex_other"] = OTHER_MESSAGE
-            out["intro_sex_other"] = None   # only meaningful with "Another term"; never stored otherwise
+            out["intro_sex_other"] = None   # only meaningful with a "different term" answer; never stored otherwise
     if "intro_age" in values:
         try:
             out["intro_age"] = clean_age(values["intro_age"])
@@ -101,13 +133,22 @@ def status(lead: dict, members) -> tuple[str, list[str]]:
     return ("complete" if not missing else "incomplete"), missing
 
 
+def sex_text(sex, other) -> str:
+    """The sex answer as the person gave it: each option, with a "different term" replaced by their own words."""
+    bits = []
+    for x in split(sex):
+        if x in OTHER_TERMS:
+            bits.append((other or "").strip() or ("A different term" if x == DIFFERENT_TERM else x))
+        else:
+            bits.append(x)
+    return SEX_SEP.join(bits)
+
+
 def describe(rec: dict) -> str:
-    """Plain text for receipts / staff: 'Female, 24' | 'Prefer not to say, 24' | '—' when not given. Never derived."""
+    """Plain text for receipts / staff: 'Female, 24' | 'Female, Male, 24' | '—' when not given. Never derived."""
     parts = []
-    sex = rec.get("intro_sex")
-    if sex == ANOTHER_TERM:
-        parts.append(rec.get("intro_sex_other") or ANOTHER_TERM)
-    elif sex:
+    sex = sex_text(rec.get("intro_sex"), rec.get("intro_sex_other"))
+    if sex:
         parts.append(sex)
     if rec.get("intro_age") not in (None, ""):
         parts.append(str(rec["intro_age"]))

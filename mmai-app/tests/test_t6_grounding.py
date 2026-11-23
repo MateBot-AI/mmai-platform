@@ -282,7 +282,7 @@ def test_legacy_stored_score_is_recomputed_neutrally_before_review(db, monkeypat
     assert p is not None
     apt = next(x for x in p["apartments"] if x["apartment_id"] == a["id"])
     assert apt["rule_score"] != 99.0 and apt["rule_rank"] == 1
-    assert "origin" not in json.dumps(p) and "language" not in json.dumps(p)
+    assert "origin_bonus" not in json.dumps(p)   # the pre-policy part is gone; languages / culture are soft parts again since 17 / 23 Nov 2026
     assert row(db.execute("SELECT rule_score, rank FROM group_apartments WHERE id=?", (ga["id"],)))["rule_score"] != 99.0
 
 

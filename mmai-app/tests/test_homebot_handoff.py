@@ -183,4 +183,4 @@ def test_matebot_form_words_the_handoff_banner_and_cache_tag_is_bumped():
     html = (ROOT / "client" / "index.html").read_text(encoding="utf-8")
     assert "cfg.draft.origin === 'homebot'" in js and "You have come over from HomeBot" in js
     assert "Welcome back. Your saved answers are here" in js   # ordinary resumed drafts unchanged
-    assert 'src="form.js?v=20261111f"' in html
+    assert 'src="form.js?v=20261123a"' in html

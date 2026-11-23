@@ -16,14 +16,15 @@ from .institutions import institution_list
 QUESTION_TYPES = {
     "1.1": "Contact", "1.2": "Contact", "1.3": "Contact", "1.4": "Contact", "1.5": "Contact",
     # 1.6 (date of birth) and 1.7 (sex) are no longer asked (I8, Bill 8 November 2026); 6.4 is the all-occupants adult declaration (I11(d))
-    # M9/M12: information excluded from initial-launch compatibility/selection.
-    "1.8": "Information only (not used for matching)", "1.9": "Information only (not used for matching)", "1.10": "Information only (not used for matching)",
+    # 1.8-1.10: country of birth, country now and languages are details shown to staff; languages also feed a soft score (23 Nov 2026)
+    "1.8": "Information", "1.9": "Information", "1.10": "Preference",
     "2.1": "Must-match", "2.2": "Must-match", "2.3": "Must-match", "2.4": "Must-match", "2.5": "Must-match",
     "3.1": "Must-match", "3.2": "Must-match", "3.3": "Preference", "3.4": "Must-match", "3.5": "Must-match", "3.6": "Must-match", "3.7": "Preference", "3.8": "Must-match", "3.9": "Must-match",
     "3.10": "Must-match",  # I16(f): couples within a "With friends" group, stated by the enquirer; MMAI never assumes a couple
     "4.1": "Preference", "4.2": "Preference", "4.3": "Preference", "4.4": "Preference", "4.5": "Preference", "4.6": "Preference", "4.7": "Preference",
-    # 5.1 (housemate sex preference) and 5.2 (age range) are no longer asked or used (I8, 8 November 2026)
-    "5.3": "Preference", "5.4": "Preference", "5.5": "Must-match", "5.6": "Must-match",
+    # 17 / 23 Nov 2026 (Bill): 5.1 housemate sex preference is a hard filter; 5.2 age range and 5.4 culture question are soft preferences.
+    # 5.3 (own country / region) was replaced by 5.4 on 23 Nov 2026.
+    "5.1": "Must-match", "5.2": "Preference", "5.4": "Preference", "5.5": "Must-match", "5.6": "Must-match",
     "5.7": "Preference", "5.8": "Preference", "5.9": "Preference", "5.10": "Preference", "5.11": "Preference", "5.12": "Preference", "5.13": "Contact",
     "6.1": "Contact", "6.2": "Consent", "6.3": "Consent", "6.4": "Consent", "6.6": "Consent",  # 6.5 (guardian details) is no longer on the form: staff process (I11(b), I16(c))
 }
@@ -42,6 +43,10 @@ RETIRED_FIELDS = frozenset({"dob", "sex", "sex_other", "guardian_name", "guardia
 # Legacy dob / sex / guardian fields remain retired.
 RETIRED_MEMBER_FIELDS = frozenset({"sex", "sex_other", "dob", "needs_guardian"})
 NOT_COLLECTED = ""   # sentinel stored in the legacy NOT NULL columns (dob, sex, sex_pref) for new rows: "not collected", never a value
+CULTURE_YES = "Yes — I’m interested in experiencing new cultures and languages"
+CULTURE_OPTIONS = ("I prefer to live with people from my own country or region", "I’m happy to live with anyone", CULTURE_YES)
+CULTURE_LISTS = ("culture_languages", "culture_regions", "culture_countries")
+CULTURE_MAX = 3   # at most three choices in all, across the three lists (Bill, 23 Nov 2026)
 ADULTS_FIELD = "adults_confirm"   # 6.4 / I11(d): the enquirer declares that EVERY occupant will be 18 or older on the move-in date
 ADULTS_MESSAGE = "Please confirm that everyone in your group, including you, will be 18 or older on the move-in date."
 
@@ -52,7 +57,8 @@ ANSWER_KEYS = frozenset({
     "party", "party_size", "party_members", "couples_answer", "couples", "doing", "school", "school_other", "course", "level", "course_start", "course_end",
     "work", "areas", "travel", "travel_modes", "features", "features_top", "smoke", "smoke_ok", "routine", "tidy", "social", "guests",
     "diet", "else_text", "intro", "source", "consent_store", "consent_share", "consent_marketing", ADULTS_FIELD,
-    "sex_pref", "age_pref", "own_region", "avoid_answer", "avoid_regions", "avoid_countries",
+    "sex_pref", "age_pref", "culture_interest", "culture_languages", "culture_regions", "culture_countries",
+    "own_region", "avoid_answer", "avoid_regions", "avoid_countries",   # own_region / avoid_*: retired 23 Nov 2026, still accepted from old cached clients and never read
     *ip.KEYS,   # introduction-only sex / current age (optional) — still display data, separate from sex_pref
     "campaign", "staff_member", "staff_notes", "channel", "enq_date", "is_test", "referrer",
 })
@@ -333,21 +339,33 @@ def validate(a: dict, today: date | None = None, party_max: int | None = None) -
         err["school"] = "Please choose your institution."
     if a.get("school") in ("Other", "English language school (enter name)") and not (a.get("school_other") or "").strip():
         err["school_other"] = "Please enter the name."
-    # 17 Nov 2026: housemate sex preference (Must Match), age range / own-region / avoid (Preference)
+    # 17 / 23 Nov 2026: housemate sex preference (Must Match), age range and culture interest (Preference)
     SEX_PREF_OPTIONS = ("Same sex only", "Mixed is fine", "No preference")
-    OWN_REGION_OPTIONS = ("Prefer to", "Don’t mind", "Prefer a mix")
     AGE_BANDS = ("18–21", "22–25", "26–30", "31+", "No preference")
     sp = (a.get("sex_pref") or "").strip()
     if sp not in SEX_PREF_OPTIONS:
         err["sex_pref"] = "Please choose a housemate sex preference."
-    orp = (a.get("own_region") or "").strip()
-    if orp not in OWN_REGION_OPTIONS:
-        err["own_region"] = "Please choose whether you would like to live with people from your own country or region."
-    aa = (a.get("avoid_answer") or "").strip()
-    if aa not in ("No, I’m happy to live with anyone", "I prefer not to live with people from some countries or regions"):
-        # accept common ASCII apostrophe variants
-        if aa.replace("'", "’") not in ("No, I’m happy to live with anyone", "I prefer not to live with people from some countries or regions"):
-            err["avoid_answer"] = "Please answer the countries/regions preference question."
+    ci = (a.get("culture_interest") or "").strip()
+    if ci not in CULTURE_OPTIONS:
+        err["culture_interest"] = "Please answer the culture and language question."
+    else:
+        a["culture_interest"] = ci
+    picked = 0
+    for k in CULTURE_LISTS:
+        v = a.get(k)
+        if v in (None, "", []):
+            a[k] = []
+        elif not isinstance(v, list) or not all(isinstance(x, str) and x.strip() and len(x) <= 80 for x in v):
+            err[k] = "Please choose from the list."
+        else:
+            a[k] = list(dict.fromkeys(x.strip() for x in v))
+            picked += len(a[k])
+    if ci != CULTURE_YES:
+        for k in CULTURE_LISTS:
+            a[k] = []   # the lists only apply to the "Yes" answer
+        picked = 0
+    if picked > CULTURE_MAX and not any(k in err for k in CULTURE_LISTS):
+        err["culture_interest"] = f"Please choose up to {CULTURE_MAX} in total across languages, regions and countries."
     age = a.get("age_pref")
     if age not in (None, "", []):
         if not isinstance(age, list) or not all(isinstance(x, str) for x in age):
@@ -477,6 +495,9 @@ def create_enquiry(c, a: dict, channel: str, staff: str | None = None, is_test: 
         raise ValidationError(errors)
     # 3.11 / 3.12: store the cleaned lists (catalogue order, no duplicates), not the raw submission (validate() works on a copy)
     a["features"], a["features_top"] = feat.clean_wanted(a.get("features"), top=a.get("features_top"))
+    # 5.4 (23 Nov 2026): the three culture lists only apply to the "Yes" answer; stored without blanks or duplicates
+    for k in CULTURE_LISTS:
+        a[k] = list(dict.fromkeys(x.strip() for x in (a.get(k) or []))) if a.get("culture_interest") == CULTURE_YES else []
     if channel not in CHANNELS:
         raise ValidationError({"channel": "Invalid channel"})
     mi, mo = _d(a["move_in"]), _d(a["move_out"])
@@ -503,9 +524,10 @@ def create_enquiry(c, a: dict, channel: str, staff: str | None = None, is_test: 
         course_start=a.get("course_start"), course_end=a.get("course_end"), work=a.get("work"), areas=j(a.get("areas") or []), travel=a.get("travel"),
         travel_modes=j(travel_modes_value(a.get("travel_modes"))) if travel_modes_value(a.get("travel_modes")) else None,   # NULL = no answer
         sex_pref=a.get("sex_pref") or None, age_pref=j(a.get("age_pref") or []) if a.get("age_pref") is not None else None,
-        own_region=a.get("own_region") or None, avoid_answer=a.get("avoid_answer") or None,
-        avoid_regions=j(a.get("avoid_regions") or []) if a.get("avoid_regions") is not None else None,
-        avoid_countries=j(a.get("avoid_countries") or []) if a.get("avoid_countries") is not None else None,
+        # own_region and avoid_* were retired on 23 Nov 2026 (replaced by the culture question); avoid_answer is a legacy NOT NULL column
+        own_region=None, avoid_answer=NOT_COLLECTED, avoid_regions=None, avoid_countries=None,
+        culture_interest=a.get("culture_interest"), culture_languages=j(a.get("culture_languages") or []),
+        culture_regions=j(a.get("culture_regions") or []), culture_countries=j(a.get("culture_countries") or []),
         features=j(a.get("features") or []), features_top=j(a.get("features_top") or []), smoke=a["smoke"], smoke_ok=a["smoke_ok"],
         routine=a.get("routine"), tidy=a.get("tidy"), social=a.get("social"), guests=a.get("guests"), diet=a.get("diet"), else_text=a.get("else_text"), intro=a.get("intro"),
         source=a["source"], consent_store=1, consent_share=1, consent_marketing=1 if a.get("consent_marketing") is True else 0,   # validated True above; optional marketing only on JSON true
@@ -549,7 +571,7 @@ EDITABLE = {"status", "staff_notes", "campaign", "staff_member", "first_name", "
             "bunk_ok", "room_first", "doing", "school", "school_other", "course", "level", "work", "travel", "travel_modes", "smoke", "smoke_ok",
             "routine", "tidy", "social", "guests", "diet", "else_text", "intro", "source", "languages", "apt_sizes", "rooms", "areas", "features", "features_top",
             "consent_share", "consent_marketing", "city", "couples_answer", "couples_json", "adults_confirmed", *ip.KEYS}
-JSON_FIELDS = {"languages", "apt_sizes", "rooms", "areas", "features", "features_top", "couples_json"}
+JSON_FIELDS = {"languages", "apt_sizes", "rooms", "areas", "features", "features_top", "couples_json", "age_pref", "culture_languages", "culture_regions", "culture_countries"}
 RETIRED_EDIT_MESSAGE = ("This is no longer collected or used (sex, date of birth, age and sex preferences, and the own-country/region and "
                         "avoid-country/region preferences were removed on 8 November 2026).")
 
@@ -754,7 +776,7 @@ def get_enquiry(c, eid: int) -> dict:
         e.pop(k, None)
     e["party_members"] = rows(c.execute("""SELECT id, name, email, birth_country_raw, birth_country, birth_country_confirmed, intro_sex, intro_sex_other, intro_age
                                           FROM party_members WHERE enquiry_id=? ORDER BY id""", (eid,)))
-    # Introduction-only details: shown to staff and used in introductions only. Missing = a flag for staff, never inferred.
+    # Sex and current age: shown to staff and used in introductions; sex also feeds the Same-sex-only filter. Missing = a flag for staff, never inferred.
     e["intro_profile_status"], e["intro_missing"] = ip.status(e, e["party_members"])
     e["adults_confirmed"] = bool(e.get("adults_confirmed"))   # I11(d): every occupant 18+ at move-in, declared (enquirer or staff) — never inferred
     e["adults_status"] = adults_status(e, e["party_members"])   # confirmed | renew | missing (see adults_status)

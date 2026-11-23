@@ -24,7 +24,7 @@ MateBot serves at `/`; the combined chooser and HomeBot serve at `/homebot/`. Se
 
 Public submission receipts and internal attention alerts use separate persisted outboxes. Off/held, dry-run, attempted and received are different outcomes. A phone-copy preview remains staff-led and does not establish automatic email delivery.
 
-Initial-launch matching excludes protected-trait selection and ranking. Sex/current age are optional introduction information, never compatibility inputs. Missing features or unmeasured travel are not confirmed facts; essential needs and unresolved journeys remain visible for staff review.
+Matching uses only the factors Bill has approved (Rule Register M10–M13, latest 23 November 2026): the housemate sex preference "Same sex only" is a hard filter on Female/Male, and age range, culture/language interest and languages are soft preferences that only raise a score. Sex (multi-select) and current age are asked of everyone. Missing features or unmeasured travel are not confirmed facts; essential needs and unresolved journeys remain visible for staff review.
 
 ## Verification and operations
 

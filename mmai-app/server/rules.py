@@ -26,7 +26,7 @@ MONTHLY_FACTOR = 4.334   # A8
 MIN_GROUP, MAX_GROUP = 2, 7  # P3
 # T6 evidence: the rule set a review or brief was made under. Bump whenever a hard rule, a scoring component or the assessment
 # packet changes; every stored assessment carries it and a group is only "ready" while it matches (ai_queue.is_ready).
-RULE_VERSION = "2026-11-10.t3d.room-choice-exact.canonical-order"   # 10 Nov: 3.7 first-choice hit = exact arrangement label (prefix bug), candidate members in canonical id order before allocation (same member set -> same allocation/score); weights unchanged. Earlier: A6(b) literal: Jan/Feb start + July end = 6-month rate in any year (same-year code restriction removed)
+RULE_VERSION = "2026-11-23.sex-culture-age-prefs"   # 10 Nov: 3.7 first-choice hit = exact arrangement label (prefix bug), candidate members in canonical id order before allocation (same member set -> same allocation/score); weights unchanged. Earlier: A6(b) literal: Jan/Feb start + July end = 6-month rate in any year (same-year code restriction removed)
 DEFAULT_MIN_LEASE_MONTHS = 2  # A9(a): the minimum lease is generally 2 months; A15(d): 2 months on every apartment today; staff can change it per apartment (A9(b))
 # Budget (A16, 8 Nov 2026): the ONLY budget test is the whole household's - actual whole-apartment weekly rent including the A5
 # extra-bed charge against the SUM of every member's stated weekly maximum, +10% (studio/1BR/2-bedroom) or +20% (3-bedroom), via
@@ -334,6 +334,18 @@ class Person:
     # the identity the allocation is computed for. Stamped onto the occupant only if that same uid is still active and bound
     # to the row at the guarded write; a later or replacement identity is never substituted. None when not resolvable.
     ident_uid: Optional[str] = None
+    # 23 Nov 2026 matching inputs (Bill: sex preference hard filter; age / culture soft preferences)
+    own_sexes: tuple = ()                  # selected sex options (multi-select, from intro_sex); only Female / Male are ever compared
+    sex_pref: Optional[str] = None         # "Same sex only" | "Mixed is fine" | "No preference"
+    age_pref: tuple = ()                   # preferred housemate age bands (18–21, 22–25, 26–30, 31+, No preference)
+    own_age: Optional[int] = None          # current age as stated (intro_age)
+    languages: tuple = ()
+    birth_region: Optional[str] = None     # derived from birth_country via countries.region_of
+    live_country: Optional[str] = None
+    culture_interest: Optional[str] = None
+    culture_languages: tuple = ()
+    culture_regions: tuple = ()
+    culture_countries: tuple = ()
 
     def __post_init__(self):
         if self.couple_id is None and self.is_couple_member:
@@ -418,9 +430,15 @@ class Apartment:
 # ---------------------------------------------------------------------------
 def pair_conflict(a: Person, b: Person) -> Optional[str]:
     """Return a reason if `a` cannot live with `b` (checked from a's point of view).
-    Launch scope (Bill, 8 November 2026): the only pairwise hard rule is smoking (5.5/5.6). Sex (I8) and every origin-based
-    rule (5.3/5.4, M8, M10, M11, M12: country or region of birth, nationality defaults) are NOT matching factors; a person's
-    birth_country is carried for identity (GP2 introductions, history) only and is never read here."""
+    Hard pairwise rules: smoking (5.5/5.6) and the housemate sex preference "Same sex only" (Bill, 17 and 23 November 2026).
+    Same sex only compares Female / Male only; with several selections one shared Female / Male option is enough; a person
+    with no Female / Male selection (Non-binary, a different term, or no answer) never triggers it. Origin, language, culture
+    and age are scored (matching.preference_score), never filtered here."""
+    if a.sex_pref == "Same sex only":
+        mine = {x for x in a.own_sexes if x in ("Female", "Male")}
+        theirs = {x for x in b.own_sexes if x in ("Female", "Male")}
+        if mine and theirs and not (mine & theirs):
+            return f"{a.name} prefers to live with the same sex only"
     # 5.5 / 5.6 smoking (B3: outside only is the only smoking allowed)
     if b.smokes and not a.smoke_ok:
         return f"{a.name} will not live with someone who smokes or vapes outside (5.6)"

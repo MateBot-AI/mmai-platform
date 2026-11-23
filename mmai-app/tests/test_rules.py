@@ -150,7 +150,7 @@ def test_apartment_without_date_never_matches():
 # ---------------- I11(d) adult declaration (no age arithmetic exists: I8, 8 Nov 2026) ----------------
 def test_no_age_arithmetic_or_sex_fields_remain():
     assert not hasattr(rules, "age_on") and not hasattr(rules, "is_adult_on")
-    assert not {"sex", "dob", "sex_pref"} & set(rules.Person.__dataclass_fields__)
+    assert not {"sex", "dob"} & set(rules.Person.__dataclass_fields__)   # sex_pref / own_sexes are matching inputs again (17 / 23 Nov 2026)
     assert "adults_confirmed_move_in" in rules.Unit.__dataclass_fields__
     import inspect
     assert "is_adult_check" not in inspect.signature(rules.check_group).parameters   # the adult check cannot be bypassed
@@ -246,7 +246,7 @@ def test_per_person_budget_ceiling_withdrawn_a16():
     """A16 (8 Nov 2026): no per-person ceiling anywhere; the former I14(d) per-share +10% helpers are gone from the engine."""
     for name in ("within_budget", "budget_ceiling", "BUDGET_TOLERANCE"):
         assert not hasattr(rules, name), name
-    assert rules.RULE_VERSION == "2026-11-10.t3d.room-choice-exact.canonical-order"   # 10 Nov 2026: scoring component fix (3.7 exact) + canonical member order; every earlier assessment re-reviews
+    assert rules.RULE_VERSION == "2026-11-23.sex-culture-age-prefs"   # 23 Nov 2026: Same-sex-only hard filter, culture / age / language soft preferences; every earlier assessment re-reviews
 
 
 def test_a16_household_sum_boundary_two_bedroom_10pct():

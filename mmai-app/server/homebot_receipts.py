@@ -94,55 +94,56 @@ def snapshot(a: dict) -> dict:
             "headcount_now": a["headcount_now"], "headcount_target": a["headcount_target"], "sections": sections}
 
 
-def _answers_blocks(saved: dict) -> tuple[str, str]:
-    """Sectioned answers only — caller supplies 'Here is a copy…' / 'Answers:' headings."""
-    text = ""
-    body = ""
-    for title, items in saved["sections"]:
-        text += "\n" + title + "\n" + "\n".join(f"{q}: {v}" for q, v in items) + "\n"
-        body += f"<h2>{html.escape(title)}</h2><dl>"
-        body += "".join(f"<dt>{html.escape(q)}</dt><dd>{html.escape(v)}</dd>" for q, v in items) + "</dl>"
-    return text, body
+def _sections(saved: dict) -> list:
+    """The saved snapshot's sections as (title, [(question, answer), ...]) — the shape MateBot's layout helpers take."""
+    return [(title, [(q, v) for q, v in items]) for title, items in saved["sections"]]
+
+
+def _html_doc(subject: str, body: str) -> str:
+    # the same wrapper as the MateBot emails (receipts.render_receipt)
+    h = html.escape
+    return (f"<!doctype html><html><head><meta charset=\"utf-8\"><title>{h(subject)}</title></head>"
+            f"<body style=\"font-family:Arial,Helvetica,sans-serif;font-size:15px;line-height:1.45;color:#222;max-width:640px;margin:0 auto;padding:16px\">{body}</body></html>")
 
 
 def render(saved: dict, enquiry_id: int, is_test: bool) -> dict:
+    """Customer email: laid out like the MateBot one (greeting, what happens next, reference, headed answer tables,
+    locked-in line, signature and disclaimer)."""
+    h = html.escape
     first = saved["first_name"] or "there"
-    paragraphs = [f"Hi {first},"] + ([receipts.TEST_NOTE] if is_test else [])
-    paragraphs += [p for p in receipts.acknowledgement_intro("homebot") if p]
-    paragraphs.append(f"Reference: {homebot.reference(enquiry_id)}")
-    text = "\n\n".join(paragraphs)
-    body = "".join(f"<p>{html.escape(p)}</p>" for p in paragraphs)
-    ans_text, ans_html = _answers_blocks(saved)
-    text = (text + "\n" + ans_text + "\n" + receipts.LOCKED_IN_LINE + "\n\n"
-            + "\n".join(receipts.signature_text_lines()) + "\n")
-    body = (body + ans_html
-            + f"<p>{html.escape(receipts.LOCKED_IN_LINE)}</p>"
-            + receipts.signature_html())
-    return {"subject": (receipts.TEST_SUBJECT_PREFIX if is_test else "") + SUBJECT,
-            "text": text, "html": f"<!doctype html><html><body>{body}</body></html>"}
+    sections = _sections(saved)
+    ref = homebot.reference(enquiry_id)
+    subject = (receipts.TEST_SUBJECT_PREFIX if is_test else "") + SUBJECT
+    intro = [p for p in receipts.acknowledgement_intro("homebot") if p]
+    lines = [f"Hi {first},", ""] + ([receipts.TEST_NOTE, ""] if is_test else []) + receipts.acknowledgement_intro("homebot") + ["", f"Reference: {ref}"]
+    lines += receipts._sections_text(sections) + ["", receipts.LOCKED_IN_LINE, ""] + receipts.signature_text_lines()
+    text = "\n".join(lines).rstrip() + "\n"
+    parts = [f"<p>Hi {h(first)},</p>"] + ([f"<p><strong>{h(receipts.TEST_NOTE)}</strong></p>"] if is_test else [])
+    parts += [f"<p>{h(p)}</p>" for p in intro]
+    parts.append(f"<p style=\"margin-top:0\">Reference: {h(ref)}</p>")
+    parts += receipts._sections_html(sections)
+    parts.append(f"<p>{h(receipts.LOCKED_IN_LINE)}</p>")
+    parts.append(receipts.signature_html())
+    return {"subject": subject, "text": text, "html": _html_doc(subject, "\n".join(parts))}
 
 
 def render_reservations(saved: dict, enquiry_id: int, is_test: bool) -> dict:
+    """Internal new-enquiry notice for reservations@, laid out like MateBot's (receipts.render_reservations_notification)."""
+    h = html.escape
     name = (saved.get("full_name") or f"{saved.get('first_name', '')} {saved.get('last_name', '')}".strip() or "Unknown")
     email = saved.get("email") or "Not provided"
     phone = saved.get("phone") or "Not provided"
+    ref = homebot.reference(enquiry_id)
     subject = f"HomeBot enquiry from {name}"
     if is_test:
         subject = receipts.TEST_SUBJECT_PREFIX + subject
-    paragraphs = [
-        "New HomeBot enquiry received.",
-        f"Name: {name}",
-        f"Email: {email}",
-        f"Phone: {phone}",
-        f"Reference: {homebot.reference(enquiry_id)}",
-        "Answers:",
-    ]
-    text = "\n\n".join(paragraphs)
-    body = "".join(f"<p>{html.escape(p)}</p>" for p in paragraphs[:-1]) + "<h2>Answers</h2>"
-    ans_text, ans_html = _answers_blocks(saved)
-    text = text + "\n" + ans_text
-    body = body + ans_html
-    return {"subject": subject, "text": text, "html": f"<!doctype html><html><body>{body}</body></html>"}
+    sections = _sections(saved)
+    lines = ["New HomeBot enquiry received.", "", f"Name: {name}", f"Email: {email}", f"Phone: {phone}", f"Reference: {ref}", "", "Answers:"]
+    text = "\n".join(lines + receipts._sections_text(sections)).rstrip() + "\n"
+    parts = ["<p>New HomeBot enquiry received.</p>",
+             f"<p>Name: {h(name)}<br>Email: {h(email)}<br>Phone: {h(phone)}<br>Reference: {h(ref)}</p>",
+             "<h2 style=\"font-size:1.1em;margin:1.4em 0 .2em\">Answers</h2>"] + receipts._sections_html(sections)
+    return {"subject": subject, "text": text, "html": _html_doc(subject, "".join(parts))}
 
 
 def _insert_kinds(c, enquiry_id: int, to_customer, is_test: bool, saved: dict, now: str) -> None:

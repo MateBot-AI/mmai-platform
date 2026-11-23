@@ -69,14 +69,26 @@ def unit_from_row(e: dict, members: list[dict]) -> rules.Unit:
                 couple_of[ref] = str(e["id"]) if kind == "couple" else f"{e['id']}c{ci}"
     if couple_of:
         arrangements.add("Couple sharing one bed")  # a stated couple shares one bed, whatever else was ticked in 3.5
+    from .countries import region_of
+    from . import intro_profile as _ip
+    # 23 Nov 2026 (Bill): the housemate sex preference is a hard filter and the age / culture / language answers are soft
+    # preferences. The retired own_region / avoid_* answers are never read. The legacy dob / sex columns are never read either:
+    # a person's own sex comes only from the fresh intro_sex answer.
+    culture_interest = (e.get("culture_interest") or "").strip() or None
     common = dict(
         unit_id=str(e["id"]), birth_country=None, budget_max=e["budget_max"], arrangements=arrangements,
         bunk_ok=bool(e["bunk_ok"]), smokes=(e["smoke"] != "No"), smoke_ok=(e["smoke_ok"] == "Yes"),
-    )   # launch scope (8 Nov 2026): own_region / avoid_answer / avoid_countries / avoid_regions are never read (retired, like sex/dob)
-    # I8: no sex or date of birth for anyone; any legacy value still in the row is deliberately not read.
+        sex_pref=(e.get("sex_pref") or "").strip() or None, age_pref=tuple(_lst(e.get("age_pref"))),
+        languages=tuple(_lst(e.get("languages"))), live_country=e.get("live_country"),
+        culture_interest=culture_interest, culture_languages=tuple(_lst(e.get("culture_languages"))),
+        culture_regions=tuple(_lst(e.get("culture_regions"))), culture_countries=tuple(_lst(e.get("culture_countries"))),
+    )
     lead = rules.Person(id=f"{e['id']}", name=e["first_name"], is_lead=True, couple_id=couple_of.get("lead"),
                         ident_name=f"{e.get('first_name') or ''} {e.get('last_name') or ''}", ident_email=e.get("email"), **common)
     lead.birth_country = e.get("birth_country")
+    lead.own_sexes = tuple(_ip.split(e.get("intro_sex")))
+    lead.own_age = e.get("intro_age") if isinstance(e.get("intro_age"), int) else None
+    lead.birth_region = region_of(lead.birth_country) if lead.birth_country else None
     people = [lead]
     size = int(e.get("party_size") or 1) if kind != "single" else 1
     if kind == "couple":
@@ -92,6 +104,10 @@ def unit_from_row(e: dict, members: list[dict]) -> rules.Unit:
         p = rules.Person(id=f"{e['id']}m{i+1}", name=m["name"], is_lead=False, couple_id=couple_of.get(f"m{i+1}"),
                          ident_name=m.get("name"), ident_email=m.get("email"), **common)
         p.birth_country = m.get("birth_country") or (None if m.get("birth_country_raw") else e.get("birth_country"))
+        p.own_sexes = tuple(_ip.split(m.get("intro_sex")))
+        p.own_age = m.get("intro_age") if isinstance(m.get("intro_age"), int) else None
+        p.birth_region = region_of(p.birth_country) if p.birth_country else None
+        # a party member shares the enquirer's housemate preferences (asked once for the whole enquiry)
         people.append(p)
     flex_out = e["move_out_flex"]
     # I11(d): the declared move-in date carries only while the declaration is valid for the current party and date (see
@@ -160,6 +176,73 @@ def first_choice_arrangement(room_first) -> str | None:
     return None
 
 
+NEUTRAL = 0.7   # no stated preference, nothing to compare, or no overlap: never a penalty
+
+
+def _age_band(age):
+    if age is None or age < 18:
+        return None
+    return "18–21" if age <= 21 else "22–25" if age <= 25 else "26–30" if age <= 30 else "31+"
+
+
+def _culture_score(people: list) -> float:
+    """Each person's culture question (5.4) against the others. "Own country or region": same country 1.0, same region 0.85,
+    otherwise 0.5; "Yes, new cultures": 1.0 when someone else speaks a chosen language or comes from a chosen region or country,
+    else neutral (no penalty); "happy to live with anyone" or no answer: neutral."""
+    scores = []
+    for p in people:
+        others = [o for o in people if o.id != p.id]
+        ci = (p.culture_interest or "")
+        if not others or not ci:
+            scores.append(NEUTRAL)
+        elif ci.startswith("I prefer to live with people from my own"):
+            vals = []
+            for o in others:
+                if p.birth_country and o.birth_country and p.birth_country == o.birth_country:
+                    vals.append(1.0)
+                elif p.birth_region and o.birth_region and p.birth_region == o.birth_region:
+                    vals.append(0.85)
+                else:
+                    vals.append(0.5)
+            scores.append(sum(vals) / len(vals))
+        elif ci.startswith("Yes"):
+            wl, wr, wc = set(p.culture_languages), set(p.culture_regions), set(p.culture_countries)
+            if not (wl or wr or wc):
+                scores.append(NEUTRAL)
+                continue
+            vals = []
+            for o in others:
+                hit = (wl & set(o.languages)) or (o.birth_region in wr) or (o.birth_country in wc) or (o.live_country in wc)
+                vals.append(1.0 if hit else NEUTRAL)
+            scores.append(sum(vals) / len(vals))
+        else:
+            scores.append(NEUTRAL)
+    return sum(scores) / len(scores) if scores else NEUTRAL
+
+
+def _language_score(people: list) -> float:
+    vals = []
+    for i, a in enumerate(people):
+        for b in people[i + 1:]:
+            la, lb = set(a.languages or ()), set(b.languages or ())
+            vals.append(0.6 if not la or not lb else 0.5 + 0.5 * len(la & lb) / max(len(la | lb), 1))
+    return sum(vals) / len(vals) if vals else NEUTRAL
+
+
+def _age_score(people: list) -> float:
+    """The preferred housemate age bands (5.2) against the others' current age (intro_age): inside a chosen band 1.0, otherwise
+    neutral. A preference is never a filter and a miss is not a penalty."""
+    scores = []
+    for p in people:
+        bands = set(p.age_pref or ())
+        others = [o for o in people if o.id != p.id and o.own_age is not None]
+        if not bands or "No preference" in bands or not others:
+            scores.append(NEUTRAL)
+            continue
+        scores.append(sum(1.0 if _age_band(o.own_age) in bands else NEUTRAL for o in others) / len(others))
+    return sum(scores) / len(scores) if scores else NEUTRAL
+
+
 def preference_score(apt: rules.Apartment, units: list[rules.Unit], check: rules.GroupCheck) -> tuple[float, dict]:
     leads = [u.extra for u in units]
     n_people = sum(u.size for u in units)
@@ -194,9 +277,7 @@ def preference_score(apt: rules.Apartment, units: list[rules.Unit], check: rules
                     want = first_choice_arrangement(e["room_first"])
                     hits.append(1.0 if want is not None and want in (o.get("arrangement") or []) else 0.4)
     parts["room_choice"] = sum(hits) / len(hits) if hits else 0.7
-    # pairwise practical household habits only. Launch scope (Bill, 8 November 2026): no age or sex factor (I8), no country /
-    # region / own-country preference (5.3, M12) and no shared-language factor (1.10, a proxy for origin). The former
-    # "country" (1.5) and "languages" (1.0) weights are simply gone; the remaining weights are unchanged, not re-tuned.
+    # pairwise practical household habits, then the 23 Nov 2026 soft preferences below (culture, languages, age)
     pair_scores = {"routine": [], "tidy": [], "social": [], "guests": [], "diet": []}
     for i, a in enumerate(leads):
         for b in leads[i + 1:]:
@@ -206,8 +287,14 @@ def preference_score(apt: rules.Apartment, units: list[rules.Unit], check: rules
             pair_scores["diet"].append(1.0 if da == db_ or "None" in (da, db_) else 0.7)
     for k, v in pair_scores.items():
         parts[k] = sum(v) / len(v) if v else 0.7
+    # --- 23 Nov 2026 (Bill) soft preferences: sex is hard-filtered in pair_conflict; these only RAISE a score, they never block ---
+    people = [p for u in units for p in u.people]
+    parts["culture"] = _culture_score(people)
+    parts["languages"] = _language_score(people)
+    parts["age"] = _age_score(people)
     weights = {"areas": 2.0, "dates": 1.5, "vacancy": 1.5, "group_size": 1.0, "room_choice": 1.0,
-               "routine": 1.0, "tidy": 1.2, "social": 1.2, "guests": 1.0, "diet": 0.5}
+               "routine": 1.0, "tidy": 1.2, "social": 1.2, "guests": 1.0, "diet": 0.5,
+               "culture": 1.5, "languages": 1.0, "age": 0.5}
     total = sum(parts[k] * w for k, w in weights.items()) / sum(weights.values())
     return round(total * 100, 1), {k: round(v, 2) for k, v in parts.items()}
 
@@ -714,7 +801,7 @@ def _raw_preferences(e: dict) -> dict:
             "bunk_ok": yes_no(e.get("bunk_ok")), "mate_max": integer(e.get("mate_max")), "smoke": text(e.get("smoke"), "smoke"), "smoke_ok": text(e.get("smoke_ok"), "smoke_ok")}
 AI_PACKET_EXCLUDED = frozenset({"first_name", "last_name", "name", "email", "phone", "birth_country", "birth_country_raw", "languages", "own_region",
                                 "avoid_answer", "avoid_countries", "avoid_regions", "intro", "else_text", "mate_ideal", "sex", "dob", "age_pref", "sex_pref",
-                                "intro_sex", "intro_age", "work", "notes_packet_json", "notes_residual", "notes_input_key"})   # T4c: raw notes and staff-only markers never travel; only the validated projection does   # Bill, 8 Nov 2026: sex/age restored for INTRODUCTIONS only; never in any assessment path
+                                "intro_sex", "intro_age", "culture_interest", "culture_languages", "culture_regions", "culture_countries", "work", "notes_packet_json", "notes_residual", "notes_input_key"})   # T4c: raw notes and staff-only markers never travel; only the validated projection does   # Bill, 8 Nov 2026: sex/age restored for INTRODUCTIONS only; never in any assessment path
 
 
 def person_refs(units: list[rules.Unit]) -> dict[str, str]:

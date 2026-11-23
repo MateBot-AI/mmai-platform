@@ -25,8 +25,7 @@ def good_answers(**over):
              city="Melbourne", move_in="2027-02-01", move_in_flex="± 1 week", move_out="2027-07-10", move_out_flex="Exact date",
              budget_option="2B2B-single", apt_sizes=["2 bedrooms"], mate_ideal="1", mate_max="3", rooms=["Own room"], bunk_ok="No", room_first="Own room",
              party="Alone", doing="Studying", school="RMIT University – City campus",
-             sex_pref="No preference", own_region="Don’t mind",
-             avoid_answer="No, I’m happy to live with anyone",
+             sex_pref="No preference", culture_interest="I’m happy to live with anyone",
              smoke="No", smoke_ok="Yes", source="Google", consent_store=True, consent_share=True, adults_confirm=True)   # I8 / I11(d): no enquirer sex/DOB; matching prefs restored 17 Nov
     a.update(over)
     if a.get("party") == "With friends" and "couples_answer" not in over and "couples" not in over:
@@ -150,7 +149,7 @@ def test_create_enquiry_stores_party_member_details(db):
     u = matching.unit_from_row(rows(db.execute("SELECT * FROM enquiries WHERE id=?", (e["id"],)))[0],
                                rows(db.execute("SELECT name, email, birth_country, birth_country_raw FROM party_members WHERE enquiry_id=? ORDER BY id", (e["id"],))))
     assert [p.name for p in u.people] == ["Test", "A Friend", "B"] and u.people[1].smoke_ok == u.people[0].smoke_ok
-    assert not any(hasattr(p, k) for p in u.people for k in ("sex", "dob", "sex_pref"))
+    assert not any(hasattr(p, k) for p in u.people for k in ("sex", "dob"))   # sex_pref is a Person field again since 17 Nov 2026
     assert u.adults_confirmed_move_in == date(2027, 2, 1)   # the declaration made on the form, for the stated move-in
 
 

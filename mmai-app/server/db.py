@@ -1715,6 +1715,12 @@ MIGRATIONS = [
     ("party_members", "intro_sex", "TEXT"),
     ("party_members", "intro_sex_other", "TEXT"),
     ("party_members", "intro_age", "INTEGER"),
+    # 23 Nov 2026 (Bill): the culture / language-interest question replaces "countries to avoid" (5.4). culture_interest is the one
+    # required answer; the three lists are optional JSON lists (at most three choices in all). Older rows keep these NULL (no backfill).
+    ("enquiries", "culture_interest", "TEXT"),
+    ("enquiries", "culture_languages", "TEXT"),
+    ("enquiries", "culture_regions", "TEXT"),
+    ("enquiries", "culture_countries", "TEXT"),
     # 8 Nov 2026 (T5/T6 history): immutable ref map captured by the writer BEFORE each AI call - JSON {"U1": {"enquiry_id": 12,
     # "party_member_id": null}, "U1-m1": {...}} (metadata only, never in a prompt). History display names people from THIS map, never
     # from the group's current members; T5 deletion finds a person's earlier rounds through it. NULL on legacy rows = "unavailable".

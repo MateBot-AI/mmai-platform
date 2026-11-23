@@ -217,7 +217,7 @@ def _party_members(a: dict) -> list[tuple[str, str]]:
         if m.get("birth_country_raw"):   # I8: legacy sex / date of birth are never shown, even for a pre-8 November 2026 record that stored them
             bits.append(f"country of birth {m['birth_country_raw']}")
         if ip.given(m) or m.get("intro_sex") or m.get("intro_age") not in (None, ""):   # introduction-only details, exactly as this person gave them
-            bits.append(f"for introductions only: {ip.describe(m)}")
+            bits.append(f"sex and age: {ip.describe(m)}")
         out.append((f"Person {i}: {m.get('name') or 'Not provided'}", "; ".join(bits) or "Not provided"))
     return out
 
@@ -230,8 +230,8 @@ SECTIONS: list[tuple[str, list[tuple[str, str, str]]]] = [
         ("phone", "Mobile number", "phone"), ("contact_method", "Best way to contact you", "text"),
         ("birth_country_raw", "Country of birth", "text"), ("live_country_raw", "Country you currently live in", "text"),
         ("languages", "Languages you speak", "languages"),
-        ("intro_sex", "Sex (shared in introductions to proposed housemates; not used for matching)", "intro_sex"),
-        ("intro_age", "Current age (shared in introductions to proposed housemates; not used for matching)", "text"),
+        ("intro_sex", "Sex", "intro_sex"),
+        ("intro_age", "Current age", "text"),
     ]),
     ("Your stay", [
         ("city", "City", "text"), ("move_in", "Preferred move-in date", "date"), ("move_in_flex", "How flexible is your move-in date?", "text"),
@@ -257,7 +257,11 @@ SECTIONS: list[tuple[str, list[tuple[str, str, str]]]] = [
         ("work", "Where will you work?", "text"), ("areas", "Preferred areas", "list"),
         ("travel_modes", "How would you get to campus or work?", "list"), ("travel", "Maximum travel time to campus or work", "text"),
     ]),
-    ("Ideal housemates", [   # 8 Nov 2026: the own-country/region and avoid-country/region questions are no longer asked or shown, even for older records
+    ("Ideal housemates", [   # 23 Nov 2026: housemate sex preference, age range and the culture question are shown when answered; the old own-country/region and avoid questions never are
+        ("sex_pref", "Housemate sex preference", "text"), ("age_pref", "Preferred housemate age range", "list"),
+        ("culture_interest", "While you’re in Melbourne, are you interested in living with people from particular cultures or language backgrounds?", "text"),
+        ("culture_languages", "Languages I’m interested in", "list"), ("culture_regions", "Regions I’m interested in", "list"),
+        ("culture_countries", "Countries I’m interested in", "list"),
         ("smoke", "Do you smoke or vape?", "text"), ("smoke_ok", "Are you OK living with someone who smokes or vapes outside?", "text"),
         ("routine", "Your daily routine", "text"), ("tidy", "How tidy are you?", "text"), ("social", "Social style at home", "text"),
         ("guests", "Guests and parties", "text"), ("diet", "Diet or kitchen needs", "text"),
@@ -296,6 +300,10 @@ def applicable(field: str, a: dict) -> bool:
         return "travel_modes" in a
     if field == "adults_confirm":   # pre-8 November 2026 records never answered this question; it is not shown for them
         return "adults_confirm" in a
+    if field in ("sex_pref", "age_pref", "culture_interest"):   # asked since 17 / 23 Nov 2026; older records never saw them
+        return a.get(field) not in (None, "", [])
+    if field in ("culture_languages", "culture_regions", "culture_countries"):   # only offered after the "Yes" answer
+        return bool(a.get(field))
     if field in ("intro_sex", "intro_age"):   # optional introduction-only questions asked since 8 Nov 2026; shown only when answered
         return a.get(field) not in (None, "")
     return True
@@ -349,7 +357,7 @@ def receipt_rows(e: dict) -> list[tuple[str, list[tuple[str, str]]]]:
             elif kind == "couples":
                 text = _couples(a)
             elif kind == "intro_sex":   # the person's own term when "Another term"; never a legacy column value
-                text = (get("intro_sex_other") or v) if v == ip.ANOTHER_TERM else (v or "")
+                text = ip.sex_text(v, get("intro_sex_other"))
             elif kind == "date":
                 text = _fmt_date(v)
             elif kind == "list":

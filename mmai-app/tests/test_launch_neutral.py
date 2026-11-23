@@ -61,9 +61,10 @@ def _write_legacy(db, ids, variant):
     if variant == "none":
         db.execute("UPDATE enquiries SET own_region=NULL, avoid_answer='No', avoid_countries=NULL, avoid_regions=NULL, languages='[\"English\"]' WHERE id IN (%s)" % ",".join("?" * len(ids)), ids)
     elif variant == "hostile":
-        # everyone wants their own region only, avoids the other pair's country/region, speaks a different language
-        for eid, (reg, avoid_c, avoid_r, lang) in zip(ids, [("Prefer to", ["India"], ["South Asia"], ["Swedish"]), ("Prefer to", ["India"], ["South Asia"], ["Swedish"]),
-                                                          ("Prefer to", ["Sweden"], ["Western"], ["Hindi"]), ("Prefer to", ["Sweden"], ["Western"], ["Tamil"])]):
+        # everyone wants their own region only and avoids the other pair's country/region (the retired own_region / avoid_* answers are
+        # never read). Languages stay the same: shared languages are a soft preference again since 17 Nov 2026 (Bill), so they are no longer "neutral".
+        for eid, (reg, avoid_c, avoid_r, lang) in zip(ids, [("Prefer to", ["India"], ["South Asia"], ["English"]), ("Prefer to", ["India"], ["South Asia"], ["English"]),
+                                                          ("Prefer to", ["Sweden"], ["Western"], ["English"]), ("Prefer to", ["Sweden"], ["Western"], ["English"])]):
             db.execute("UPDATE enquiries SET own_region=?, avoid_answer='Yes', avoid_countries=?, avoid_regions=?, languages=? WHERE id=?",
                        (reg, json.dumps(avoid_c), json.dumps(avoid_r), json.dumps(lang), eid))
     db.commit()
@@ -99,7 +100,7 @@ def test_candidate_groups_invariant_to_legacy_origin_and_language_answers(db):
     shapes = {k for k, _ in _group_shapes(hostile)}
     assert (ids[0], ids[2]) in shapes or (ids[0], ids[3]) in shapes or (ids[1], ids[2]) in shapes or (ids[1], ids[3]) in shapes
     for g in hostile:
-        assert "country" not in g["score_parts"] and "languages" not in g["score_parts"]
+        assert "country" not in g["score_parts"] and {"culture", "languages", "age"} <= set(g["score_parts"])   # soft preferences since 17 / 23 Nov 2026
         u = g["units"][0]
         assert not hasattr(u.people[0], "avoid_countries") and not hasattr(u.people[0], "avoid_regions") and not hasattr(u.people[0], "avoid_answer")
 

@@ -1476,12 +1476,13 @@ def _ref_identities(c, g: dict) -> dict[str, dict]:
 # GP2 customer introduction: identity payload (separate from the compatibility packet) and draft state
 # ---------------------------------------------------------------------------
 def _intro_sex_display(v, other) -> str | None:
-    """Fresh introduction-only term exactly as supplied: 'Another term' shows the person's own words; 'Prefer not to say' shows nothing."""
-    if not v or v == "Prefer not to say":
+    """Fresh introduction term exactly as supplied. Sex is multi-select (23 Nov 2026): every selected option is shown, a "different
+    term" as the person's own words; the older 'Prefer not to say' answer shows nothing."""
+    from . import intro_profile as _ip
+    picked = [x for x in _ip.split(v) if x != _ip.NOT_SAID]
+    if not picked:
         return None
-    if v == "Another term":
-        return (other or "").strip() or None
-    return str(v)
+    return _ip.sex_text(picked, other) or None
 
 
 INTRO_LIFESTYLE = ("diet", "social", "routine")   # GP2 standard intro content when supplied: diet, social style, sleep pattern (the 'routine' answer)

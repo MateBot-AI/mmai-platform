@@ -91,7 +91,7 @@ RULE_LABELS = {
     "GP2": "the staff-led introduction", "GP3": "the replacement rules", "GP5": "every bedroom occupied", "GP6": "the apartment suggestions for the group",
     "GP7": "one group per person", "GP8": "no holding of apartments", "GP9": "the rejected-member rules", "GP10": "the no-replacement-found rules",
     "GP11": "the bring-a-mate (linked friends) rules", "GP12": "at least one outside housemate", "GP13": "individual group responses", "GP14": "apartment rejections and reconsideration",
-    "I7": "the must-match / preference classification", "I8": "sex and age for introductions only", "I11": "the minimum age", "I14": "the budget question (the most you can pay)",
+    "I7": "the must-match / preference classification", "I8": "sex and age (introductions and the sex / age preferences)", "I11": "the minimum age", "I14": "the budget question (the most you can pay)",
     "I16": "the couple and group details", "T4": "the matching approach", "T5": "data retention", "T6": "the AI review before circulation", "T10": "the plain staff interface",
 }
 _RULE_CONTEXT = re.compile(r"(?:\b(?:under|per|rule|rules|see|within|against|breach(?:es|ing)?|violat(?:es|ing)|clause|by|in)\s+|\(\s*)$", re.I)

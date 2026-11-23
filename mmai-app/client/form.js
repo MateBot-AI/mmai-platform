@@ -71,6 +71,22 @@
     phoneCodes.forEach(([c, n]) => pc.append(opt(c, c === 'other' ? 'Other' : `${c}  ${n}`)));
     const chipGroup = (el, name, list) => list.forEach(v => { const l = document.createElement('label'); l.className = 'chip'; l.innerHTML = `<input type="checkbox" name="${name}" value="${v}">${v}`; el.append(l); });
     chipGroup(R('languages'), 'languages', languages);
+    // 5.4 culture question (23 Nov 2026): three optional lists; at most three choices in total across them
+    const CULTURE_MAX = 3;
+    const cultureSels = ['culture_languages', 'culture_regions', 'culture_countries'].map(n => form.elements[n]).filter(Boolean);
+    const fillCulture = (name, list) => { const el = form.elements[name]; if (el) list.forEach(v => el.append(opt(v, v))); };
+    fillCulture('culture_languages', languages.filter(l => l !== 'Other'));
+    fillCulture('culture_regions', (meta && meta.regions) || []);
+    fillCulture('culture_countries', (meta && meta.countries) || []);
+    const cultureSnap = new Map(cultureSels.map(el => [el, []]));
+    const cultureTotal = () => cultureSels.reduce((n, el) => n + el.selectedOptions.length, 0);
+    const cultureRefresh = () => { const h = R('cultureCount'); if (h) h.textContent = cultureTotal() ? `${cultureTotal()} of ${CULTURE_MAX} chosen.` : ''; };
+    cultureSels.forEach(el => el.addEventListener('change', () => {
+      if (cultureTotal() > CULTURE_MAX) { const keep = cultureSnap.get(el); [...el.options].forEach(o => { o.selected = keep.includes(o.value); }); }
+      else cultureSnap.set(el, [...el.selectedOptions].map(o => o.value));
+      cultureRefresh();
+    }));
+    if (staffMode) ['intro_sex', 'intro_age'].forEach(n => { if (form.elements[n]) form.elements[n].required = false; });   // staff recording a phone enquiry may not have them
     // GP12: a party (one form, a share link, or both) must always be smaller than the apartment, so MateBot AI can add at least
     // one housemate from outside it. The 3.9 list stops one short of the beds in ALM's largest available apartment.
     if (meta.mate_limit) {
@@ -149,8 +165,12 @@
     // introduction-only sex / current age (Bill, 8 Nov 2026: shared in introductions, never used for matching; never copied from
     // the enquirer). Date of birth is not asked; the 6.4 declaration covers every occupant being 18+ at move-in (I11(d)).
     const PM_FIELDS = ['name', 'email', 'birth_country_raw', 'intro_sex', 'intro_sex_other', 'intro_age'];
-    const INTRO_SEX_OPTIONS = ['Female', 'Male', 'Another term', 'Prefer not to say'];
-    const readPartyRows = () => $$('.party-row').map(r => Object.fromEntries(PM_FIELDS.map(k => [k, (r.querySelector(`[data-pm="${k}"]`) || {}).value || ''])));
+    const INTRO_SEX_OPTIONS = ['Female', 'Male', 'Non-binary', 'A different term (please specify)'];
+    const DIFF_TERM = 'A different term (please specify)';
+    const sexSplit = v => String(v || '').split(',').map(x => x.trim()).filter(Boolean);   // sex is multi-select: stored and exchanged as a list or a ", "-joined string
+    const pmValue = (r, k) => { const el = r.querySelector(`[data-pm="${k}"]`); if (!el) return ''; return el.multiple ? [...el.selectedOptions].map(o => o.value).join(', ') : (el.value || ''); };
+    const pmSet = (r, k, v) => { const el = r.querySelector(`[data-pm="${k}"]`); if (!el) return; if (el.multiple) { const sel = sexSplit(v); [...el.options].forEach(o => { o.selected = sel.includes(o.value); }); } else el.value = v; };
+    const readPartyRows = () => $$('.party-row').map(r => Object.fromEntries(PM_FIELDS.map(k => [k, pmValue(r, k)])));
     function renderPartyRows() {
       const party = valuesOf('party')[0];
       const wrap = R('partyRows');
@@ -170,10 +190,10 @@
             <label class="party-cell"><small>Email</small><input data-pm="email" type="email" required aria-label="${who} email" autocomplete="off"></label>
             <label class="party-cell"><small>Country of birth</small><input data-pm="birth_country_raw" required autocomplete="off" placeholder="Type their country" aria-label="${who} country of birth"><span class="country-hint" data-pm="hint"></span></label>
             <span class="party-cell party-cell--intro small muted">Very important to help me form groups when sex and age are important to individual members:</span>
-            <label class="party-cell party-cell--sex"><small>Sex</small><select data-pm="intro_sex" aria-label="${who} sex"><option value="">Prefer to leave blank</option>${INTRO_SEX_OPTIONS.map(o => `<option>${o}</option>`).join('')}</select></label>
-            <label class="party-cell party-cell--other"><small>The term they use</small><input data-pm="intro_sex_other" maxlength="40" autocomplete="off" aria-label="${who} term used"></label>
+            <label class="party-cell party-cell--sex"><small>Sex</small><select data-pm="intro_sex" multiple style="height:84px" aria-label="${who} sex">${INTRO_SEX_OPTIONS.map(o => `<option>${o}</option>`).join('')}</select></label>
+            <label class="party-cell party-cell--other"><small>Please specify</small><input data-pm="intro_sex_other" maxlength="40" autocomplete="off" aria-label="${who} term used"></label>
             <label class="party-cell"><small>Current age</small><input data-pm="intro_age" type="number" inputmode="numeric" min="0" max="999" step="1" placeholder="Years" autocomplete="off" aria-label="${who} current age"></label>`;
-          if (existing[i]) PM_FIELDS.forEach(k => { const el = row.querySelector(`[data-pm="${k}"]`); if (el) el.value = existing[i][k] || ''; });
+          if (existing[i]) PM_FIELDS.forEach(k => pmSet(row, k, existing[i][k] || ''));
           wrap.append(row);
         }
       }
@@ -182,10 +202,10 @@
       renderCoupleRows();
     }
 
-    // the "term they use" box only applies (and is only required) when that person chose "Another term"
+    // the "please specify" box only applies (and is only required) when that person chose "A different term"
     function syncMemberIntro(row) {
       const sel = row.querySelector('[data-pm="intro_sex"]'); const other = row.querySelector('.party-cell--other'); if (!sel || !other) return;
-      const on = sel.value === 'Another term'; other.classList.toggle('is-shown', on); const inp = other.querySelector('input'); inp.required = on; if (!on) inp.value = '';
+      const on = sexSplit(pmValue(row, 'intro_sex')).includes(DIFF_TERM); other.classList.toggle('is-shown', on); const inp = other.querySelector('input'); inp.required = on; if (!on) inp.value = '';
     }
 
     // 3.10 / I16(f): couples within a "With friends" group, stated by the enquirer. Each row = two people from the party.
@@ -330,6 +350,11 @@
         }
         if (el.tagName === 'SELECT') {
           const lbl = labelText(el.closest('label')) || labelText(field.querySelector('legend')) || name;
+          if (el.multiple && name === 'intro_sex') {   // a "different term" shows the person's own words, in one row with the rest
+            const own = (form.elements.intro_sex_other ? form.elements.intro_sex_other.value : '').trim(); seen.add('intro_sex_other');
+            add(lbl, [...el.selectedOptions].map(o => o.value === DIFF_TERM ? (own || 'A different term') : o.textContent.trim()));
+            return;
+          }
           if (el.multiple) add(lbl, [...el.selectedOptions].map(o => o.textContent.trim()));
           else if (el.value) { const o = el.selectedOptions[0]; const og = o && o.parentElement.tagName === 'OPTGROUP' ? o.parentElement.label + ' – ' : ''; add(lbl, swipeLabel(el.value) || og + o.textContent.trim()); }
           return;
@@ -338,7 +363,7 @@
         add(lbl, el.type === 'date' ? fmtDate(el.value) : el.value.trim());
       });
       // other people in the party (3.9) and couples (3.10), only when those questions are showing
-      if ($$('.party-row', step).some(shown)) readPartyRows().forEach((m, i) => { if (m.name || m.email) { const intro = [m.intro_sex === 'Another term' ? (m.intro_sex_other || '').trim() || 'Another term' : m.intro_sex, (m.intro_age || '').trim()].filter(Boolean).join(', '); rows.push([`Person ${i + 2}`, { main: m.name.trim() || '(no name yet)', sub: [m.email.trim(), m.birth_country_raw.trim(), intro && `for introductions only: ${intro}`].filter(Boolean).join(' · ') }, unitOf($('.party-row', step))]); } });
+      if ($$('.party-row', step).some(shown)) readPartyRows().forEach((m, i) => { if (m.name || m.email) { const intro = [sexSplit(m.intro_sex).map(x => x === DIFF_TERM ? ((m.intro_sex_other || '').trim() || 'A different term') : x).join(', '), (m.intro_age || '').trim()].filter(Boolean).join(', '); rows.push([`Person ${i + 2}`, { main: m.name.trim() || '(no name yet)', sub: [m.email.trim(), m.birth_country_raw.trim(), intro && `sex and age: ${intro}`].filter(Boolean).join(' · ') }, unitOf($('.party-row', step))]); } });
       if ($$('.couple-row', step).some(shown)) { const names = Object.fromEntries(coupleRefs()); const cps = readCouples().filter(p => p[0] && p[1]).map(p => `${names[p[0]] || p[0]} and ${names[p[1]] || p[1]}`); if (cps.length) rows.push(['Couples in your group', cps, unitOf($('.couple-row', step))]); }
       return rows;
     }
@@ -485,7 +510,7 @@
 
     function collect() {
       const a = {};
-      const multi = ['languages', 'apt_sizes', 'rooms', 'areas', 'travel_modes', 'features', 'features_top', 'age_pref'];
+      const multi = ['languages', 'apt_sizes', 'rooms', 'areas', 'travel_modes', 'features', 'features_top', 'age_pref', 'intro_sex', 'culture_languages', 'culture_regions', 'culture_countries'];
       new FormData(form).forEach((v, k) => { if (multi.includes(k)) { (a[k] = a[k] || []).push(v); } else if (v !== '') a[k] = v; });
       multi.forEach(k => { a[k] = a[k] || []; });
       if (a.languages.includes('Other')) {
@@ -503,9 +528,9 @@
       // 6.4 / I11(d): adults_confirm is a real boolean (never the checkbox's "on" string); the retired lead-only consent_age is not sent
       ['consent_store', 'consent_share', 'adults_confirm', 'consent_marketing', 'is_test'].forEach(k => { a[k] = !!form.elements[k] && form.elements[k].checked; });
       a.party_members = readPartyRows().map(m => { const pm = { name: m.name.trim(), email: m.email.trim(), birth_country_raw: m.birth_country_raw.trim() };
-        // each person's own optional introduction-only details; blank = not given (never copied from the enquirer, never defaulted)
-        if (m.intro_sex) pm.intro_sex = m.intro_sex; if (m.intro_sex === 'Another term' && m.intro_sex_other.trim()) pm.intro_sex_other = m.intro_sex_other.trim(); if (m.intro_age.trim() !== '') pm.intro_age = m.intro_age.trim(); return pm; });
-      if (a.intro_sex !== 'Another term') delete a.intro_sex_other;
+        // each person's own sex and age; blank = not given (never copied from the enquirer, never defaulted)
+        const sx = sexSplit(m.intro_sex); if (sx.length) pm.intro_sex = sx; if (sx.includes(DIFF_TERM) && m.intro_sex_other.trim()) pm.intro_sex_other = m.intro_sex_other.trim(); if (m.intro_age.trim() !== '') pm.intro_age = m.intro_age.trim(); return pm; });
+      if (!(a.intro_sex || []).includes(DIFF_TERM)) delete a.intro_sex_other;
       if (a.party === 'Couple sharing one bed') a.party_size = 2;
       if (a.party === 'Alone') { a.party_size = 1; a.party_members = []; }
       // D1: the Staff-only section (7.x) is hidden from enquirers but its inputs still have DOM defaults (channel "Phone"); never send them from the public form
@@ -513,16 +538,9 @@
       // 3.10 / I16(f): couples only as stated by the enquirer
       if (a.party === 'With friends') { a.couples = a.couples_answer === 'Yes' ? readCouples().filter(p => p[0] && p[1]) : []; }
       else { delete a.couples_answer; a.couples = []; }
-      // 17 Nov 2026: age preference + avoid lists
+      // age preference; culture question (23 Nov 2026): the three lists only apply to the "Yes" answer
       if (a.age_pref && a.age_pref.includes('No preference')) a.age_pref = ['No preference'];
-      if (a.avoid_answer && a.avoid_answer.indexOf('happy to live with anyone') !== -1) {
-        a.avoid_countries = []; a.avoid_regions = [];
-      } else {
-        const ct = (a.avoid_countries_text || '').split(/,\s*/).map(s => s.trim()).filter(Boolean);
-        const rt = (a.avoid_regions_text || '').split(/,\s*/).map(s => s.trim()).filter(Boolean);
-        a.avoid_countries = ct; a.avoid_regions = rt;
-      }
-      delete a.avoid_countries_text; delete a.avoid_regions_text;
+      if (!(a.culture_interest || '').startsWith('Yes')) { a.culture_languages = []; a.culture_regions = []; a.culture_countries = []; }
       return a;
     }
 
@@ -780,8 +798,9 @@
       // Retired questions (I8 / I11(d), 8 Nov 2026) in an older saved form or stored submission are ignored. The old lead-only
       // consent_age is dropped too, so it can never pre-tick the all-occupants declaration (adults_confirm is only restored from
       // a saved copy of this form that already held the real declaration, e.g. a resumed draft or the staff email copy).
-      ['dob', 'sex', 'sex_other', 'guardian_name', 'guardian_relationship', 'guardian_email', 'guardian_phone', 'consent_age'].forEach(k => { delete v0[k]; });
-      // 17 Nov 2026: sex_pref, age_pref, own_region, avoid_* restored for matching
+      ['dob', 'sex', 'sex_other', 'guardian_name', 'guardian_relationship', 'guardian_email', 'guardian_phone', 'consent_age',
+       'own_region', 'avoid_answer', 'avoid_regions', 'avoid_countries', 'avoid_countries_text', 'avoid_regions_text'].forEach(k => { delete v0[k]; });   // own-country / avoid questions retired 23 Nov 2026
+      if (v0.intro_sex != null) v0.intro_sex = sexSplit(Array.isArray(v0.intro_sex) ? v0.intro_sex.join(', ') : v0.intro_sex);
       const ft = Array.isArray(v0.features_top) ? v0.features_top : []; delete v0.features_top;   // set after 3.11 has rendered the 3.12 chips
       const pm = v0.party_members; const cp = v0.couples; delete v0.party_members; delete v0.couples;
       if (Array.isArray(v0.languages)) { const extra = v0.languages.filter(l => !languages.includes(l)); if (extra.length) { v0.languages = v0.languages.filter(l => languages.includes(l)).concat('Other'); v0.languages_other = v0.languages_other || extra.join(', '); } }
@@ -791,7 +810,7 @@
       Object.entries(v0).forEach(([k, v]) => set(k, v));
       applyConditions();
       if (ft.length) { set('features_top', ft); applyConditions(); }
-      if (Array.isArray(pm)) { $$('.party-row').forEach((row, i) => { if (pm[i]) PM_FIELDS.forEach(k => { const el = row.querySelector(`[data-pm="${k}"]`); if (el && pm[i][k] != null) el.value = pm[i][k]; }); }); applyConditions(); }
+      if (Array.isArray(pm)) { $$('.party-row').forEach((row, i) => { if (pm[i]) PM_FIELDS.forEach(k => { if (pm[i][k] != null) pmSet(row, k, Array.isArray(pm[i][k]) ? pm[i][k].join(', ') : pm[i][k]); }); }); applyConditions(); }
       if (Array.isArray(cp) && cp.length) { coupleCount = cp.length; renderCoupleRows(); $$('.couple-row').forEach((r, i) => { if (cp[i]) { r.querySelector('[data-cp="a"]').value = cp[i][0] || ''; r.querySelector('[data-cp="b"]').value = cp[i][1] || ''; } }); }
       $$('.swipe').forEach(refreshSwipe);
     }

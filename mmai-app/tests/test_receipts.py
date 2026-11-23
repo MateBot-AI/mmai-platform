@@ -291,7 +291,7 @@ def test_receipt_contains_customer_questions_and_answers_but_nothing_internal(cl
     assert receipts.LOGO_URL in html_
     assert "First name: Test" in text and "Email: t@example.com" in text and "Mobile number: +61 0400000000" in text
     assert "I confirm that everyone included in this enquiry, including me, will be 18 or older on the move-in date. If that is not the case, please contact the ALM team instead of continuing.: Yes" in text
-    for gone in ("Date of birth", "Sex:", "Housemate sex preference", "Preferred housemate age range", "I confirm I will be 18 or older", "Parent or guardian"):
+    for gone in ("Date of birth", "Sex:", "I confirm I will be 18 or older", "Parent or guardian"):
         assert gone not in text, gone   # I8: nothing about sex or age is asked or echoed
     assert "Send me ALM offers and updates.: " in text  # unticked optional consent still shown (Yes/No)
     assert "A short introduction about yourself for your future housemates: Not provided" in text

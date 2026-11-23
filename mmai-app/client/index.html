@@ -94,13 +94,18 @@
           <div class="field" data-q="1.9"><label>Country you currently live in<input name="live_country_raw" required autocomplete="off" placeholder="Type your country"></label><p class="country-hint" data-role="hint-live"></p></div>
         </div>
         </div>
-        <div class="scr" data-scr="aboutyou" data-tip="wave|Two optional details for the hello. When the team introduces your group, they can say a little about you. I don't use these to pick your housemates.">
-        <p class="small muted" data-role="introPurpose">Optional. Shared in introductions to proposed housemates; not used for matching.</p>
+        <div class="scr" data-scr="aboutyou" data-tip="wave|This helps me form groups that respect people’s preferences about sex and age.">
+        <p class="small muted" data-role="introPurpose">This helps me form groups that respect people’s preferences about sex and age.</p>
         <div class="grid2">
-          <div class="field" data-q="1.6"><label>Sex (optional)
-            <select name="intro_sex"><option value="">Prefer to leave blank</option><option>Female</option><option>Male</option><option>Another term</option><option>Prefer not to say</option></select></label>
-            <div class="reveal" data-show-when="intro_sex=Another term"><label>The term you use<input name="intro_sex_other" maxlength="40" data-req-when="intro_sex=Another term" autocomplete="off"></label></div></div>
-          <div class="field" data-q="1.7"><label>Current age (optional)<input name="intro_age" type="number" inputmode="numeric" min="0" max="999" step="1" placeholder="Years" autocomplete="off"></label></div>
+          <div class="field" data-q="1.6"><label>Sex <span class="hint-inline">(tick all that apply)</span>
+            <select name="intro_sex" multiple required style="height:100px">
+              <option>Female</option>
+              <option>Male</option>
+              <option>Non-binary</option>
+              <option>A different term (please specify)</option>
+            </select></label>
+            <div class="reveal" data-show-when="intro_sex=A different term (please specify)"><label>Please specify<input name="intro_sex_other" maxlength="40" data-req-when="intro_sex=A different term (please specify)" autocomplete="off"></label></div></div>
+          <div class="field" data-q="1.7"><label>Current age<input name="intro_age" required type="number" inputmode="numeric" min="0" max="999" step="1" placeholder="Years" autocomplete="off"></label></div>
         </div>
         </div>
         <div class="scr" data-scr="languages" data-tip="chat|Which languages do you speak? Shared languages make a home feel like home.">
@@ -145,7 +150,7 @@
         </div>
 
         <div class="scr" data-scr="agepref" data-tip="wave|Any preferred age range for your housemates? This is a soft preference only.">
-        <fieldset class="field" data-q="5.2"><legend>Preferred housemate age range <span class="hint-inline">(optional — tick all that suit)</span></legend>
+        <fieldset class="field" data-q="5.2"><legend>Preferred housemate age range <span class="hint-inline">(tick all that suit)</span></legend>
           <div class="chips" data-role="age_pref">
             <label class="chip"><input type="checkbox" name="age_pref" value="18–21">18–21</label>
             <label class="chip"><input type="checkbox" name="age_pref" value="22–25">22–25</label>
@@ -156,29 +161,21 @@
         </fieldset>
         </div>
 
-        <div class="scr" data-scr="ownregion" data-tip="globe|Would you like to live with people from your own country or region?">
-        <div class="field" data-q="5.3"><label>Would you like to live with people from your own country or region?
-          <select name="own_region" required>
+        <div class="scr" data-scr="culture" data-tip="globe|Melbourne is one of the most multicultural cities in the world. While you’re here, would you like the chance to live with housemates from particular cultures, countries or language backgrounds so you can learn more about them?">
+        <div class="field" data-q="5.4"><label>While you’re in Melbourne, are you interested in living with people from particular cultures or language backgrounds?
+          <select name="culture_interest" required>
             <option value="">Select…</option>
-            <option>Prefer to</option>
-            <option>Don’t mind</option>
-            <option>Prefer a mix</option>
+            <option>I prefer to live with people from my own country or region</option>
+            <option>I’m happy to live with anyone</option>
+            <option>Yes — I’m interested in experiencing new cultures and languages</option>
           </select></label>
         </div>
-        </div>
-
-        <div class="scr" data-scr="avoid" data-tip="globe|Are there any countries or regions you would prefer not to live with?">
-        <div class="field" data-q="5.4"><label>Are there any countries or regions you would prefer not to live with?
-          <select name="avoid_answer" required>
-            <option value="">Select…</option>
-            <option>No, I’m happy to live with anyone</option>
-            <option>I prefer not to live with people from some countries or regions</option>
-          </select></label>
-          <div class="reveal" data-show-when="avoid_answer=I prefer not to live with people from some countries or regions">
-            <p class="hint">Type countries or regions (comma-separated). Staff can refine these later if needed.</p>
-            <label>Countries to avoid<input name="avoid_countries_text" placeholder="e.g. Country A, Country B" autocomplete="off"></label>
-            <label>Regions to avoid<input name="avoid_regions_text" placeholder="e.g. Region X" autocomplete="off"></label>
-          </div>
+        <div class="reveal" data-show-when="culture_interest=Yes — I’m interested in experiencing new cultures and languages">
+          <p class="hint">You can choose up to three areas you’d like to learn more about, in total across the three lists.</p>
+          <div class="field"><label>Languages I’m interested in<select name="culture_languages" multiple data-culture style="height:120px"></select></label></div>
+          <div class="field"><label>Regions I’m interested in<select name="culture_regions" multiple data-culture style="height:120px"></select></label></div>
+          <div class="field"><label>Countries I’m interested in<select name="culture_countries" multiple data-culture style="height:120px"></select></label></div>
+          <p class="hint" data-role="cultureCount" aria-live="polite"></p>
         </div>
         </div>
       </section>
@@ -524,10 +521,10 @@
 </template>
 
 <script src="api.js?v=20261108e"></script>
-<script src="form.js?v=20261111f"></script>
+<script src="form.js?v=20261123a"></script>
 <script src="respond.js?v=20261109y"></script>
 <script src="staff-exceptions.js?v=20261111b"></script>
-<script src="staff.js?v=20261111h"></script>
+<script src="staff.js?v=20261123a"></script>
 <script src="app.js?v=20261109x"></script>
 </body>
 </html>

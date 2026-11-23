@@ -232,15 +232,17 @@ def test_receipt_ai_packet_and_summary_are_free_of_sex_and_age(db):
     for word in ('"sex"', '"age"', "age_pref", "sex_pref", "dob", "gender", "guardian"):
         assert word not in flat, word
     assert packet["party_members"] == ["U1-m1"]   # launch scope: positional refs only, no names or countries
-    assert not any(hasattr(p, k) for p in u.people for k in ("sex", "dob", "sex_pref"))
+    assert not any(hasattr(p, k) for p in u.people for k in ("sex", "dob"))
 
 
-def test_preference_score_has_no_age_component(db):
+def test_preference_score_age_is_a_light_soft_component_and_never_reads_a_dob(db):
+    """23 Nov 2026 (Bill): the preferred age range is a soft preference with a LOW weight; nothing is derived from a date of birth."""
     import inspect
     src = inspect.getsource(matching.preference_score)
     code = "\n".join(line.split("#")[0] for line in src.splitlines())   # comments aside
-    assert '"age"' not in code and "age_pref" not in code and "AGE_BANDS" not in code and "dob" not in code
-    assert not hasattr(matching, "AGE_BANDS")
+    assert "dob" not in code and "age_pref" not in code
+    assert '"age": 0.5' in code   # lighter than every other weight except diet (0.5)
+    assert matching._age_band(24) == "22–25" and matching._age_band(31) == "31+" and matching._age_band(17) is None
 
 
 def test_ai_prompts_do_not_ask_about_sex_or_age():
@@ -262,7 +264,7 @@ def test_matching_result_is_invariant_to_legacy_sex_and_age_values(db):
     """Two identical neutral enquiries whose legacy columns differ wildly produce identical units and checks."""
     a = create_enquiry(db, good_answers(email="a@example.com"), "Landing page", use_ai_countries=False)
     b = create_enquiry(db, good_answers(email="b@example.com", first_name="Test"), "Landing page", use_ai_countries=False)
-    db.execute("UPDATE enquiries SET sex='Male', dob='2009-12-31', sex_pref='Same sex only', age_pref='[\"31+\"]' WHERE id=?", (a["id"],)); db.commit()
+    db.execute("UPDATE enquiries SET sex='Male', dob='2009-12-31' WHERE id=?", (a["id"],)); db.commit()   # legacy columns only; the 17 / 23 Nov sex_pref / age_pref columns ARE matching inputs now
     ra, rb = (rows(db.execute("SELECT * FROM enquiries WHERE id=?", (i,)))[0] for i in (a["id"], b["id"]))
     ua, ub = matching.unit_from_row(ra, []), matching.unit_from_row(rb, [])
     strip = lambda u: {k: v for k, v in u.__dict__.items() if k not in ("id", "extra", "people")}
