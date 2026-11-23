@@ -71,22 +71,32 @@
     phoneCodes.forEach(([c, n]) => pc.append(opt(c, c === 'other' ? 'Other' : `${c}  ${n}`)));
     const chipGroup = (el, name, list) => list.forEach(v => { const l = document.createElement('label'); l.className = 'chip'; l.innerHTML = `<input type="checkbox" name="${name}" value="${v}">${v}`; el.append(l); });
     chipGroup(R('languages'), 'languages', languages);
-    // 5.4 culture question (23 Nov 2026): three optional lists; at most three choices in total across them
+    // 5.4 culture question (23 Nov 2026): languages and regions are chips, countries are picked from a list and shown as chips;
+    // at most three choices in total across the three lists
     const CULTURE_MAX = 3;
-    const cultureSels = ['culture_languages', 'culture_regions', 'culture_countries'].map(n => form.elements[n]).filter(Boolean);
-    const fillCulture = (name, list) => { const el = form.elements[name]; if (el) list.forEach(v => el.append(opt(v, v))); };
-    fillCulture('culture_languages', languages.filter(l => l !== 'Other'));
-    fillCulture('culture_regions', (meta && meta.regions) || []);
-    fillCulture('culture_countries', (meta && meta.countries) || []);
-    const cultureSnap = new Map(cultureSels.map(el => [el, []]));
-    const cultureTotal = () => cultureSels.reduce((n, el) => n + el.selectedOptions.length, 0);
-    const cultureRefresh = () => { const h = R('cultureCount'); if (h) h.textContent = cultureTotal() ? `${cultureTotal()} of ${CULTURE_MAX} chosen.` : ''; };
-    cultureSels.forEach(el => el.addEventListener('change', () => {
-      if (cultureTotal() > CULTURE_MAX) { const keep = cultureSnap.get(el); [...el.options].forEach(o => { o.selected = keep.includes(o.value); }); }
-      else cultureSnap.set(el, [...el.selectedOptions].map(o => o.value));
+    const CULTURE_NAMES = ['culture_languages', 'culture_regions', 'culture_countries'];
+    const cultureBoxes = () => CULTURE_NAMES.flatMap(n => $$(`input[name="${n}"]`, form));
+    const cultureRefresh = () => {
+      const boxes = cultureBoxes(); const total = boxes.filter(i => i.checked).length; const full = total >= CULTURE_MAX;
+      boxes.forEach(i => { i.disabled = full && !i.checked; });
+      const add = R('culture_country_add'); if (add) add.disabled = full;
+      const h = R('cultureCount'); if (h) h.textContent = total ? (full ? `That’s your ${CULTURE_MAX}. Untick one to swap it.` : `${total} of ${CULTURE_MAX} chosen.`) : '';
+    };
+    const addCultureChip = (name, v, checked) => {
+      const host = R(name); if (!host || [...host.querySelectorAll('input')].some(i => i.value === v)) return;
+      const l = document.createElement('label'); l.className = 'chip'; l.innerHTML = `<input type="checkbox" name="${name}" value="${v}"${checked ? ' checked' : ''}>${v}`; host.append(l);
+    };
+    languages.filter(l => l !== 'Other').forEach(v => addCultureChip('culture_languages', v, false));
+    ((meta && meta.regions) || []).forEach(v => addCultureChip('culture_regions', v, false));
+    const countryAdd = R('culture_country_add');
+    if (countryAdd) ((meta && meta.countries) || []).forEach(v => countryAdd.append(opt(v, v)));
+    if (countryAdd) countryAdd.addEventListener('change', () => { if (countryAdd.value && cultureBoxes().filter(i => i.checked).length < CULTURE_MAX) addCultureChip('culture_countries', countryAdd.value, true); countryAdd.value = ''; cultureRefresh(); });
+    form.addEventListener('change', e => {
+      const t = e.target; if (!t || !t.name || !CULTURE_NAMES.includes(t.name)) return;
+      if (t.name === 'culture_countries' && !t.checked) { const l = t.closest('label'); if (l) l.remove(); }   // an unticked country leaves the list
       cultureRefresh();
-    }));
-    if (staffMode) ['intro_sex', 'intro_age'].forEach(n => { if (form.elements[n]) form.elements[n].required = false; });   // staff recording a phone enquiry may not have them
+    });
+    if (staffMode) { if (form.elements.intro_age) form.elements.intro_age.required = false; $$('[data-required-group="intro_sex"]').forEach(g => g.removeAttribute('data-required-group')); }   // staff recording a phone enquiry may not have them
     // GP12: a party (one form, a share link, or both) must always be smaller than the apartment, so MateBot AI can add at least
     // one housemate from outside it. The 3.9 list stops one short of the beds in ALM's largest available apartment.
     if (meta.mate_limit) {
@@ -168,8 +178,8 @@
     const INTRO_SEX_OPTIONS = ['Female', 'Male', 'Non-binary', 'A different term (please specify)'];
     const DIFF_TERM = 'A different term (please specify)';
     const sexSplit = v => String(v || '').split(',').map(x => x.trim()).filter(Boolean);   // sex is multi-select: stored and exchanged as a list or a ", "-joined string
-    const pmValue = (r, k) => { const el = r.querySelector(`[data-pm="${k}"]`); if (!el) return ''; return el.multiple ? [...el.selectedOptions].map(o => o.value).join(', ') : (el.value || ''); };
-    const pmSet = (r, k, v) => { const el = r.querySelector(`[data-pm="${k}"]`); if (!el) return; if (el.multiple) { const sel = sexSplit(v); [...el.options].forEach(o => { o.selected = sel.includes(o.value); }); } else el.value = v; };
+    const pmValue = (r, k) => { const el = r.querySelector(`[data-pm="${k}"]`); if (!el) return ''; return el.classList.contains('chips') ? [...el.querySelectorAll('input:checked')].map(i => i.value).join(', ') : (el.value || ''); };
+    const pmSet = (r, k, v) => { const el = r.querySelector(`[data-pm="${k}"]`); if (!el) return; if (el.classList.contains('chips')) { const sel = sexSplit(v); el.querySelectorAll('input').forEach(i => { i.checked = sel.includes(i.value); }); } else el.value = v; };
     const readPartyRows = () => $$('.party-row').map(r => Object.fromEntries(PM_FIELDS.map(k => [k, pmValue(r, k)])));
     function renderPartyRows() {
       const party = valuesOf('party')[0];
@@ -190,7 +200,7 @@
             <label class="party-cell"><small>Email</small><input data-pm="email" type="email" required aria-label="${who} email" autocomplete="off"></label>
             <label class="party-cell"><small>Country of birth</small><input data-pm="birth_country_raw" required autocomplete="off" placeholder="Type their country" aria-label="${who} country of birth"><span class="country-hint" data-pm="hint"></span></label>
             <span class="party-cell party-cell--intro small muted">Very important to help me form groups when sex and age are important to individual members:</span>
-            <label class="party-cell party-cell--sex"><small>Sex</small><select data-pm="intro_sex" multiple style="height:84px" aria-label="${who} sex">${INTRO_SEX_OPTIONS.map(o => `<option>${o}</option>`).join('')}</select></label>
+            <div class="party-cell party-cell--sex" role="group" aria-label="${who} sex"><small>Sex (tick all that apply)</small><div class="chips" data-pm="intro_sex">${INTRO_SEX_OPTIONS.map(o => `<label class="chip"><input type="checkbox" value="${o}">${o}</label>`).join('')}</div></div>
             <label class="party-cell party-cell--other"><small>Please specify</small><input data-pm="intro_sex_other" maxlength="40" autocomplete="off" aria-label="${who} term used"></label>
             <label class="party-cell"><small>Current age</small><input data-pm="intro_age" type="number" inputmode="numeric" min="0" max="999" step="1" placeholder="Years" autocomplete="off" aria-label="${who} current age"></label>`;
           if (existing[i]) PM_FIELDS.forEach(k => pmSet(row, k, existing[i][k] || ''));
@@ -266,7 +276,7 @@
     }
     form.addEventListener('input', applyConditions);
     form.addEventListener('change', applyConditions);
-    form.addEventListener('change', e => { const row = e.target && e.target.matches && e.target.matches('[data-pm="intro_sex"]') && e.target.closest('.party-row'); if (row) syncMemberIntro(row); });
+    form.addEventListener('change', e => { const row = e.target && e.target.closest && e.target.closest('[data-pm="intro_sex"]') && e.target.closest('.party-row'); if (row) syncMemberIntro(row); });
     // 6.4 / I11(d): the declaration that everyone will be 18+ at move-in is made for a particular group and move-in date. If the
     // enquirer's identity, the move-in date or the group changes after the box was ticked (e.g. a Change from the summary), the
     // tick is cleared and must be given again. Acceptance is never carried over silently, and the server checks the same thing.
@@ -343,18 +353,17 @@
         }
         if (el.type === 'checkbox') {
           if (el.closest('.consent')) { add(el.closest('.consent').querySelector('span').textContent.replace(/\s+/g, ' ').replace(/Optional$/, '').trim(), el.checked ? 'Yes' : 'Not ticked'); return; }
-          const picked = $$(`input[name="${name}"]:checked`, form).map(c => { const o = c.closest('.opt'); return o ? o.querySelector('b').textContent.trim() : c.parentElement.textContent.trim(); });
+          let picked = $$(`input[name="${name}"]:checked`, form).map(c => { const o = c.closest('.opt'); return o ? o.querySelector('b').textContent.trim() : c.parentElement.textContent.trim(); });
+          if (name === 'intro_sex') {   // a "different term" shows the person's own words, in one row with the rest
+            const own = (form.elements.intro_sex_other ? form.elements.intro_sex_other.value : '').trim(); seen.add('intro_sex_other');
+            picked = picked.map(t => t === DIFF_TERM ? (own || 'A different term') : t);
+          }
           const legend = field.querySelector('legend') || field;
           add(labelText(legend) || name, picked);
           return;
         }
         if (el.tagName === 'SELECT') {
           const lbl = labelText(el.closest('label')) || labelText(field.querySelector('legend')) || name;
-          if (el.multiple && name === 'intro_sex') {   // a "different term" shows the person's own words, in one row with the rest
-            const own = (form.elements.intro_sex_other ? form.elements.intro_sex_other.value : '').trim(); seen.add('intro_sex_other');
-            add(lbl, [...el.selectedOptions].map(o => o.value === DIFF_TERM ? (own || 'A different term') : o.textContent.trim()));
-            return;
-          }
           if (el.multiple) add(lbl, [...el.selectedOptions].map(o => o.textContent.trim()));
           else if (el.value) { const o = el.selectedOptions[0]; const og = o && o.parentElement.tagName === 'OPTGROUP' ? o.parentElement.label + ' – ' : ''; add(lbl, swipeLabel(el.value) || og + o.textContent.trim()); }
           return;
@@ -545,18 +554,18 @@
     }
 
     function showServerErrors(errors) {
-      const all = units(); let firstStep = -1;
+      const all = units(); let firstStep = -1; const unmapped = [];
       Object.entries(errors).forEach(([k, msg]) => {
         let el = form.elements[k] || $(`[data-required-group="${k}"]`);
         if (!el && k.startsWith('couples.')) { const m = k.match(/^couples\.(\d+)$/); el = (m && $(`.couple-row[data-index="${m[1]}"] [data-cp="a"]`)) || R('coupleRows'); }
         if (!el && k === 'couples') el = R('coupleRows');
         if (!el && k.startsWith('party_members')) { const m = k.match(/^party_members\.(\d+)\.(\w+)$/); el = (m && $(`.party-row[data-index="${m[1]}"] [data-pm="${m[2]}"]`)) || R('partyRows'); }
-        if (!el) return;
+        if (!el) { unmapped.push(`${k}: ${msg}`); return; }   // no question on screen for this key: say what the server said instead of a silent "check the highlighted answers"
         const stepEl = (el.length && !el.tagName ? el[0] : el).closest(cardMode ? '.scr' : '.step'); const idx = all.indexOf(stepEl); if (idx >= 0 && (firstStep < 0 || idx < firstStep)) firstStep = idx;
         flag(el.length && !el.tagName ? el[0] : el, msg);
       });
       if (firstStep >= 0) go(firstStep);
-      const se = R('submitError'); se.hidden = false; se.textContent = errors.mate_link ? errors.mate_link : 'Please check the highlighted answers.';
+      const se = R('submitError'); se.hidden = false; se.textContent = errors.mate_link ? errors.mate_link : (unmapped.length ? `Please check your answers (${unmapped.join('; ')}).` : 'Please check the highlighted answers.');
     }
 
     // ---------- Save and finish later (I19(f)) ----------
@@ -804,6 +813,7 @@
       const ft = Array.isArray(v0.features_top) ? v0.features_top : []; delete v0.features_top;   // set after 3.11 has rendered the 3.12 chips
       const pm = v0.party_members; const cp = v0.couples; delete v0.party_members; delete v0.couples;
       if (Array.isArray(v0.languages)) { const extra = v0.languages.filter(l => !languages.includes(l)); if (extra.length) { v0.languages = v0.languages.filter(l => languages.includes(l)).concat('Other'); v0.languages_other = v0.languages_other || extra.join(', '); } }
+      (Array.isArray(v0.culture_countries) ? v0.culture_countries : []).forEach(c => addCultureChip('culture_countries', c, false));
       const set = (k, v) => { const el = form.elements[k]; if (!el) return; if (el.type === 'checkbox' || el.type === 'radio' || el.length > 1 && !el.tagName) { $$(`[name="${k}"]`, form).forEach(i => { i.checked = [].concat(v).includes(i.value) || (i.type === 'checkbox' && v === true); }); } else if (el.multiple) { [...el.options].forEach(o => { o.selected = [].concat(v).includes(o.value); }); } else el.value = v; };
       ['move_in', 'move_out', 'party', 'party_size', 'rooms', 'features'].forEach(k => { if (k in v0) set(k, v0[k]); });  // these drive the price guide, party rows, first-choice list and 3.12
       applyConditions();
@@ -813,6 +823,7 @@
       if (Array.isArray(pm)) { $$('.party-row').forEach((row, i) => { if (pm[i]) PM_FIELDS.forEach(k => { if (pm[i][k] != null) pmSet(row, k, Array.isArray(pm[i][k]) ? pm[i][k].join(', ') : pm[i][k]); }); }); applyConditions(); }
       if (Array.isArray(cp) && cp.length) { coupleCount = cp.length; renderCoupleRows(); $$('.couple-row').forEach((r, i) => { if (cp[i]) { r.querySelector('[data-cp="a"]').value = cp[i][0] || ''; r.querySelector('[data-cp="b"]').value = cp[i][1] || ''; } }); }
       $$('.swipe').forEach(refreshSwipe);
+      cultureRefresh();
     }
     go(0);
     if (cfg.draft && cfg.draft.answers) { fill(cfg.draft.answers); const at = Math.min(+cfg.draft.step || 0, units().length - 1); furthest = at; go(at); const b = R('banner'); if (b.hidden) { b.hidden = false; b.className = 'form-banner form-banner--resume'; b.textContent = cfg.draft.origin === 'homebot' ? 'You have come over from HomeBot. Your group-size answers are already filled in — please check them as you go; everything else is asked here.' : 'Welcome back. Your saved answers are here; carry on where you left off.'; } }

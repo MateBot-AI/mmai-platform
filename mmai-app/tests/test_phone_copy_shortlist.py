@@ -10,4 +10,4 @@ def test_phone_copy_describes_suitable_shortlist_without_fixed_count():
     assert "find three apartments" not in copy
     assert "groups.forEach" in copy  # supplied customer answer rows remain included
     page = (Path(__file__).resolve().parents[1] / "client" / "index.html").read_text()
-    assert 'form.js?v=20261123a' in page
+    assert 'form.js?v=20261123c' in page

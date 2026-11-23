@@ -690,3 +690,10 @@ pre.small { white-space: pre-wrap; font-family: inherit; font-size: var(--text-x
 .gmaps-text { font-family: Roboto, Arial, sans-serif; font-size: 14px; font-style: normal; font-weight: 400; letter-spacing: normal; white-space: nowrap; color: #5E5E5E; text-transform: none; text-decoration: none; }
 .hb-grounded { margin: 6px 0; }
 .hb-grounded p { margin: 2px 0; }
+
+/* 23 Nov 2026: sex and culture questions use chips (no list boxes); the picked countries sit under their picker */
+.field--age { max-width: 260px; }
+.chips--picked { margin-top: var(--space-2); }
+.chips--picked:empty { display: none; }
+.chips-staff { border: 0; padding: 0; margin: 0; }
+.chips-staff legend { font-weight: 600; margin-bottom: var(--space-2); }

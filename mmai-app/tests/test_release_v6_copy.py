@@ -18,4 +18,4 @@ def test_staff_copy_does_not_claim_fallback_or_connection_health():
         assert stale not in text
     assert "new groups wait for AI review" in text
     assert "Configuration alone does not confirm a successful AI connection" in text
-    assert "staff.js?v=20261123a" in (client / "index.html").read_text()
+    assert "staff.js?v=20261123b" in (client / "index.html").read_text()

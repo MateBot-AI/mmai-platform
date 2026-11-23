@@ -11,7 +11,7 @@
 <meta name="referrer" content="same-origin">
 <meta name="mmai-api-base" content="__PORT_8060__">
 <link rel="stylesheet" href="fonts/fonts.css">
-<link rel="stylesheet" href="styles.css?v=20261111b">
+<link rel="stylesheet" href="styles.css?v=20261123b">
 </head>
 <body>
 
@@ -76,7 +76,7 @@
         <h2><span class="num">1</span>About you</h2>
         <div class="scr" data-scr="names" data-tip="wave|First things first: what do I call you? Answer a few simple questions and I'll find you the best housemates in Melbourne.">
         <div class="grid2">
-          <div class="hp" aria-hidden="true"><label>Company website<input name="company_website" tabindex="-1" autocomplete="off"></label></div>
+          <div class="hp" aria-hidden="true"><label>Leave this field empty<input name="company_website" tabindex="-1" autocomplete="off" readonly></label></div>
           <div class="field" data-q="1.1"><label>First name<input name="first_name" required autocomplete="given-name" maxlength="80"></label></div>
           <div class="field" data-q="1.2"><label>Last name<input name="last_name" required autocomplete="family-name" maxlength="80"></label></div>
         </div>
@@ -96,17 +96,16 @@
         </div>
         <div class="scr" data-scr="aboutyou" data-tip="wave|This helps me form groups that respect people’s preferences about sex and age.">
         <p class="small muted" data-role="introPurpose">This helps me form groups that respect people’s preferences about sex and age.</p>
-        <div class="grid2">
-          <div class="field" data-q="1.6"><label>Sex <span class="hint-inline">(tick all that apply)</span>
-            <select name="intro_sex" multiple required style="height:100px">
-              <option>Female</option>
-              <option>Male</option>
-              <option>Non-binary</option>
-              <option>A different term (please specify)</option>
-            </select></label>
-            <div class="reveal" data-show-when="intro_sex=A different term (please specify)"><label>Please specify<input name="intro_sex_other" maxlength="40" data-req-when="intro_sex=A different term (please specify)" autocomplete="off"></label></div></div>
-          <div class="field" data-q="1.7"><label>Current age<input name="intro_age" required type="number" inputmode="numeric" min="0" max="999" step="1" placeholder="Years" autocomplete="off"></label></div>
-        </div>
+        <fieldset class="field" data-q="1.6"><legend>Sex <span class="hint-inline">(tick all that apply)</span></legend>
+          <div class="chips" data-required-group="intro_sex">
+            <label class="chip"><input type="checkbox" name="intro_sex" value="Female">Female</label>
+            <label class="chip"><input type="checkbox" name="intro_sex" value="Male">Male</label>
+            <label class="chip"><input type="checkbox" name="intro_sex" value="Non-binary">Non-binary</label>
+            <label class="chip"><input type="checkbox" name="intro_sex" value="A different term (please specify)">A different term (please specify)</label>
+          </div>
+          <div class="reveal" data-show-when="intro_sex=A different term (please specify)"><label>Please specify<input name="intro_sex_other" maxlength="40" data-req-when="intro_sex=A different term (please specify)" autocomplete="off"></label></div>
+        </fieldset>
+        <div class="field field--age" data-q="1.7"><label>Current age<input name="intro_age" required type="number" inputmode="numeric" min="0" max="999" step="1" placeholder="Years" autocomplete="off"></label></div>
         </div>
         <div class="scr" data-scr="languages" data-tip="chat|Which languages do you speak? Shared languages make a home feel like home.">
         <fieldset class="field" data-q="1.10"><legend>Languages you speak <span class="hint-inline">(tick all that apply)</span></legend>
@@ -172,9 +171,12 @@
         </div>
         <div class="reveal" data-show-when="culture_interest=Yes — I’m interested in experiencing new cultures and languages">
           <p class="hint">You can choose up to three areas you’d like to learn more about, in total across the three lists.</p>
-          <div class="field"><label>Languages I’m interested in<select name="culture_languages" multiple data-culture style="height:120px"></select></label></div>
-          <div class="field"><label>Regions I’m interested in<select name="culture_regions" multiple data-culture style="height:120px"></select></label></div>
-          <div class="field"><label>Countries I’m interested in<select name="culture_countries" multiple data-culture style="height:120px"></select></label></div>
+          <fieldset class="field"><legend>Languages I’m interested in</legend><div class="chips" data-role="culture_languages"></div></fieldset>
+          <fieldset class="field"><legend>Regions I’m interested in</legend><div class="chips" data-role="culture_regions"></div></fieldset>
+          <div class="field"><label>Countries I’m interested in
+            <select data-role="culture_country_add" aria-label="Add a country"><option value="">Add a country…</option></select></label>
+            <div class="chips chips--picked" data-role="culture_countries"></div>
+          </div>
           <p class="hint" data-role="cultureCount" aria-live="polite"></p>
         </div>
         </div>
@@ -521,10 +523,10 @@
 </template>
 
 <script src="api.js?v=20261108e"></script>
-<script src="form.js?v=20261123a"></script>
+<script src="form.js?v=20261123c"></script>
 <script src="respond.js?v=20261109y"></script>
 <script src="staff-exceptions.js?v=20261111b"></script>
-<script src="staff.js?v=20261123a"></script>
+<script src="staff.js?v=20261123b"></script>
 <script src="app.js?v=20261109x"></script>
 </body>
 </html>
