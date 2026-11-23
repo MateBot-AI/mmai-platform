@@ -451,12 +451,12 @@ def _sections_html(sections: list[tuple[str, list[tuple[str, str]]]]) -> list[st
     for title, items in sections:
         parts.append(
             f"<h3 style=\"font-size:1em;margin:1.2em 0 .3em\">{h(title)}</h3>"
-            f"<table cellpadding=\"0\" cellspacing=\"0\" style=\"border-collapse:collapse\">"
+            f"<table cellpadding=\"0\" cellspacing=\"0\" width=\"100%\" style=\"border-collapse:collapse;width:100%\">"
         )
         for q, v in items:
             parts.append(
-                f"<tr><td style=\"padding:2px 12px 2px 0;vertical-align:top;color:#555\">{h(q)}</td>"
-                f"<td style=\"padding:2px 0;vertical-align:top\">{h(v)}</td></tr>"
+                f"<tr><td width=\"42%\" style=\"width:42%;padding:3px 12px 3px 0;vertical-align:top;color:#555\">{h(q)}</td>"
+                f"<td style=\"padding:3px 0;vertical-align:top\">{h(v)}</td></tr>"
             )
         parts.append("</table>")
     return parts
