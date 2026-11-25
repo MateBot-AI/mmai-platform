@@ -71,16 +71,13 @@
     phoneCodes.forEach(([c, n]) => pc.append(opt(c, c === 'other' ? 'Other' : `${c}  ${n}`)));
     const chipGroup = (el, name, list) => list.forEach(v => { const l = document.createElement('label'); l.className = 'chip'; l.innerHTML = `<input type="checkbox" name="${name}" value="${v}">${v}`; el.append(l); });
     chipGroup(R('languages'), 'languages', languages);
-    // 5.4 culture question (23 Nov 2026): languages and regions are chips, countries are picked from a list and shown as chips;
-    // at most three choices in total across the three lists
-    const CULTURE_MAX = 3;
+    // 5.4 culture question (23 Nov 2026; limit removed 25 Nov 2026 per Bill): languages and regions are chips, countries are
+    // picked from a list and shown as chips; no maximum across the three lists
     const CULTURE_NAMES = ['culture_languages', 'culture_regions', 'culture_countries'];
     const cultureBoxes = () => CULTURE_NAMES.flatMap(n => $$(`input[name="${n}"]`, form));
     const cultureRefresh = () => {
-      const boxes = cultureBoxes(); const total = boxes.filter(i => i.checked).length; const full = total >= CULTURE_MAX;
-      boxes.forEach(i => { i.disabled = full && !i.checked; });
-      const add = R('culture_country_add'); if (add) add.disabled = full;
-      const h = R('cultureCount'); if (h) h.textContent = total ? (full ? `That’s your ${CULTURE_MAX}. Untick one to swap it.` : `${total} of ${CULTURE_MAX} chosen.`) : '';
+      const total = cultureBoxes().filter(i => i.checked).length;
+      const h = R('cultureCount'); if (h) h.textContent = total ? `${total} chosen.` : '';
     };
     const addCultureChip = (name, v, checked) => {
       const host = R(name); if (!host || [...host.querySelectorAll('input')].some(i => i.value === v)) return;
@@ -90,7 +87,7 @@
     ((meta && meta.regions) || []).forEach(v => addCultureChip('culture_regions', v, false));
     const countryAdd = R('culture_country_add');
     if (countryAdd) ((meta && meta.countries) || []).forEach(v => countryAdd.append(opt(v, v)));
-    if (countryAdd) countryAdd.addEventListener('change', () => { if (countryAdd.value && cultureBoxes().filter(i => i.checked).length < CULTURE_MAX) addCultureChip('culture_countries', countryAdd.value, true); countryAdd.value = ''; cultureRefresh(); });
+    if (countryAdd) countryAdd.addEventListener('change', () => { if (countryAdd.value) addCultureChip('culture_countries', countryAdd.value, true); countryAdd.value = ''; cultureRefresh(); });
     form.addEventListener('change', e => {
       const t = e.target; if (!t || !t.name || !CULTURE_NAMES.includes(t.name)) return;
       if (t.name === 'culture_countries' && !t.checked) { const l = t.closest('label'); if (l) l.remove(); }   // an unticked country leaves the list

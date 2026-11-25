@@ -1716,7 +1716,7 @@ MIGRATIONS = [
     ("party_members", "intro_sex_other", "TEXT"),
     ("party_members", "intro_age", "INTEGER"),
     # 23 Nov 2026 (Bill): the culture / language-interest question replaces "countries to avoid" (5.4). culture_interest is the one
-    # required answer; the three lists are optional JSON lists (at most three choices in all). Older rows keep these NULL (no backfill).
+    # required answer; the three lists are optional JSON lists (no total cap since 25 Nov 2026). Older rows keep these NULL (no backfill).
     ("enquiries", "culture_interest", "TEXT"),
     ("enquiries", "culture_languages", "TEXT"),
     ("enquiries", "culture_regions", "TEXT"),

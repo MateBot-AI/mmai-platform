@@ -46,7 +46,7 @@ NOT_COLLECTED = ""   # sentinel stored in the legacy NOT NULL columns (dob, sex,
 CULTURE_YES = "Yes — I’m interested in experiencing new cultures and languages"
 CULTURE_OPTIONS = ("I prefer to live with people from my own country or region", "I’m happy to live with anyone", CULTURE_YES)
 CULTURE_LISTS = ("culture_languages", "culture_regions", "culture_countries")
-CULTURE_MAX = 3   # at most three choices in all, across the three lists (Bill, 23 Nov 2026)
+# No total cap across the three lists (Bill, 25 Nov 2026 — previously max 3 on 23 Nov 2026)
 ADULTS_FIELD = "adults_confirm"   # 6.4 / I11(d): the enquirer declares that EVERY occupant will be 18 or older on the move-in date
 ADULTS_MESSAGE = "Please confirm that everyone in your group, including you, will be 18 or older on the move-in date."
 
@@ -350,7 +350,6 @@ def validate(a: dict, today: date | None = None, party_max: int | None = None) -
         err["culture_interest"] = "Please answer the culture and language question."
     else:
         a["culture_interest"] = ci
-    picked = 0
     for k in CULTURE_LISTS:
         v = a.get(k)
         if v in (None, "", []):
@@ -359,13 +358,9 @@ def validate(a: dict, today: date | None = None, party_max: int | None = None) -
             err[k] = "Please choose from the list."
         else:
             a[k] = list(dict.fromkeys(x.strip() for x in v))
-            picked += len(a[k])
     if ci != CULTURE_YES:
         for k in CULTURE_LISTS:
             a[k] = []   # the lists only apply to the "Yes" answer
-        picked = 0
-    if picked > CULTURE_MAX and not any(k in err for k in CULTURE_LISTS):
-        err["culture_interest"] = f"Please choose up to {CULTURE_MAX} in total across languages, regions and countries."
     age = a.get("age_pref")
     if age not in (None, "", []):
         if not isinstance(age, list) or not all(isinstance(x, str) for x in age):

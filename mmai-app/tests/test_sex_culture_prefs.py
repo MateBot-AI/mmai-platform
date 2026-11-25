@@ -1,5 +1,5 @@
 """23 Nov 2026 (Bill): sex multi-select + "Same sex only" hard filter, age range and culture interest as soft preferences,
-culture validation (required question, optional lists, three choices in total), receipts / HomeBot email layout."""
+culture validation (required question, optional lists, no total limit), receipts / HomeBot email layout."""
 import json
 
 import pytest
@@ -87,10 +87,10 @@ def test_culture_question_is_required():
     assert "culture_interest" in validate(a)
 
 
-def test_culture_lists_are_optional_and_limited_to_three_in_total():
-    assert validate(good_answers(culture_interest=YES, culture_languages=["Hindi", "Tamil"], culture_regions=["Southern Europe"])) == {}   # three in total
-    over = validate(good_answers(culture_interest=YES, culture_languages=["Hindi", "Tamil"], culture_regions=["Southern Europe"], culture_countries=["Italy"]))
-    assert "culture_interest" in over
+def test_culture_lists_are_optional_with_no_total_limit():
+    assert validate(good_answers(culture_interest=YES, culture_languages=["Hindi", "Tamil"], culture_regions=["Southern Europe"])) == {}
+    many = validate(good_answers(culture_interest=YES, culture_languages=["Hindi", "Tamil"], culture_regions=["Southern Europe"], culture_countries=["Italy", "Japan"]))
+    assert many == {}   # more than three is fine (Bill, 25 Nov 2026)
     assert validate(good_answers(culture_interest=YES)) == {}   # none chosen: fine
 
 
