@@ -554,6 +554,9 @@ def _public_replay(sub: submissions.Submission, mate: Optional[dict], draft_toke
 @app.post("/api/public/enquiries", status_code=201)
 async def submit_public(req: Request, email_token: Optional[str] = None, mate_token: Optional[str] = None, draft_token: Optional[str] = None):
     body = _pilot_force_test(await sec.json_object(req))
+    # Google Ads click id / campaign names (server/tracking.py): taken out FIRST, so they are never an answer, never validated and never
+    # part of the submission fingerprint (a retry carrying other tracking is the same submission). Cleaned and saved by create_enquiry.
+    tracking = body.pop("tracking", None)
     if str(body.get("company_website") or "").strip():  # review M2: honeypot field, hidden from people, filled by bots
         return JSONResponse({"errors": {"form": "Sorry, this form could not be sent. Please try again."}}, status_code=422)
     sec.rate_limit(req, "public_enquiries", sec.RATE_ENQUIRIES_PER_HOUR, 3600)
@@ -588,7 +591,7 @@ async def submit_public(req: Request, email_token: Optional[str] = None, mate_to
             return JSONResponse({"errors": {"mate_link": f"Sorry, {mate['enquirer_first_name']}'s group is already as big as a shared link allows ({mate['limit']} people, leaving room for at least one more housemate in our largest available apartment), so it cannot take {joining} more."}}, status_code=422)
     try:
         # D1: the public form never sets the Staff-only section; drop those keys (hidden inputs carry DOM defaults such as channel "Phone")
-        e = _create_guarded(sub, receipt=True, a=strip_staff_only(body), channel=channel, is_test=is_test, email_link_id=link_id, party_max=matching.mate_limit(db, "test" if is_test else "real"))
+        e = _create_guarded(sub, receipt=True, a=strip_staff_only(body), channel=channel, is_test=is_test, email_link_id=link_id, party_max=matching.mate_limit(db, "test" if is_test else "real"), tracking=tracking)
     except ValidationError as ve:
         return JSONResponse({"errors": ve.errors}, status_code=422)
     except submissions.Superseded:
@@ -2539,6 +2542,7 @@ async def create_homebot_handoff(req: Request):
 @app.post("/api/public/homebot/enquiries", status_code=201)
 async def submit_homebot(req: Request):
     body = _pilot_force_test(await sec.json_object(req))
+    tracking = body.pop("tracking", None)   # Google Ads click id / campaign names: not an answer (unknown keys are refused below), not fingerprinted; see submit_public
     if str(body.get("company_website") or "").strip():  # honeypot, as the MateBot form
         return JSONResponse({"errors": {"form": "Sorry, this form could not be sent. Please try again."}}, status_code=422)
     sec.rate_limit(req, "public_enquiries", sec.RATE_ENQUIRIES_PER_HOUR, 3600)
@@ -2561,7 +2565,7 @@ async def submit_homebot(req: Request):
         homebot_shortlist.on_enquiry_created(c, eid)  # T3(a) H2: first requirement version + options job, same transaction (no-op when off)
 
     try:
-        eid = homebot.create(db, body, is_test=is_test, submission_key=key, on_inserted=hook)
+        eid = homebot.create(db, body, is_test=is_test, submission_key=key, on_inserted=hook, tracking=tracking)
     except ValidationError as ve:
         submissions.release(db, sub)
         return JSONResponse({"errors": ve.errors}, status_code=422)

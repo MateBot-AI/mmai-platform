@@ -8,6 +8,7 @@ from . import ai, rules, submissions
 from . import security as sec
 from . import intro_profile as ip
 from . import apartment_features as feat
+from . import tracking as trk
 from .countries import normalise_country
 from .db import audit, j, now_iso, pj, retention_guard, row, rows, transaction
 from .institutions import institution_list
@@ -474,7 +475,7 @@ def resolve_country(raw: str, use_ai: bool = True) -> tuple[str | None, bool]:
 
 def create_enquiry(c, a: dict, channel: str, staff: str | None = None, is_test: bool = False, email_link_id: int | None = None,
                    use_ai_countries: bool = True, created_at: str | None = None, party_max: int | None = None, on_inserted=None,
-                   submission_key: str | None = None) -> dict:
+                   submission_key: str | None = None, tracking=None) -> dict:
     """Validate and store one enquiry. The enquiry row, its party members, the email-link mark and anything `on_inserted(c, eid)`
     writes are committed together: the whole write runs in one db.transaction block (connection lock held from the first
     INSERT to the commit, so no other thread can commit or roll back half of it), and `on_inserted` runs right after the
@@ -482,6 +483,8 @@ def create_enquiry(c, a: dict, channel: str, staff: str | None = None, is_test: 
     `submission_key` goes on the enquiry row in the same INSERT; enquiries.submission_key is UNIQUE, so the database itself
     refuses a second enquiry for one key (callers catch the violation and replay). Anything that may call out (country
     normalisation, possibly the AI) is done before the block. Any exception inside the block rolls everything back.
+    `tracking` is the optional Google Ads object the public form sent (server/tracking.py): it is cleaned here, written in the same
+    INSERT, and can never fail the save. It is not part of `a`, so it never touches validation or answers_json.
     Note: get_enquiry() may raise after the commit; callers that need the id regardless should use on_inserted."""
     is_test = bool(is_test) or sec.pilot_gate_enabled()   # controlled pilot: nothing new is ever stored as real data
     a = strip_retired(a)   # retired identity fields never reach storage (answers_json included)
@@ -538,6 +541,7 @@ def create_enquiry(c, a: dict, channel: str, staff: str | None = None, is_test: 
     cols.update(ip.clean({k: a[k] for k in ip.KEYS if k in a})[0])
     if submission_key:
         cols["submission_key"] = submission_key  # same INSERT as the row: the UNIQUE index is the last line of defence against a duplicate
+    cols.update(trk.columns(tracking, now))  # Google Ads click id / campaign names: only the columns that have a value (the rest stay NULL)
     members = []
     for m in (a.get("party_members") or [])[: max(0, party_size - 1)]:
         # I16(b): country of birth per person, normalised like 1.8 (I15; staff confirm anything MMAI could not recognise).

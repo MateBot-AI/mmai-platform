@@ -1772,6 +1772,23 @@ MIGRATIONS = [
     ("apartment_access_facts", "address_at_record", "TEXT"),
     # A10 immutable dataset provenance. Legacy rows stay unknown, never guessed/backfilled.
     ("exit_exceptions", "is_test", "INTEGER"),
+    # 25 Nov 2026 (Google Ads tracking, server/tracking.py): the click id and campaign names a visitor arrived with, saved with the
+    # enquiry. Optional and informational: NULL = the visitor did not arrive from an ad (every enquiry saved before this, too);
+    # tracking_captured_at (ISO time) is set only when at least one value was saved. Same names on both enquiry tables.
+    ("enquiries", "gclid", "TEXT"),
+    ("enquiries", "gbraid", "TEXT"),
+    ("enquiries", "wbraid", "TEXT"),
+    ("enquiries", "utm_campaign", "TEXT"),
+    ("enquiries", "utm_ad_group", "TEXT"),
+    ("enquiries", "utm_keyword", "TEXT"),
+    ("enquiries", "tracking_captured_at", "TEXT"),
+    ("homebot_enquiries", "gclid", "TEXT"),
+    ("homebot_enquiries", "gbraid", "TEXT"),
+    ("homebot_enquiries", "wbraid", "TEXT"),
+    ("homebot_enquiries", "utm_campaign", "TEXT"),
+    ("homebot_enquiries", "utm_ad_group", "TEXT"),
+    ("homebot_enquiries", "utm_keyword", "TEXT"),
+    ("homebot_enquiries", "tracking_captured_at", "TEXT"),
 ]
 
 # Indexes that depend on migrated columns (CREATE TABLE in SCHEMA cannot carry them for databases created earlier). Additive only.

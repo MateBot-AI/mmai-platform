@@ -21,6 +21,7 @@ from .institutions import institution_list
 from . import rules, submissions
 from . import security as sec
 from . import apartment_features as feat
+from . import tracking as trk
 
 SOURCE = "homebot"
 CHANNEL = "HomeBot form"
@@ -426,23 +427,26 @@ def _validate(a, errors, today, keep_transport=()) -> dict:
 
 
 # ---------------------------------------------------------------------------------------------------------------- store
-def create(c, a: dict, *, is_test: bool, submission_key: str | None = None, on_inserted=None) -> int:
+def create(c, a: dict, *, is_test: bool, submission_key: str | None = None, on_inserted=None, tracking=None) -> int:
     """Validate and store one HomeBot enquiry and its people in ONE transaction (all rows or none). `on_inserted(c, eid)` runs
     inside the same transaction (the submission-key engine marks the key saved there; if it raises, everything rolls back).
+    `tracking` is the optional Google Ads object the form sent (server/tracking.py): cleaned here, written in the same INSERT and
+    never able to fail the save; it is not part of `a`, so it is not an answer and not validated as one.
     Returns the new id. Raises ValidationError."""
     is_test = bool(is_test) or sec.pilot_gate_enabled()   # controlled pilot: nothing new is ever stored as real data
     clean = validate(a)
     now = now_iso()
     answers = {k: v for k, v in clean.items() if k not in ("flags",)}
     answers["guide_snapshot"] = guide_snapshot(c, clean["budget_types"], clean["price_guide"])  # what the applicant saw, as of now
+    tcols = trk.columns(tracking, now)   # Google Ads click id / campaign names: only the columns that have a value ({} = all stay NULL)
     with transaction(c):
         cur = c.execute(
             "INSERT INTO homebot_enquiries(is_test, source, channel, status, created_at, updated_at, last_contact_at, submission_key, "
             "first_name, last_name, email, phone_code, phone, contact_pref, party_mode, headcount_now, headcount_target, "
             "move_in, move_in_flex, move_in_earliest, move_in_latest, move_out, move_out_flex, move_out_earliest, move_out_latest, "
             "budget_total_weekly, budget_types, bedrooms, bathrooms, area, transport, max_travel, extras, extras_top, apartment_notes, bunk_condition, "
-            "viewing, heard, consent_contact, consent_lease, consent_adults, review_flags, answers_json) "
-            "VALUES (?,?,?,?,?,?,?,?, ?,?,?,?,?,?,?,?,?, ?,?,?,?,?,?,?,?, ?,?,?,?,?,?,?,?,?,?,?, ?,?,?,?,?,?,?)",
+            "viewing, heard, consent_contact, consent_lease, consent_adults, review_flags, answers_json" + "".join(", " + k for k in tcols) + ") "
+            "VALUES (?,?,?,?,?,?,?,?, ?,?,?,?,?,?,?,?,?, ?,?,?,?,?,?,?,?, ?,?,?,?,?,?,?,?,?,?,?, ?,?,?,?,?,?,?" + ",?" * len(tcols) + ")",
             (1 if is_test else 0, SOURCE, CHANNEL, "New", now, now, now, submission_key,
              clean["first_name"], clean["last_name"], clean["email"], clean["phone_code"], clean["phone"], clean["contact_pref"],
              clean["party_mode"], clean["headcount_now"], clean["headcount_target"],
@@ -451,7 +455,7 @@ def create(c, a: dict, *, is_test: bool, submission_key: str | None = None, on_i
              clean["budget_total_weekly"], j(clean["budget_types"]), j(clean["bedrooms"]), j(clean["bathrooms"]), clean["area"],
              j(clean["transport"]), clean["max_travel"], j(clean["extras"]), j(clean["extras_top"]), clean["apartment_notes"], clean["bunk_condition"],
              clean["viewing"], clean["heard"], clean["consent_contact"], clean["consent_lease"], clean["consent_adults"],
-             j(clean["flags"]), j(answers)))
+             j(clean["flags"]), j(answers), *tcols.values()))
         eid = c.execute("SELECT last_insert_rowid()").fetchone()[0]
         for p in clean["people"]:
             c.execute("INSERT INTO homebot_people(enquiry_id, position, name, sleep, weekly_max, doing, institution, institution_other, place, primary_destination) "
