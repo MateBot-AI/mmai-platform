@@ -371,7 +371,11 @@
 <p class="foot foot--legal"><a href="/terms" target="_blank" rel="noopener">Terms of Use</a> · <a href="/privacy" target="_blank" rel="noopener">Privacy Policy</a></p>
 
 
-<script src="form.js?v=20261116-handoff-travel"></script>
+<!-- tracking.js (Google Ads click id and campaign names) and gtm.js (Google Tag Manager) are shared with the MateBot page: one source in
+     mmai-app/client/, served from the app root, which this page reaches because the backend serves both pages from one origin. -->
+<script src="/tracking.js?v=20261125-gads-tracking"></script>
+<script src="/gtm.js?v=20261125-gads-tracking"></script>
+<script src="form.js?v=20261125-gads-tracking"></script>
 <script src="app.js?v=20261111-selfhost"></script>
 </body>
 </html>

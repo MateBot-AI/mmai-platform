@@ -172,7 +172,7 @@ def test_homebot_handoff_screen_carries_and_falls_back_honestly():
     assert "/api/public/homebot/handoff" in js and "#/resume?t=" in js and "prepareHandoff(scr)" in js
     assert "show('fallback')" in js   # a failed request never implies a transfer (H2)
     # Each changed script gets its own cache version, including self-hosted routing.
-    assert 'src="form.js?v=20261116-handoff-travel"' in html
+    assert 'src="form.js?v=20261125-gads-tracking"' in html
     # travel choices already ticked go across exactly as ticked, and only when there are any
     assert "const travel = [].concat(value('transport') || []);" in js and "travel.length ? { transport: travel } : {}" in js
     assert 'src="app.js?v=20261111-selfhost"' in html
@@ -183,4 +183,4 @@ def test_matebot_form_words_the_handoff_banner_and_cache_tag_is_bumped():
     html = (ROOT / "client" / "index.html").read_text(encoding="utf-8")
     assert "cfg.draft.origin === 'homebot'" in js and "You have come over from HomeBot" in js
     assert "Welcome back. Your saved answers are here" in js   # ordinary resumed drafts unchanged
-    assert 'src="form.js?v=20261123c"' in html
+    assert 'src="form.js?v=20261125a"' in html

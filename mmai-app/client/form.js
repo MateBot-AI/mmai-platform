@@ -686,6 +686,9 @@
         const result = await attemptSubmit(answers);
         savedResult = { answers, result };
         store.write(null);  // confirmed: nothing uncertain is left; a brand-new enquiry later gets a new key
+        // Google Tag Manager completion event (Google Ads conversion): once per saved enquiry, no personal data. Never for staff phone entry,
+        // and not when the enquiry had already been sent (nothing new was saved). A later "submit" only re-shows the confirmation (above).
+        if (!staffMode && !(result && result.already_submitted)) { try { (window.dataLayer = window.dataLayer || []).push({ event: 'alm_bot_complete', helper: 'matebot' }); } catch { /* never affects the saved enquiry */ } }
         showSaved(answers, result);
       } catch (e) {
         // Not confirmed. The key stays the same, so "try again" can only ever complete THIS enquiry, never make a second one.

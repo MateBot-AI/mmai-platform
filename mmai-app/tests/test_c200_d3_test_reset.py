@@ -96,7 +96,7 @@ def test_real_mode_and_staff_mode_are_not_broadened():
 
 
 def test_cache_tag_bumped_for_the_client_change():
-    assert 'form.js?v=20261123c' in INDEX
+    assert 'form.js?v=20261125a' in INDEX
     assert 'form.js?v=20261109ab' not in INDEX and 'form.js?v=20261109aa' not in INDEX
 
 

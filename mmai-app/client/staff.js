@@ -41,6 +41,13 @@
     return 'Not yet declared: this enquiry was saved before the question existed. Check with the enquirer that everyone in the group, including them, will be 18 or older on the move-in date, then record it here.';
   };
   const adultsBadge = e => e && e.adults_status && e.adults_status !== 'confirmed' ? `<span class="badge badge--warn" title="${e.adults_status === 'renew' ? 'The 18+ at move-in confirmation needs renewing (move-in earlier or group changed)' : 'Nobody has yet confirmed that everyone in the group will be 18 or older at move-in'}">18+ to confirm</span>` : '';
+  // Google Ads click id and campaign names the enquirer arrived with (server/tracking.py). Read-only, staff only, shown only when the
+  // enquiry came from an ad; plain text, never a link, and no part of matching.
+  const AD_TRACKING = [['gclid', 'gclid'], ['gbraid', 'gbraid'], ['wbraid', 'wbraid'], ['utm_campaign', 'Campaign'], ['utm_ad_group', 'Ad group'], ['utm_keyword', 'Keyword']];
+  const adTrackingCard = (e, cls = '') => {
+    const rows = AD_TRACKING.filter(([k]) => e[k]);
+    return rows.length ? `<div class="card card--tight ${cls}"><h3>Google Ads tracking</h3><dl class="kv">${rows.map(([k, l]) => `<dt>${l}</dt><dd class="mono">${esc(e[k])}</dd>`).join('')}${e.tracking_captured_at ? `<dt>Captured</dt><dd>${fmtDT(e.tracking_captured_at)}</dd>` : ''}</dl><p class="small muted">From the web address the enquirer arrived by. For information only.</p></div>` : '';
+  };
 
   const state = { user: null, meta: null, ref: null, dataset: 'real', view: 'overview', param: null, host: null, cache: {} };
   // public address for links given to enquirers: MMAI_PUBLIC_BASE_URL from the server when set, else this page's address
@@ -397,6 +404,7 @@
       <div data-role="reqs"></div>
       <div class="detail detail--2">
         ${(e.summary || []).map(sec => `<div class="card card--tight"><h3>${esc(sec.title)}</h3><dl class="kv">${sec.rows.map(([k, v]) => `<dt>${esc(k)}</dt><dd>${v == null || v === '' ? '<span class="muted">—</span>' : esc(v)}</dd>`).join('')}</dl></div>`).join('')}
+        ${adTrackingCard(e)}
         <div class="card card--tight"><h3>History</h3><ul class="small">${(e.history || []).map(h => `<li>${fmtDT(h.at)} · ${esc(h.staff_member || 'system')} · ${esc(h.action)}${h.detail ? ` — ${esc(h.detail)}` : ''}</li>`).join('') || '<li class="muted">No entries yet.</li>'}</ul></div>
       </div>`;
     p.querySelector('[data-role="back"]').addEventListener('click', () => navigate('homebot'));
@@ -856,6 +864,7 @@
               ${kv('Everyone 18+ at move-in', e.adults_status === 'confirmed' ? `Yes: ${adultsText(e)}` : e.adults_status === 'renew' ? 'To renew (see the card on the left)' : 'Not yet declared (see the card on the left)', '6.4')}
             </dl>
           </div>
+          ${adTrackingCard(e, 'mt')}
           <div class="card card--tight mt"><h3>What the review read from this person's notes</h3>${notesReviewHtml(e.notes_review)}</div>
           <div class="card card--tight mt"><h3>Groups</h3>
             ${e.groups.length ? `<ul class="small">${e.groups.map(g => `<li><a href="#/staff/groups/${g.id}">Group ${g.id}</a> ${g.status === 'Proposed' && !g.is_primary ? '<span class="badge badge--alt">alternative</span>' : ''} · ${esc(g.address)} · ${badge(g.status)} · share ${money(g.weekly_share)}/wk</li>`).join('')}</ul><p class="small muted">Only one proposed group is offered to a person at a time; alternatives are for staff reference.</p>` : '<p class="small muted">Not in any proposed group yet.</p>'}

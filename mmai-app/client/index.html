@@ -6,8 +6,9 @@
 <title>MateBot AI · Apartment Living Melbourne</title>
 <meta name="description" content="MateBot AI is AI matchmaking software that finds compatible flatmates to share a whole apartment with Apartment Living Melbourne.">
 <meta name="theme-color" content="#2b1d2e">
-<!-- The sha256 hash below is the Perplexity preview helper the hosting proxy injects inline (scroll/screenshot/pick support); app code has no inline scripts. -->
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-Qq/uoXbrEnjJ6L8KD8GicBffFCZgSQYA4VAEfHIXfGU='; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self'; connect-src 'self'; form-action 'self'; base-uri 'self'; object-src 'none'">
+<!-- The sha256 hash below is the Perplexity preview helper the hosting proxy injects inline (scroll/screenshot/pick support); app code has no inline scripts.
+     The Google hosts are for Google Tag Manager (gtm.js, public pages only); the same lists are in server/security.py csp(), and a page that gets both policies must satisfy both. -->
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-Qq/uoXbrEnjJ6L8KD8GicBffFCZgSQYA4VAEfHIXfGU=' https://www.googletagmanager.com; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https://www.googletagmanager.com https://*.google-analytics.com https://*.g.doubleclick.net https://www.google.com https://www.google.com.au; font-src 'self'; connect-src 'self' https://www.googletagmanager.com https://*.google-analytics.com https://*.analytics.google.com https://*.g.doubleclick.net https://www.google.com; frame-src 'self' https://www.googletagmanager.com; form-action 'self'; base-uri 'self'; object-src 'none'">
 <meta name="referrer" content="same-origin">
 <meta name="mmai-api-base" content="__PORT_8060__">
 <link rel="stylesheet" href="fonts/fonts.css">
@@ -522,11 +523,13 @@
   </div>
 </template>
 
+<script src="tracking.js?v=20261125a"></script>
+<script src="gtm.js?v=20261125a"></script>
 <script src="api.js?v=20261108e"></script>
-<script src="form.js?v=20261123c"></script>
+<script src="form.js?v=20261125a"></script>
 <script src="respond.js?v=20261109y"></script>
 <script src="staff-exceptions.js?v=20261111b"></script>
-<script src="staff.js?v=20261123b"></script>
-<script src="app.js?v=20261109x"></script>
+<script src="staff.js?v=20261125a"></script>
+<script src="app.js?v=20261125a"></script>
 </body>
 </html>

@@ -509,6 +509,9 @@
       // While the request is pending the whole form (inputs and navigation) is inert so nothing can change under it.
       submitting = true; btnSubmit.textContent = 'Saving…'; form.inert = true; $('.steps', root).inert = true;
       const body = payload();
+      // Google Ads click id / campaign names (tracking.js): one extra `tracking` object, only when the visitor arrived from an ad. The server
+      // takes it out before it checks the answers, so it is never one of them.
+      const tracking = window.ALM_TRACKING; if (tracking && Object.keys(tracking).length) body.tracking = Object.assign({}, tracking);
       const snapshot = { counts: counts(), first_name: value('first_name').trim(), answers: answersText() };
       fetch(API.base + '/api/public/homebot/enquiries', { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json', 'X-Submission-Key': submitKey }, body: JSON.stringify(body) })
         .then(r => r.json().then(j => ({ status: r.status, j })).catch(() => ({ status: r.status, j: {} })))
@@ -561,6 +564,9 @@
       return b;
     }
     function showDone(res, snap) {
+      // Google Tag Manager completion event (Google Ads conversion): once, when the server confirms the enquiry (review-build TEST enquiries
+      // included, so live testing can see it); no personal data.
+      try { (window.dataLayer = window.dataLayer || []).push({ event: 'alm_bot_complete', helper: 'homebot' }); } catch (e) { /* never affects the saved enquiry */ }
       form.hidden = true; $('.steps', root).hidden = true; $('.meter', root).hidden = true; tipLane.hidden = true;
       $('[data-role=doneName]', done).textContent = snap.first_name;
       $('[data-role=doneRef]', done).textContent = (res && res.reference) || '';

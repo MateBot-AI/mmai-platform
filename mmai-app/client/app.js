@@ -2,6 +2,9 @@
    · #/staff[/view[/id]] dashboard. Add &test=1 to any public route to send a TEST enquiry (kept apart from real data). */
 (() => {
   const api = window.MMAI_API;
+  // Google Ads click id / campaign names (tracking.js) go with a public enquiry as one extra top-level `tracking` object, and only when
+  // the visitor arrived from an ad. It is a copy, so the form's own answers are never changed. Staff phone entry (staff.js) never sends it.
+  const withTracking = body => { const t = window.ALM_TRACKING; return t && Object.keys(t).length ? Object.assign({}, body, { tracking: Object.assign({}, t) }) : body; };
   let metaCache = null;
   async function meta(params) {
     const qs = new URLSearchParams(Object.entries(params || {}).filter(([, v]) => v)).toString();
@@ -101,7 +104,7 @@
       window.mountForm(host, {
         mode: 'public', meta: m, emailToken: effEmail, emailLink: m.email_link, mateToken: effMate, mateLink: m.mate_link, isTest: effTest, draft,
         storageKey: key,  // where the form keeps its opaque submission key while an attempt's outcome is uncertain (no answers are stored)
-        onSubmit: (answers, o) => { if (effTest) answers.is_test = true; const p = new URLSearchParams(qs); if (draft && draft.token) p.set('draft_token', draft.token); const s = p.toString(); return api.post('/api/public/enquiries' + (s ? '?' + s : ''), answers, { headers: { 'X-Submission-Key': o.key } }); },
+        onSubmit: (answers, o) => { if (effTest) answers.is_test = true; const p = new URLSearchParams(qs); if (draft && draft.token) p.set('draft_token', draft.token); const s = p.toString(); return api.post('/api/public/enquiries' + (s ? '?' + s : ''), withTracking(answers), { headers: { 'X-Submission-Key': o.key } }); },
         onSaveDraft: (answers, step, token, o) => {
           const body = { answers, step, email: answers.email || '', is_test: effTest, mate_token: effMate, email_token: effEmail, submit_key: o && o.key };
           return token ? api.put('/api/public/drafts/' + encodeURIComponent(token), body) : api.post('/api/public/drafts', body);

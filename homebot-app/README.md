@@ -8,6 +8,8 @@ The combined chooser is `/homebot/#/`, the introduction is `#/homebot` and the q
 
 On the shared host, the backend rewrites `mmai-api-base` to the same origin and `matebot-url` plus fallback links to `/#/`. Both chooser and incomplete-party handoffs therefore use the same backend's saved-form records, never an unrelated preview.
 
+The page loads `/tracking.js` and `/gtm.js` from the app root (one copy, in `mmai-app/client/`): they keep the Google Ads click id and campaign names the visitor arrived with, send them with the enquiry, and load Google Tag Manager. A separately hosted copy must serve both files at those paths; without them the form works as before and simply records no tracking.
+
 ## Review and TEST mode
 
 `MMAI_HOMEBOT_REVIEW_BUILD` defaults to review mode. Only the exact value `0` makes the self-hosted page render production-mode presentation; this is a release setting, not permission to activate any service. Review mode marks HomeBot submissions and MateBot handoffs TEST.

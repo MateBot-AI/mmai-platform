@@ -63,4 +63,4 @@ def test_staff_warns_and_preserves_selection_for_review():
     assert "${apts.length} suitable apartment" not in text
     assert "${apts.length} apartment candidate" in text
     assert "<br>Selecting it keeps the group held" in text
-    assert "staff.js?v=20261123b" in (client / "index.html").read_text()
+    assert "staff.js?v=20261125a" in (client / "index.html").read_text()

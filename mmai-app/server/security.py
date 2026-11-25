@@ -68,10 +68,20 @@ PUBLIC_BASE_URL = os.environ.get("MMAI_PUBLIC_BASE_URL", "").strip().rstrip("/")
 
 # Content Security Policy for responses the backend serves itself (self-hosted client). The static preview host serves the
 # client from its own CDN, so client/index.html carries the same policy in a <meta> tag (minus frame-ancestors, which a meta tag
-# cannot express). No inline scripts, no third-party scripts, fonts self-hosted (review L1, L2).
+# cannot express). No inline scripts, fonts self-hosted (review L1, L2). The only third party is Google Tag Manager (25 Nov 2026,
+# client/gtm.js on the public MateBot and HomeBot pages): its container script and the measurement / conversion hosts its tags
+# use. A page that carries both this header and the <meta> must satisfy both, so the two lists are kept equal (a test compares them).
+GTM_SCRIPT = "https://www.googletagmanager.com"
+GTM_IMG = ("https://www.googletagmanager.com https://*.google-analytics.com https://*.g.doubleclick.net "
+           "https://www.google.com https://www.google.com.au")
+GTM_CONNECT = ("https://www.googletagmanager.com https://*.google-analytics.com https://*.analytics.google.com "
+               "https://*.g.doubleclick.net https://www.google.com")
+
+
 def csp() -> str:
-    return ("default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self'; "
-            "connect-src 'self'; form-action 'self'; base-uri 'self'; object-src 'none'; frame-ancestors " + FRAME_ANCESTORS)
+    return ("default-src 'self'; script-src 'self' " + GTM_SCRIPT + "; style-src 'self' 'unsafe-inline'; "
+            "img-src 'self' data: blob: " + GTM_IMG + "; font-src 'self'; connect-src 'self' " + GTM_CONNECT + "; "
+            "frame-src 'self' " + GTM_SCRIPT + "; form-action 'self'; base-uri 'self'; object-src 'none'; frame-ancestors " + FRAME_ANCESTORS)
 
 
 SECURITY_HEADERS = {
