@@ -115,10 +115,15 @@ def test_notice_wording_and_page_safety():
                  "Journey estimates are shown to ALM staff when they look at your options and are not kept by MateBot AI.",
                  "hosted with DigitalOcean in its Sydney region",
                  "your details are kept for 12 months from our last contact with you and are then deleted",
-                 "No advertising or analytics cookies are used.",
+                 "We use Google Tag Manager to measure how visitors use this site and whether they arrived from our advertising. "
+                 "This may set analytics and advertising cookies. "
+                 "If you arrived from a Google ad, the ad click reference is saved with your enquiry so we can understand which ads help people find us.",
+                 "If you arrived from a Google ad, your browser also keeps the ad click reference and campaign names "
+                 "(in session and local storage) for up to 90 days.",
                  "staff member signed in; it can be read only by this site, is sent only over a secure connection, lasts up to 30 days"):
         assert line in privacy, line
     assert "__Host-mmai_session" in privacy
+    assert "No advertising or analytics cookies" not in privacy      # no longer true now Google Tag Manager runs on the public pages
 
 
 def test_notices_are_linked_from_the_sign_in_page_forms_and_staff_workspace():
