@@ -85,7 +85,9 @@ def test_notice_wording_and_page_safety():
         text, low = _text(html), html.lower()
         assert len(re.findall(r"<li>", html)) == clauses, name
         assert f"<title>{title} · MateBot AI</title>" in html and 'lang="en-AU"' in html and "noindex" in html
-        assert "Matebot AI Pty Ltd" in text and "Last updated: 16 November 2026." in text
+        # the Privacy Policy was last changed on its own (Google Tag Manager, deployed 28 November 2026); the Terms were not
+        last_updated = "28 November 2026" if name == "privacy.html" else "16 November 2026"
+        assert "Matebot AI Pty Ltd" in text and f"Last updated: {last_updated}." in text
         # the contact address is plain text inside the markers that stop the host's edge swapping it for a placeholder
         marked = '<!--email_off--><a href="mailto:reservations@almelb.com.au">reservations@almelb.com.au</a><!--/email_off-->'
         assert html.count(marked) >= 1 and html.count("reservations@almelb.com.au") == 2 * html.count(marked), name
